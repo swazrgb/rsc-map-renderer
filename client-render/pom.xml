@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>openrsc.bot</groupId>
+    <artifactId>rsc-map-renderer</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <relativePath>../pom.xml</relativePath>
+  </parent>
+
+  <artifactId>client-render</artifactId>
+  <packaging>jar</packaging>
+
+  <!--
+    Headless port of the OpenRSC client software renderer (idlersc lineage):
+    rasterizes terrain + scenery models + walls from the .orsc cache into a
+    plain int[] pixel buffer, with no game loop, networking, input, UI or AWT
+    windowing. Zero external dependencies (JDK + AWT/ImageIO only). Consumed by
+    world3d-bake to bake faithful "what the client draws" world assets.
+  -->
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <configuration>
+          <!-- Ported third-party client code: don't fail the build on its
+               warnings (deprecations, raw types, etc.). -->
+          <failOnWarning>false</failOnWarning>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>openrsc.bot</groupId>
+    <artifactId>rsc-map-renderer</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <relativePath>../pom.xml</relativePath>
+  </parent>
+
+  <artifactId>world3d-bake</artifactId>
+  <packaging>jar</packaging>
+
+  <!--
+    Bakes the complete static /api/world3d/* asset tree that the WebGL viewer
+    consumes: world-mesh manifest + per-cell binary geometry, engine textures,
+    the object-model library, door/boundary libraries, npc / item / font sprite
+    atlases, hit-splat + projectile sprites, and (Option A) a pre-baked set of
+    player-appearance strips for a fixed token list. Output is a plain directory
+    a dumb static HTTP server (e.g. GitHub Pages) can serve as-is; no runtime
+    server needed. `Bake` is the CLI entrypoint.
+  -->
+
+  <dependencies>
+    <dependency>
+      <groupId>openrsc.bot</groupId>
+      <artifactId>client-render</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>openrsc.bot</groupId>
+      <artifactId>game-data</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>tools.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-api</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>ch.qos.logback</groupId>
+      <artifactId>logback-classic</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <finalName>world3d-bake</finalName>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <configuration>
+          <!-- Bakers carry ported client-render helper code; tolerate warnings. -->
+          <failOnWarning>false</failOnWarning>
+        </configuration>
+      </plugin>
+
+      <!-- Runnable fat jar: `java -jar target/world3d-bake.jar <cacheDir> <outDir>`. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals>
+              <goal>shade</goal>
+            </goals>
+            <configuration>
+              <transformers>
+                <transformer
+                    implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                  <mainClass>openrsc.maprender.bake.Bake</mainClass>
+                </transformer>
+                <transformer
+                    implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+              </transformers>
+              <filters>
+                <filter>
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <exclude>module-info.class</exclude>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                  </excludes>
+                </filter>
+              </filters>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <configuration>
+          <mainClass>openrsc.maprender.bake.Bake</mainClass>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

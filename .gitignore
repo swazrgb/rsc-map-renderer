@@ -1,3 +1,13 @@
 target/
 dependency-reduced-pom.xml
 .idea/
+
+# built viewer + assembled static site — deployed via gh-pages, never on main
+node_modules/
+viewer/dist/
+site/
+
+# baker output dirs
+map-out/
+map-out-orsc/
+map-render/

@@ -7,23 +7,35 @@
   <groupId>openrsc.bot</groupId>
   <artifactId>rsc-map-renderer</artifactId>
   <version>0.1.0-SNAPSHOT</version>
-  <packaging>jar</packaging>
+  <packaging>pom</packaging>
 
   <!--
-    Standalone world-map renderer, extracted from headless-bot-java/core.
-    Loads the OpenRSC server's game-data tree (defs, locs, extras, JAG
-    landscape) into a BotEnvironment and bakes per-floor terrain / walls
-    PNGs (and a GeoJSON feature layer) without any of the bot's networking,
-    scripting, or Spring runtime. Self-contained: no dependency on the
-    headless-bot-java reactor.
+    Aggregator for the open-source OpenRSC rendering tools. Modules:
+      game-data     — shared OpenRSC game-data loaders (conf tree, locs, JAG
+                      landscape). The single source of truth, consumed by every
+                      other module here AND by the private headless-bot-java
+                      reactor via a relativePath <module> include.
+      client-render — headless port of the OpenRSC software 3D renderer
+                      (terrain + scenery models + walls) into an int[] buffer.
+      world3d-bake  — bakes the full static /api/world3d/* asset tree (mesh
+                      cells, textures, npc/item/scenery/player sprite atlases,
+                      fonts) that the WebGL viewer consumes; ships a Bake CLI.
+      map2d         — the standalone per-floor 2D world-map raster renderer.
+    The `viewer/` directory (not a Maven module) is the static WebGL viewer.
   -->
+
+  <modules>
+    <module>game-data</module>
+    <module>client-render</module>
+    <module>world3d-bake</module>
+    <module>map2d</module>
+  </modules>
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <maven.compiler.release>26</maven.compiler.release>
-    <!-- Spring Boot's BOM manages Jackson 3, SLF4J and Logback versions, the
-         same way the source module pins them — we import it for version
-         alignment only, none of Spring itself is on the classpath. -->
+    <!-- Spring Boot's BOM manages Jackson 3 / SLF4J / Logback versions for
+         version alignment only; none of Spring itself is on any classpath. -->
     <spring-boot.version>4.0.6</spring-boot.version>
   </properties>
 
@@ -36,87 +48,39 @@
         <type>pom</type>
         <scope>import</scope>
       </dependency>
+      <!-- Intra-repo module versions, so children reference by artifactId. -->
+      <dependency>
+        <groupId>openrsc.bot</groupId>
+        <artifactId>game-data</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>openrsc.bot</groupId>
+        <artifactId>client-render</artifactId>
+        <version>${project.version}</version>
+      </dependency>
     </dependencies>
   </dependencyManagement>
 
-  <dependencies>
-    <dependency>
-      <groupId>org.slf4j</groupId>
-      <artifactId>slf4j-api</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>tools.jackson.core</groupId>
-      <artifactId>jackson-databind</artifactId>
-    </dependency>
-    <!-- Classic RSC map archives (.jag/.mem) are headerless-BZh1 bzip2;
-         JagArchive decompresses them with commons-compress (mirrors the
-         server's WorldLoader). Not managed by the Spring Boot BOM. -->
-    <dependency>
-      <groupId>org.apache.commons</groupId>
-      <artifactId>commons-compress</artifactId>
-      <version>1.28.0</version>
-    </dependency>
-    <!-- Runtime SLF4J binding so the renderer's progress logs are visible. -->
-    <dependency>
-      <groupId>ch.qos.logback</groupId>
-      <artifactId>logback-classic</artifactId>
-      <scope>runtime</scope>
-    </dependency>
-  </dependencies>
-
   <build>
-    <finalName>rsc-map-renderer</finalName>
-    <plugins>
-      <plugin>
-        <artifactId>maven-compiler-plugin</artifactId>
-        <version>3.13.0</version>
-      </plugin>
-
-      <!-- Build a runnable fat jar: `java -jar target/rsc-map-renderer.jar`. -->
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-shade-plugin</artifactId>
-        <version>3.6.0</version>
-        <executions>
-          <execution>
-            <phase>package</phase>
-            <goals>
-              <goal>shade</goal>
-            </goals>
-            <configuration>
-              <transformers>
-                <transformer
-                    implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                  <mainClass>openrsc.map.MapRendererMain</mainClass>
-                </transformer>
-                <transformer
-                    implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
-              </transformers>
-              <filters>
-                <filter>
-                  <artifact>*:*</artifact>
-                  <excludes>
-                    <exclude>module-info.class</exclude>
-                    <exclude>META-INF/*.SF</exclude>
-                    <exclude>META-INF/*.DSA</exclude>
-                    <exclude>META-INF/*.RSA</exclude>
-                  </excludes>
-                </filter>
-              </filters>
-            </configuration>
-          </execution>
-        </executions>
-      </plugin>
-
-      <!-- Convenience: `mvn exec:java` runs the renderer without packaging. -->
-      <plugin>
-        <groupId>org.codehaus.mojo</groupId>
-        <artifactId>exec-maven-plugin</artifactId>
-        <version>3.5.0</version>
-        <configuration>
-          <mainClass>openrsc.map.MapRendererMain</mainClass>
-        </configuration>
-      </plugin>
-    </plugins>
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-compiler-plugin</artifactId>
+          <version>3.13.0</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-shade-plugin</artifactId>
+          <version>3.6.0</version>
+        </plugin>
+        <plugin>
+          <groupId>org.codehaus.mojo</groupId>
+          <artifactId>exec-maven-plugin</artifactId>
+          <version>3.5.0</version>
+        </plugin>
+      </plugins>
+    </pluginManagement>
   </build>
 </project>

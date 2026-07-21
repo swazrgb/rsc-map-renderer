@@ -1,40 +1,54 @@
 # rsc-map-renderer
 
-Standalone world-map renderer for the OpenRSC game data. It loads the server's on-disk data tree (defs, locs, skill extras and the
-JAG landscape) and bakes the world map per floor:
+Software to generate a 2D & 3D render of the world of RuneScape Classic.
 
-- a terrain colour raster (PNG),
-- a walls / diagonals / blocked-tile overlay (transparent PNG), and
-- a GeoJSON feature layer (doors + NPC spawns, with wander boxes).
+## Modules
 
-## Data source
+| Module | What it is |
+| --- | --- |
+| **`game-data/`** | Shared loaders for the OpenRSC data tree — `ServerConf` (locates `conf/server`), the `SceneryLocs`/`BoundaryLocs`/`NpcLocs` parsers, and the classic `.jag`/`.mem` landscape readers. |
+| **`client-render/`** | Headless port of the OpenRSC client software renderer (idlersc lineage): rasterizes terrain + scenery models + walls from the `.orsc` cache into a plain `int[]` buffer. |
+| **`world3d-bake/`** | Bakes the complete static `/api/world3d/*` + `/api/map/*` asset tree the 3D viewer consumes — world-mesh cells, engine textures, the object/door libraries, npc/item/font/scenery sprite atlases, and the per-layer player-sprite atlas the viewer composites appearances from. |
+| **`viewer/`** | The standalone WebGL 3D world viewer (React + three.js). Renders the baked terrain + scenery mesh and billboarded NPC/player sprites. Entity data is injected via props — empty in the open-source demo. |
+| **`map2d/`** | The standalone per-floor 2D world-map raster renderer (terrain PNG + walls overlay + GeoJSON feature layer). |
 
-The server's `conf/server` tree is located by `ServerConf.resolve()`, which walks **up** from the
-working directory looking for `<ancestor>/openrsc/server/conf/server`. Running from anywhere inside
-the `openrsc` checkout therefore needs no configuration. To point elsewhere:
+## Build the 3D viewer demo
 
-- `-Dopenrsc.serverConfDir=/path/to/openrsc/server/conf/server`, or
-- the `OPENRSC_SERVER_CONF` environment variable.
-
-Collision is loaded from the authentic JAG map archives (`data/maps/maps64.jag` + `.mem`) when
-present, falling back to `data/Authentic_Landscape.orsc`.
-
-## Build & run
+Prereqs: a JDK, Maven, Node, and a checkout of the [OpenRSC](https://gitlab.com/openrsc/openrsc) server + stock client
+cache. One command bakes the assets, builds the viewer, and assembles a static
+site:
 
 ```bash
-# build a runnable fat jar
-mvn -pl . package
-
-# render to ./map-out (run from inside the openrsc checkout)
-java -jar target/rsc-map-renderer.jar [outputDir]
-
-# or without packaging
-mvn exec:java -Dexec.args="map-out"
+scripts/build-site.sh ../openrsc/Client_Base/Cache site
+# serve it with anything:
+(cd site && python3 -m http.server 8080)   # → http://localhost:8080
 ```
 
-Output, for each floor `f` in `0..3`:
+### How it works
 
-- `floor-f.png`       — terrain colour raster (3 px/tile, matches the stock minimap)
-- `floor-f.walls.png` — walls + diagonals + impassable-tile overlay (transparent RGBA PNG)
-- `floor-f.geojson`   — `FeatureCollection` of door edges and NPC spawns (each spawn carries id,
-  name, combat level, aggressive flag and, when it roams, a wander-box polygon)
+The viewer fetches everything from absolute static paths (`/api/world3d/*`,
+`/api/map/*`, `/api/npc-spawns`, `/api/items/wearables`). **Player sprites are
+composited in the browser** (`playerCompositor.ts`) from a per-layer atlas: the
+bake ships every wearable sprite reduced to recolour-neutral pixels, and the
+viewer replays the engine's recolour + layering to draw any `layers|colours`
+appearance token — so all combinations render with nothing pre-baked per token.
+Control verbs (`sendWalk`/`sendInteract`) are no-ops in the open-source build —
+there's nothing to command — so the demo is purely a viewer.
+
+**The living-world demo.** `map2d`'s `DemoEntityBaker` (run via `-cp` in the
+build script, since it needs the `CollisionMap`) simulates the server's roam
+behaviour offline: **every** NPC spawn gets a ~5-minute **collision-aware** wander
+track, plus a few players around Lumbridge. The tracks are stored in
+`/api/demo/entities.json` and looped client-side. With the in-view **simulation**
+toggle on (default) the whole world is alive; untick it to drop the live NPCs and
+reveal the raw `/api/npc-spawns` spawn table (ghost markers) instead.
+
+## Dev
+
+```bash
+# viewer with hot reload, served against a baked asset dir:
+cd viewer && WORLD3D_SITE=/path/to/site npm run dev
+
+# 2D map renderer:
+mvn -pl map2d -am package && java -jar map2d/target/rsc-map-renderer.jar map-out
+```

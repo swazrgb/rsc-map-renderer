@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>openrsc.bot</groupId>
+    <artifactId>rsc-map-renderer</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <relativePath>../pom.xml</relativePath>
+  </parent>
+
+  <artifactId>game-data</artifactId>
+  <packaging>jar</packaging>
+
+  <!--
+    Shared OpenRSC game-data loaders — the single source of truth for locating
+    and parsing the server's on-disk data tree, with zero bot/render coupling:
+
+      ServerConf              locates the `conf/server` tree (defs/locs/data)
+      SceneryLocs/Boundary/Npc  parse the JSON placement files under defs/locs
+      jag.Jag{Archive,File,Landscape}  read the classic .jag/.mem map archives
+
+    Consumed by every module in this repo (map2d, world3d-bake) and, via a
+    relativePath <module> include, by the private headless-bot-java reactor.
+    Package `openrsc.gamedata.*` is deliberately independent of any consumer's
+    internal packages.
+  -->
+
+  <dependencies>
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-api</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>tools.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+    </dependency>
+    <!-- Classic RSC map archives (.jag/.mem) are headerless-BZh1 bzip2;
+         JagArchive decompresses them with commons-compress. -->
+    <dependency>
+      <groupId>org.apache.commons</groupId>
+      <artifactId>commons-compress</artifactId>
+      <version>1.28.0</version>
+    </dependency>
+  </dependencies>
+</project>

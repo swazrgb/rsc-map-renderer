@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>openrsc.bot</groupId>
+    <artifactId>rsc-map-renderer</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <relativePath>../pom.xml</relativePath>
+  </parent>
+
+  <artifactId>map2d</artifactId>
+  <packaging>jar</packaging>
+
+  <!--
+    Standalone per-floor 2D world-map renderer. Loads the OpenRSC server's
+    game-data tree and bakes, per floor, a terrain colour raster (PNG), a
+    walls / diagonals / blocked-tile overlay (transparent PNG) and a GeoJSON
+    feature layer (doors + NPC spawns) without any of the bot's networking,
+    scripting or Spring runtime. Game-data loading (conf tree, locs, JAG
+    landscape) comes from the shared `game-data` module.
+  -->
+
+  <dependencies>
+    <dependency>
+      <groupId>openrsc.bot</groupId>
+      <artifactId>game-data</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-api</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>tools.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+    </dependency>
+    <!-- Classic RSC map archives (.jag/.mem) are headerless-BZh1 bzip2;
+         JagArchive decompresses them with commons-compress. Also pulled in
+         transitively by game-data, declared here for the 2D loaders too. -->
+    <dependency>
+      <groupId>org.apache.commons</groupId>
+      <artifactId>commons-compress</artifactId>
+      <version>1.28.0</version>
+    </dependency>
+    <!-- Runtime SLF4J binding so the renderer's progress logs are visible. -->
+    <dependency>
+      <groupId>ch.qos.logback</groupId>
+      <artifactId>logback-classic</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <finalName>rsc-map-renderer</finalName>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+      </plugin>
+
+      <!-- Build a runnable fat jar: `java -jar target/rsc-map-renderer.jar`. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals>
+              <goal>shade</goal>
+            </goals>
+            <configuration>
+              <transformers>
+                <transformer
+                    implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                  <mainClass>openrsc.map.MapRendererMain</mainClass>
+                </transformer>
+                <transformer
+                    implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+              </transformers>
+              <filters>
+                <filter>
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <exclude>module-info.class</exclude>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                  </excludes>
+                </filter>
+              </filters>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+      <!-- Convenience: `mvn exec:java` runs the renderer without packaging. -->
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <configuration>
+          <mainClass>openrsc.map.MapRendererMain</mainClass>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>
