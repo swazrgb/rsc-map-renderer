@@ -3,18 +3,16 @@ package openrsc.maprender.bake;
 import com.openrsc.client.entityhandling.EntityHandler;
 import com.openrsc.client.entityhandling.defs.NPCDef;
 import com.openrsc.client.entityhandling.defs.extras.AnimationDef;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.openrsc.client.model.Sprite;
 import java.awt.image.BufferedImage;
 import java.io.File;
-import java.io.PrintWriter;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import javax.imageio.ImageIO;
 import openrsc.gamedata.NpcLocs;
-import orsc.graphics.two.GraphicsController;
 import orsc.graphics.two.HeadlessSurface;
 
 /**
@@ -56,6 +54,20 @@ public final class NpcSpriteAtlasBaker {
    * unscaled — the viewer is resolution-independent. */
   private static final double SCALE = 0.3;
 
+  /**
+   * Per-npc metadata for the remote-control menu + combat animation. {@code atk}/{@code lvl}
+   * are present only for attackable npcs; {@code cmd1}/{@code cmd2} only when the def sets them.
+   */
+  @JsonInclude(JsonInclude.Include.NON_NULL)
+  private record NpcMeta(int id, int w, int h, int cs, int ws,
+                         Integer atk, Integer lvl, String cmd1, String cmd2, String name) {}
+
+  /** One baked frame: atlas rect + bottom-centre anchor, keyed by (id, order, frame). */
+  private record NpcFrame(int id, int o, int f, int x, int y, int w, int h, int ax, int ay) {}
+
+  private record Atlas(long baked, double scale, int width, int height,
+                       List<NpcMeta> npcs, List<NpcFrame> frames) {}
+
   public static void export(File outDir, java.util.function.Consumer<String> log)
       throws Exception {
     var conf = openrsc.gamedata.ServerConf.resolve();
@@ -72,7 +84,7 @@ public final class NpcSpriteAtlasBaker {
 
     record Frame(int id, int order, int frame, BufferedImage img, int ax, int ay) {}
     List<Frame> frames = new ArrayList<>();
-    List<String> meta = new ArrayList<>();
+    List<NpcMeta> meta = new ArrayList<>();
     int skipped = 0;
 
     for (int id : ids) {
@@ -104,14 +116,13 @@ public final class NpcSpriteAtlasBaker {
         String cmd1 = def.getCommand1();
         String cmd2 = def.getCommand2();
         int lvl = (def.getStr() + def.getAtt() + def.getDef() + def.getHits()) / 4;
-        meta.add("{\"id\":" + id + ",\"w\":" + def.getCamera1() + ",\"h\":" + def.getCamera2()
-            + ",\"cs\":" + def.getCombatModel() + ",\"ws\":" + def.getWalkModel()
-            + (def.isAttackable() ? ",\"atk\":1,\"lvl\":" + lvl : "")
-            + (cmd1 == null || cmd1.isBlank()
-                ? "" : ",\"cmd1\":\"" + cmd1.replace("\"", "") + "\"")
-            + (cmd2 == null || cmd2.isBlank()
-                ? "" : ",\"cmd2\":\"" + cmd2.replace("\"", "") + "\"")
-            + ",\"name\":\"" + def.getName().replace("\"", "") + "\"}");
+        meta.add(new NpcMeta(id, def.getCamera1(), def.getCamera2(),
+            def.getCombatModel(), def.getWalkModel(),
+            def.isAttackable() ? 1 : null,
+            def.isAttackable() ? lvl : null,
+            cmd1 == null || cmd1.isBlank() ? null : cmd1,
+            cmd2 == null || cmd2.isBlank() ? null : cmd2,
+            def.getName()));
       } else {
         skipped++;
       }
@@ -137,27 +148,17 @@ public final class NpcSpriteAtlasBaker {
     }
     int atlasH = penY + shelfH + PADDING;
     BufferedImage atlas = new BufferedImage(ATLAS_WIDTH, atlasH, BufferedImage.TYPE_INT_ARGB);
-    StringBuilder fj = new StringBuilder();
+    List<NpcFrame> frameMeta = new ArrayList<>(frames.size());
     for (int i = 0; i < frames.size(); i++) {
       Frame f = frames.get(i);
       int[] r = rects.get(i);
       atlas.getGraphics().drawImage(f.img(), r[0], r[1], null);
-      if (fj.length() > 0) {
-        fj.append(',');
-      }
-      fj.append("{\"id\":").append(f.id()).append(",\"o\":").append(f.order())
-          .append(",\"f\":").append(f.frame())
-          .append(",\"x\":").append(r[0]).append(",\"y\":").append(r[1])
-          .append(",\"w\":").append(f.img().getWidth()).append(",\"h\":").append(f.img().getHeight())
-          .append(",\"ax\":").append(f.ax()).append(",\"ay\":").append(f.ay()).append('}');
+      frameMeta.add(new NpcFrame(f.id(), f.order(), f.frame(), r[0], r[1],
+          f.img().getWidth(), f.img().getHeight(), f.ax(), f.ay()));
     }
     ImageIO.write(atlas, "png", new File(outDir, "npc-atlas.png"));
-    try (PrintWriter w = new PrintWriter(new File(outDir, "npc-atlas.json"), StandardCharsets.UTF_8)) {
-      w.print("{\"baked\":" + System.currentTimeMillis()
-          + ",\"scale\":" + SCALE
-          + ",\"width\":" + ATLAS_WIDTH + ",\"height\":" + atlasH
-          + ",\"npcs\":[" + String.join(",", meta) + "],\"frames\":[" + fj + "]}");
-    }
+    BakeJson.MAPPER.writeValue(new File(outDir, "npc-atlas.json"),
+        new Atlas(System.currentTimeMillis(), SCALE, ATLAS_WIDTH, atlasH, meta, frameMeta));
     log.accept("npc sprite atlas: " + meta.size() + " npcs, " + frames.size()
         + " frames, " + ATLAS_WIDTH + "x" + atlasH + (skipped > 0 ? ", skipped " + skipped : ""));
   }

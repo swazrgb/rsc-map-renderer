@@ -19,17 +19,11 @@ import java.util.zip.ZipFile;
 public final class World {
 	private final int[] colorToResource = new int[256];
 	private final int[][] tileElevationCache = new int[96][96];
-	private final int[][] pathFindSource = new int[96][96];
 	private final int[][] tileDirection = new int[96][96];
 	private final boolean showInvisibleWalls = false;
-	public int baseMediaSprite = 750;
 	public int[][] collisionFlags = new int[96][96];
 	public int[] faceTileX = new int[18432];
 	public int[] faceTileZ = new int[18432];
-	public byte[] landscapePack;
-	public byte[] mapPack;
-	public byte[] memberLandscapePack;
-	public boolean playerAlive = false;
 	public RSModel[][] modelWallGrid = new RSModel[4][64];
 	public RSModel[][] modelRoofGrid = new RSModel[4][64];
 	// private final byte[][] elevation = new byte[4][2304];
@@ -45,14 +39,10 @@ public final class World {
 	private Scene scene;
 	private RSModel modelAccumulate;
 	private RSModel[] modelLandscapeGrid = new RSModel[64];
-	private Sector[] worldMapSector = new Sector[4];
-	private int mapPointX = 0;
-	private int mapPointZ = 0;
 	private ZipFile tileArchive;
 	private Sector[] sectors;
-	public String mapHash;
 
-	/**
+  /**
 	 * Optional external sector source. When set, {@link #loadSection} pulls
 	 * sectors from here (built from the authoritative JAG terrain) instead of the
 	 * {@code Authentic_Landscape.orsc} ZIP. See {@link SectorProvider}.
@@ -71,7 +61,7 @@ public final class World {
 	 * modelRoofGrid[...])} the client does in its login-screen viewport.
 	 */
 	public void removeRoofs(int floor) {
-		// Mirror the stock/idlersc in-game hide-roofs (mudclient ~4864): for a
+		// Mirror the stock in-game hide-roofs (mudclient ~4864): for a
 		// player on `floor`, remove modelRoofGrid[floor] plus the roof AND wall
 		// grids of the two storeys above it. This drops rooftops and upper-floor
 		// structures (chimneys, second-storey walls) while KEEPING this floor's
@@ -242,17 +232,6 @@ public final class World {
 	/** Scenery model cache, indexed by {@code GameObjectDef.modelID}. */
 	private RSModel[] modelCache;
 
-	/**
-	 * {@code setDiffuseLight} args for placed scenery (default = stock client's
-	 * oblique side light). For an overhead map, lighting from above instead lets
-	 * up-facing tops (tree canopies, etc.) read bright rather than dark.
-	 */
-	private int slV1 = 48, slV2 = 48, slDirY = -10, slV4 = -122, slDirX = -50, slDirZ = -50;
-
-	public void setSceneryLight(int v1, int v2, int dirY, int v4, int dirX, int dirZ) {
-		slV1 = v1; slV2 = v2; slDirY = dirY; slV4 = v4; slDirX = dirX; slDirZ = dirZ;
-	}
-
 	public void setModelCache(RSModel[] modelCache) {
 		this.modelCache = modelCache;
 	}
@@ -274,51 +253,6 @@ public final class World {
 			+ " Xrange=" + (maxX - minX) + " Zrange=" + (maxZ - minZ)
 			+ "  (small X or Z range => vertical billboard)");
 		m.debugTopDownCoverage(objectId);
-	}
-
-	/**
-	 * Place one scenery object's 3D model into the scene at a region-local tile,
-	 * mirroring the stock client's placement (see {@link #addLoginScreenModels}
-	 * and the in-game object-spawn path): clone the model, translate to the tile
-	 * centre at terrain elevation, rotate by direction, and light it.
-	 *
-	 * @param id scenery object id (into {@code EntityHandler.getObjectDef})
-	 * @param localX,localZ tile within the loaded 96x96 region (0..95)
-	 * @param direction object orientation (0..7)
-	 */
-	/** Diagnostics for {@link #placeObject}. */
-	public static int dbgPlaced, dbgNullDef, dbgBadModelId, dbgNullBase, dbgEmptyBase;
-
-	public void placeObject(int id, int localX, int localZ, int direction) {
-		if (modelCache == null) {
-			return;
-		}
-		com.openrsc.client.entityhandling.defs.GameObjectDef def =
-			com.openrsc.client.entityhandling.EntityHandler.getObjectDef(id);
-		if (def == null) { dbgNullDef++; return; }
-		if (def.modelID < 0 || def.modelID >= modelCache.length) { dbgBadModelId++; return; }
-		RSModel base = modelCache[def.modelID];
-		if (base == null) { dbgNullBase++; return; }
-		if (base.vertHead <= 1) { dbgEmptyBase++; return; }
-		dbgPlaced++;
-		int width = def.getWidth();
-		int height = def.getHeight();
-		int xSize;
-		int zSize;
-		if (direction == 0 || direction == 4) {
-			zSize = height;
-			xSize = width;
-		} else {
-			xSize = height;
-			zSize = width;
-		}
-		RSModel copy = base.copyModel(false, -120, false, false, true);
-		int xTranslate = (xSize + localX + localX) * 128 / 2;
-		int zTranslate = (zSize + localZ + localZ) * 128 / 2;
-		copy.translate2(xTranslate, -this.getElevation(xTranslate, zTranslate), zTranslate);
-		copy.setRot256(0, direction * 32, 0);
-		this.scene.addModel(copy);
-		copy.setDiffuseLight(slV1, slV2, slDirY, slV4, slDirX, slDirZ);
 	}
 
 	public World(Scene var1, GraphicsController var2) {
@@ -351,7 +285,6 @@ public final class World {
 				else
 					path = Config.F_CACHE_DIR + File.separator + "video" + File.separator + "Authentic_Landscape.orsc";
 				tileArchive = new ZipFile(new File(path));
-				mapHash = generateMapHash(path);
 			} catch (Exception e) {
 				// Tolerant: the headless renderer feeds sectors via setSectorProvider
 				// (terrain sourced from the JAG, not the .orsc landscape), so a missing
@@ -363,14 +296,6 @@ public final class World {
 		} catch (RuntimeException var4) {
 			throw GenUtil.makeThrowable(var4,
 				"k.<init>(" + (var1 != null ? "{...}" : "null") + ',' + (var2 != null ? "{...}" : "null") + ')');
-		}
-	}
-
-	private String generateMapHash(String path) {
-		try {
-			return GenUtil.getMD5Checksum(path);
-		} catch (Exception e) {
-			return "failed-" + path;
 		}
 	}
 
@@ -431,92 +356,6 @@ public final class World {
 		}
 	}
 
-	public final void addLoginScreenModels(RSModel[] modelTable) {
-		try {
-
-
-			for (int x = 0; x < 94; ++x)
-				for (int z = 0; z < 94; ++z)
-					if (this.getWallDiagonal(x, z) > 48000 && this.getWallDiagonal(x, z) < 60000) {
-						int diagWall = this.getWallDiagonal(x, z) - 48001;
-						int dir = this.getTileDirection((int) x, z);
-						int xSize;
-						int zSize;
-						if (dir == 0 || dir == 4) {
-							zSize = Objects.requireNonNull(EntityHandler.getObjectDef(diagWall)).getHeight();
-							xSize = Objects.requireNonNull(EntityHandler.getObjectDef(diagWall)).getWidth();
-						} else {
-							xSize = Objects.requireNonNull(EntityHandler.getObjectDef(diagWall)).getHeight();
-							zSize = Objects.requireNonNull(EntityHandler.getObjectDef(diagWall)).getWidth();
-						}
-
-						this.addGameObject_UpdateCollisionMap(x, z, diagWall, false);
-						RSModel copy = modelTable[Objects.requireNonNull(EntityHandler.getObjectDef(diagWall)).modelID].copyModel(false, -120,
-							false, false, true);
-						int xTranslate = (xSize + x + x) * 128 / 2;
-						int zTranslate = (zSize + z + z) * 128 / 2;
-						copy.translate2(xTranslate, -this.getElevation(xTranslate, zTranslate), zTranslate);
-						copy.setRot256(0, this.getTileDirection(x, z) * 32, 0);
-						this.scene.addModel(copy);
-						copy.setDiffuseLight(48, 48, -10, -122, -50, -50);
-						if (xSize > 1 || zSize > 1)
-							for (int xi = x; x + xSize > xi; ++xi)
-								for (int zi = z; zSize + z > zi; ++zi)
-									if ((x < xi || z < zi) && diagWall == this.getWallDiagonal(xi, zi) - 48001) {
-										zTranslate = zi;
-										xTranslate = xi;
-										byte var14 = 0;
-										if (xi >= 48 && zi < 48) {
-											xTranslate = xi - 48;
-											var14 = 1;
-										} else if (xi < 48 && zi >= 48) {
-											var14 = 2;
-											zTranslate = zi - 48;
-										} else if (xi >= 48 && zi >= 48) {
-											var14 = 3;
-											zTranslate = zi - 48;
-											xTranslate = xi - 48;
-										}
-										sectors[var14].getTile(xTranslate, zTranslate).diagonalWalls = 0;
-										// this.wallsDiagonal[var14][xTranslate
-										// * 48 + zTranslate] = 0;
-									}
-					}
-		} catch (RuntimeException var15) {
-			throw GenUtil.makeThrowable(var15, "k.FA(" + (modelTable != null ? "{...}" : "null") + ',' + "dummy" + ')');
-		}
-	}
-
-	public final void applyWallToCollisionFlags(int wallID, int x, int z, int dir) {
-		try {
-
-			if (x >= 0 && z >= 0 && x < 95 && z < 95)
-				if (Objects.requireNonNull(EntityHandler.getDoorDef(wallID)).getDoorType() == 1) {
-					if (dir == 0) {
-						this.collisionFlags[x][z] = FastMath.bitwiseOr(this.collisionFlags[x][z],
-							CollisionFlag.WALL_NORTH);
-						if (z > 0)
-							this.collisionFlagBitwiseOr(x, (int) (z - 1), CollisionFlag.WALL_SOUTH);
-					} else if (dir == 1) {
-						this.collisionFlags[x][z] = FastMath.bitwiseOr(this.collisionFlags[x][z],
-							CollisionFlag.WALL_EAST);
-						if (x > 0)
-							this.collisionFlagBitwiseOr(x - 1, (int) z, CollisionFlag.WALL_WEST);
-					} else if (dir != 2) {
-						if (dir == 3)
-							this.collisionFlags[x][z] = FastMath.bitwiseOr(this.collisionFlags[x][z],
-								CollisionFlag.FULL_BLOCK_B);
-					} else
-						this.collisionFlags[x][z] = FastMath.bitwiseOr(this.collisionFlags[x][z],
-							CollisionFlag.FULL_BLOCK_A);
-
-					this.setVertexLightArea(x, z, 1, 1);
-				}
-		} catch (RuntimeException var7) {
-			throw GenUtil.makeThrowable(var7, "k.W(" + z + ',' + wallID + ',' + dir + ',' + x + ',' + 11715 + ')');
-		}
-	}
-
 	private void applyWallToElevationCache(int wallID, int x1, int z1, int x2, int z2) {
 		try {
 
@@ -540,15 +379,6 @@ public final class World {
 			this.collisionFlags[x][z] = FastMath.bitwiseOr(this.collisionFlags[x][z], val);
 		} catch (RuntimeException var6) {
 			throw GenUtil.makeThrowable(var6, "k.O(" + val + ',' + z + ',' + "dummy" + ',' + x + ')');
-		}
-	}
-
-	private void collisionFlagModify(int x, int z, int and, int or) {
-		try {
-
-			this.collisionFlags[x][z] = FastMath.bitwiseAnd(this.collisionFlags[x][z], and - or);
-		} catch (RuntimeException var6) {
-			throw GenUtil.makeThrowable(var6, "k.E(" + z + ',' + and + ',' + x + ',' + or + ')');
 		}
 	}
 
@@ -593,186 +423,6 @@ public final class World {
 		} catch (RuntimeException var12) {
 			throw GenUtil.makeThrowable(var12,
 				"k.C(" + bridge00_11 + ',' + "dummy" + ',' + res01 + ',' + tileX + ',' + tileZ + ',' + res10 + ')');
-		}
-	}
-
-	/**
-	 * @param pathX
-	 * @param pathZ
-	 * @param startX
-	 * @param startZ
-	 * @param xLow
-	 * @param xHigh
-	 * @param zLow
-	 * @param zHigh
-	 * @param reachBorder
-	 * @return the number of nodes in the path
-	 */
-	public final int findPath(int[] pathX, int[] pathZ, int startX, int startZ, int xLow, int xHigh, int zLow,
-							  int zHigh, boolean reachBorder) {
-		// System.out.println("Find path: " + startX + "," + startZ + " -> [" +
-		// xLow + "-" + xHigh + "," + zLow + "-"
-		// + zHigh + "] Border good: " + reachBorder);
-		try {
-			for (int x = 0; x < 96; ++x)
-				for (int y = 0; y < 96; ++y)
-					this.pathFindSource[x][y] = 0;
-
-
-			byte var20 = 0;
-			int openListRead = 0;
-			int x = startX;
-			int z = startZ;
-			this.pathFindSource[startX][startZ] = 99;
-			pathX[var20] = startX;
-			pathZ[var20] = startZ;
-			int openListWrite = var20 + 1;
-			int openListSize = pathX.length;
-			boolean complete = false;
-
-			while (openListRead != openListWrite) {
-				x = pathX[openListRead];
-				z = pathZ[openListRead];
-				openListRead = (1 + openListRead) % openListSize;
-				if (x >= xLow && x <= xHigh && z >= zLow && z <= zHigh) {
-					// System.out.println("complete");
-					complete = true;
-					break;
-				}
-
-				if (reachBorder) {
-					if (x > 0 && xLow <= x - 1 && xHigh >= x - 1 && zLow <= z && zHigh >= z
-						&& (this.collisionFlags[x - 1][z] & CollisionFlag.WALL_WEST) == 0) {
-						complete = true;
-						break;
-					}
-
-					if (x < 95 && 1 + x >= xLow && x + 1 <= xHigh && z >= zLow && zHigh >= z
-						&& (CollisionFlag.WALL_EAST & this.collisionFlags[x + 1][z]) == 0) {
-						complete = true;
-						break;
-					}
-
-					if (z > 0 && xLow <= x && xHigh >= x && z - 1 >= zLow && zHigh >= z - 1
-						&& (CollisionFlag.WALL_SOUTH & this.collisionFlags[x][z - 1]) == 0) {
-						complete = true;
-						break;
-					}
-
-					if (z < 95 && xLow <= x && x <= xHigh && zLow <= z + 1 && zHigh >= z + 1
-						&& (CollisionFlag.WALL_NORTH & this.collisionFlags[x][z + 1]) == 0) {
-						complete = true;
-						break;
-					}
-				}
-
-				if (x > 0 && this.pathFindSource[x - 1][z] == 0
-					&& (this.collisionFlags[x - 1][z] & CollisionFlag.WEST_BLOCKED) == 0) {
-					pathX[openListWrite] = x - 1;
-					pathZ[openListWrite] = z;
-					this.pathFindSource[x - 1][z] = CollisionFlag.SOURCE_WEST;
-					openListWrite = (openListWrite + 1) % openListSize;
-				}
-
-				if (x < 95 && this.pathFindSource[1 + x][z] == 0
-					&& (this.collisionFlags[1 + x][z] & CollisionFlag.EAST_BLOCKED) == 0) {
-					pathX[openListWrite] = 1 + x;
-					pathZ[openListWrite] = z;
-					this.pathFindSource[x + 1][z] = CollisionFlag.SOURCE_EAST;
-					openListWrite = (1 + openListWrite) % openListSize;
-				}
-
-				if (z > 0 && this.pathFindSource[x][z - 1] == 0
-					&& (CollisionFlag.SOUTH_BLOCKED & this.collisionFlags[x][z - 1]) == 0) {
-					pathX[openListWrite] = x;
-					pathZ[openListWrite] = z - 1;
-					this.pathFindSource[x][z - 1] = CollisionFlag.SOURCE_SOUTH;
-					openListWrite = (openListWrite + 1) % openListSize;
-				}
-
-				if (z < 95 && this.pathFindSource[x][1 + z] == 0
-					&& (CollisionFlag.NORTH_BLOCKED & this.collisionFlags[x][1 + z]) == 0) {
-					pathX[openListWrite] = x;
-					pathZ[openListWrite] = z + 1;
-					this.pathFindSource[x][z + 1] = CollisionFlag.SOURCE_NORTH;
-					openListWrite = (openListWrite + 1) % openListSize;
-				}
-
-				if (x > 0 && z > 0 && (CollisionFlag.SOUTH_BLOCKED & this.collisionFlags[x][z - 1]) == 0
-					&& (CollisionFlag.WEST_BLOCKED & this.collisionFlags[x - 1][z]) == 0
-					&& (CollisionFlag.SOUTH_WEST_BLOCKED & this.collisionFlags[x - 1][z - 1]) == 0
-					&& this.pathFindSource[x - 1][z - 1] == 0) {
-					pathX[openListWrite] = x - 1;
-					pathZ[openListWrite] = z - 1;
-					this.pathFindSource[x - 1][z - 1] = CollisionFlag.SOURCE_SOUTH_WEST;
-					openListWrite = (1 + openListWrite) % openListSize;
-				}
-
-				if (x < 95 && z > 0 && (this.collisionFlags[x][z - 1] & CollisionFlag.SOUTH_BLOCKED) == 0
-					&& (this.collisionFlags[1 + x][z] & CollisionFlag.EAST_BLOCKED) == 0
-					&& (this.collisionFlags[x + 1][z - 1] & CollisionFlag.SOUTH_EAST_BLOCKED) == 0
-					&& this.pathFindSource[1 + x][z - 1] == 0) {
-					pathX[openListWrite] = 1 + x;
-					pathZ[openListWrite] = z - 1;
-					this.pathFindSource[x + 1][z - 1] = CollisionFlag.SOURCE_SOUTH_EAST;
-					openListWrite = (1 + openListWrite) % openListSize;
-				}
-
-				if (x > 0 && z < 95 && (this.collisionFlags[x][1 + z] & CollisionFlag.NORTH_BLOCKED) == 0
-					&& (this.collisionFlags[x - 1][z] & CollisionFlag.WEST_BLOCKED) == 0
-					&& (this.collisionFlags[x - 1][1 + z] & CollisionFlag.NORTH_WEST_BLOCKED) == 0
-					&& this.pathFindSource[x - 1][1 + z] == 0) {
-					pathX[openListWrite] = x - 1;
-					pathZ[openListWrite] = 1 + z;
-					openListWrite = (1 + openListWrite) % openListSize;
-					this.pathFindSource[x - 1][z + 1] = CollisionFlag.SOURCE_NORTH_WEST;
-				}
-
-				if (x < 95 && z < 95 && (CollisionFlag.NORTH_BLOCKED & this.collisionFlags[x][1 + z]) == 0
-					&& (this.collisionFlags[x + 1][z] & CollisionFlag.EAST_BLOCKED) == 0
-					&& (CollisionFlag.NORTH_EAST_BLOCKED & this.collisionFlags[x + 1][1 + z]) == 0
-					&& this.pathFindSource[x + 1][1 + z] == 0) {
-					pathX[openListWrite] = 1 + x;
-					pathZ[openListWrite] = 1 + z;
-					this.pathFindSource[1 + x][1 + z] = CollisionFlag.SOURCE_NORTH_EAST;
-					openListWrite = (openListWrite + 1) % openListSize;
-				}
-			}
-
-			if (!complete)
-				return -1;
-			else {
-				pathX[0] = x;
-				pathZ[0] = z;
-				openListRead = 1;
-
-				int prevSource;
-				int source = prevSource = this.pathFindSource[x][z];
-				while (x != startX || z != startZ) {
-					if (prevSource != source) {
-						prevSource = source;
-						pathX[openListRead] = x;
-						pathZ[openListRead++] = z;
-					}
-
-					if ((source & CollisionFlag.SOURCE_SOUTH) != 0)
-						++z;
-					else if ((CollisionFlag.SOURCE_NORTH & source) != 0)
-						--z;
-
-					if ((CollisionFlag.SOURCE_WEST & source) != 0)
-						++x;
-					else if ((source & CollisionFlag.SOURCE_EAST) != 0)
-						--x;
-					source = this.pathFindSource[x][z];
-				}
-				return openListRead;
-			}
-		} catch (RuntimeException var19) {
-			throw GenUtil.makeThrowable(var19,
-				"k.Q(" + (pathX != null ? "{...}" : "null") + ',' + xLow + ',' + "dummy" + ',' + zHigh + ','
-					+ (pathZ != null ? "{...}" : "null") + ',' + startX + ',' + startZ + ',' + xHigh + ','
-					+ zLow + ',' + reachBorder + ')');
 		}
 	}
 
@@ -1777,91 +1427,6 @@ public final class World {
 		}
 	}
 
-	public final void removeGameObject_CollisonFlags(int id, int x, int z) {
-		try {
-
-			if (x >= 0 && z >= 0 && x < 95 && z < 95)
-				if (Objects.requireNonNull(EntityHandler.getObjectDef(id)).getType() == 1 || Objects.requireNonNull(EntityHandler.getObjectDef(id)).getType() == 2) {
-					int var5 = this.getTileDirection((int) x, z);
-					int var6;
-					int var7;
-					if (var5 != 0 && var5 != 4) {
-						var7 = Objects.requireNonNull(EntityHandler.getObjectDef(id)).getWidth();
-						var6 = Objects.requireNonNull(EntityHandler.getObjectDef(id)).getHeight();
-					} else {
-						var7 = Objects.requireNonNull(EntityHandler.getObjectDef(id)).getWidth();
-						var6 = Objects.requireNonNull(EntityHandler.getObjectDef(id)).getHeight();
-					}
-
-					for (int var8 = x; x + var6 > var8; ++var8)
-						for (int var9 = z; var7 + z > var9; ++var9)
-							if (Objects.requireNonNull(EntityHandler.getObjectDef(id)).getType() != 1) {
-								if (var5 == 0) {
-									this.collisionFlags[var8][var9] = FastMath
-										.bitwiseAnd(this.collisionFlags[var8][var9], ~CollisionFlag.WALL_EAST);
-									if (var8 > 0)
-										this.collisionFlagModify(var8 - 1, var9, 0xFFFF, CollisionFlag.WALL_WEST);
-								} else if (var5 != 2) {
-									if (var5 != 4) {
-										if (var5 == 6) {
-											this.collisionFlags[var8][var9] = FastMath.bitwiseAnd(
-												this.collisionFlags[var8][var9], ~CollisionFlag.WALL_NORTH);
-											if (var9 > 0)
-												this.collisionFlagModify(var8, var9 - 1, 0xFFFF,
-													CollisionFlag.WALL_SOUTH);
-										}
-									} else {
-										this.collisionFlags[var8][var9] = FastMath
-											.bitwiseAnd(this.collisionFlags[var8][var9], ~CollisionFlag.WALL_WEST);
-										if (var8 < 95)
-											this.collisionFlagModify(1 + var8, var9, 0xFFFF, CollisionFlag.WALL_EAST);
-									}
-								} else {
-									this.collisionFlags[var8][var9] = FastMath
-										.bitwiseAnd(this.collisionFlags[var8][var9], ~CollisionFlag.WALL_SOUTH);
-									if (var9 < 95)
-										this.collisionFlagModify(var8, var9 + 1, 0xFFFF, CollisionFlag.WALL_NORTH);
-								}
-							} else
-								this.collisionFlags[var8][var9] = FastMath.bitwiseAnd(this.collisionFlags[var8][var9],
-									~CollisionFlag.FULL_BLOCK_C);
-
-					this.setVertexLightArea(x, z, var6, var7);
-				}
-		} catch (RuntimeException var10) {
-			throw GenUtil.makeThrowable(var10, "k.D(" + id + ',' + x + ',' + z + ',' + 4081 + ')');
-		}
-	}
-
-	public final void removeWallObject_CollisionFlags(boolean var1, int dir, int z, int x, int id) {
-		try {
-
-			if (x >= 0 && z >= 0 && x < 95 && z < 95)
-				if (Objects.requireNonNull(EntityHandler.getDoorDef(id)).getDoorType() == 1) {
-					if (dir == 0) {
-						this.collisionFlags[x][z] = FastMath.bitwiseAnd(this.collisionFlags[x][z],
-							~CollisionFlag.WALL_NORTH);
-						if (z > 0)
-							this.collisionFlagModify(x, z - 1, 0xFFFF, CollisionFlag.WALL_SOUTH);
-					} else if (dir == 1) {
-						this.collisionFlags[x][z] = FastMath.bitwiseAnd(this.collisionFlags[x][z],
-							~CollisionFlag.WALL_EAST);
-						if (x > 0)
-							this.collisionFlagModify(x - 1, z, 0xFFFF, CollisionFlag.WALL_WEST);
-					} else if (dir == 2)
-						this.collisionFlags[x][z] = FastMath.bitwiseAnd(this.collisionFlags[x][z],
-							~CollisionFlag.FULL_BLOCK_A);
-					else if (dir == 3)
-						this.collisionFlags[x][z] = FastMath.bitwiseAnd(this.collisionFlags[x][z],
-							~CollisionFlag.FULL_BLOCK_B);
-
-					this.setVertexLightArea(x, z, 1, 1);
-				}
-		} catch (RuntimeException var7) {
-			throw GenUtil.makeThrowable(var7, "k.IA(" + true + ',' + dir + ',' + z + ',' + x + ',' + id + ')');
-		}
-	}
-
 	private void resetModels() {
 		try {
 			boolean removeAllObjectsOnReset = true;
@@ -1997,173 +1562,6 @@ public final class World {
 		}
 	}
 
-	public void setWorldMapPoint(int offsetX, int offsetY) {
-		mapPointX = offsetX;
-		mapPointZ = offsetY;
-		System.out.println(mapPointX + ", " + mapPointZ);
-	}
-
-	public void generateWorldMap() {
-		int plane = 0;
-
-		int chunkX = (24 + mapPointX) / 48;
-		int chunkZ = (24 + mapPointZ) / 48;
-
-		this.loadWorldmapSection(0, plane, chunkX - 1, chunkZ - 1);
-		this.loadWorldmapSection(1, plane, chunkX, chunkZ - 1);
-		this.loadWorldmapSection(2, plane, chunkX - 1, chunkZ);
-		this.loadWorldmapSection(3, plane, chunkX, chunkZ);
-
-		//this.minimapGraphics.blackScreen(true);
-		for (int x = 0; x < 95; ++x) {
-			for (int z = 0; z < 95; ++z) {
-				int colorResource = this.colorToResource[this.getTerrainColour(x, z)];
-				int res01 = colorResource;
-				int defaultVal = colorResource;
-				if (plane == 1 || plane == 2) {
-					colorResource = Scene.TRANSPARENT;
-					res01 = Scene.TRANSPARENT;
-					defaultVal = Scene.TRANSPARENT;
-				}
-				byte bridge00_11 = 0;
-				if (this.getTileDecorationID((int) x, z, plane) > 0) {
-					int decorID = this.getTileDecorationID((int) x, z, plane);
-					int decorType = Objects.requireNonNull(EntityHandler.getTileDef(decorID - 1)).getTileValue();
-					int decorType2 = this.isTileType2(x, z, plane, 15282);
-					colorResource = res01 = Objects.requireNonNull(EntityHandler.getTileDef(decorID - 1)).getColour();
-					if (decorType == 4) {
-						colorResource = 1;
-						res01 = 1;
-						if (decorID == 12) {
-							colorResource = 31;
-							res01 = 31;
-						}
-					}
-
-					if (decorType == 5) {
-						if (this.getWallDiagonal(x, z) > 0 && this.getWallDiagonal(x, z) < 24000)
-							if (this.getTileDecorationCacheVal(x - 1, z, plane, defaultVal) != Scene.TRANSPARENT && this
-								.getTileDecorationCacheVal(x, z - 1, plane, defaultVal) != Scene.TRANSPARENT) {
-								bridge00_11 = 0;
-								colorResource = this.getTileDecorationCacheVal(x - 1, z, plane, defaultVal);
-							} else if (this.getTileDecorationCacheVal(1 + x, z, plane, defaultVal) != Scene.TRANSPARENT
-								&& this.getTileDecorationCacheVal(x, 1 + z, plane,
-								defaultVal) != Scene.TRANSPARENT) {
-								res01 = this.getTileDecorationCacheVal(x + 1, z, plane, defaultVal);
-								bridge00_11 = 0;
-							} else if (this.getTileDecorationCacheVal(1 + x, z, plane, defaultVal) != Scene.TRANSPARENT
-								&& this.getTileDecorationCacheVal(x, z - 1, plane,
-								defaultVal) != Scene.TRANSPARENT) {
-								res01 = this.getTileDecorationCacheVal(x + 1, z, plane, defaultVal);
-								bridge00_11 = 1;
-							} else if (this.getTileDecorationCacheVal(x - 1, z, plane, defaultVal) != Scene.TRANSPARENT
-								&& this.getTileDecorationCacheVal(x, z + 1, plane,
-								defaultVal) != Scene.TRANSPARENT) {
-								bridge00_11 = 1;
-								colorResource = this.getTileDecorationCacheVal(x - 1, z, plane, defaultVal);
-							}
-					} else if (decorType != 2 || this.getWallDiagonal(x, z) > 0 && this.getWallDiagonal(x, z) < 24000)
-						if (decorType2 != this.isTileType2(x - 1, z, plane, 15282)
-							&& this.isTileType2(x, z - 1, plane, 15282) != decorType2) {
-							colorResource = defaultVal;
-							bridge00_11 = 0;
-						} else if (decorType2 != this.isTileType2(x + 1, z, plane, 15282)
-							&& this.isTileType2(x, z + 1, plane, 15282) != decorType2) {
-							bridge00_11 = 0;
-							res01 = defaultVal;
-						} else if (decorType2 != this.isTileType2(1 + x, z, plane, 15282)
-							&& this.isTileType2(x, z - 1, plane, 15282) != decorType2) {
-							res01 = defaultVal;
-							bridge00_11 = 1;
-						} else if (decorType2 != this.isTileType2(x - 1, z, plane, 15282)
-							&& decorType2 != this.isTileType2(x, 1 + z, plane, 15282)) {
-							colorResource = defaultVal;
-							bridge00_11 = 1;
-						}
-
-					if (Objects.requireNonNull(EntityHandler.getTileDef(decorID - 1)).getObjectType() != 0)
-						this.collisionFlags[x][z] = FastMath.bitwiseOr(this.collisionFlags[x][z],
-							CollisionFlag.FULL_BLOCK_C);
-
-					if (Objects.requireNonNull(EntityHandler.getTileDef(decorID - 1)).getTileValue() == 2)
-						this.collisionFlags[x][z] = FastMath.bitwiseOr(this.collisionFlags[x][z], CollisionFlag.OBJECT);
-				}
-				this.drawMinimapTile(x, (int) z, bridge00_11, res01, colorResource);
-			}
-		}
-		for (int x = 1; x < 95; ++x) {
-			for (int z = 1; z < 95; ++z) {
-				if (this.getTileDecorationID((int) x, z, plane) > 0 && Objects.requireNonNull(EntityHandler
-					.getTileDef(this.getTileDecorationID((int) x, z, plane) - 1)).getTileValue() == 4) {
-					int tileDecor = Objects.requireNonNull(EntityHandler.getTileDef(this.getTileDecorationID(x, z, plane) - 1)).getColour();
-					this.drawMinimapTile(x, z, 0, tileDecor, tileDecor);
-				} else if (this.getTileDecorationID((int) x, z, plane) == 0
-					|| Objects.requireNonNull(EntityHandler.getTileDef(this.getTileDecorationID(x, z, plane) - 1)).getTileValue() != 3) {
-					if (this.getTileDecorationID(x, z + 1, plane) > 0 && Objects.requireNonNull(EntityHandler
-						.getTileDef(this.getTileDecorationID(x, 1 + z, plane) - 1)).getTileValue() == 4) {
-						int tileDecor = Objects.requireNonNull(EntityHandler.getTileDef(this.getTileDecorationID((int) x, z + 1, plane) - 1))
-							.getColour();
-						this.drawMinimapTile(x, (int) z, 0, tileDecor, tileDecor);
-					}
-
-					if (this.getTileDecorationID((int) x, z - 1, plane) > 0 && Objects.requireNonNull(EntityHandler
-						.getTileDef(this.getTileDecorationID((int) x, z - 1, plane) - 1)).getTileValue() == 4) {
-						int tileDecor = Objects.requireNonNull(EntityHandler.getTileDef(this.getTileDecorationID((int) x, z - 1, plane) - 1))
-							.getColour();
-						this.drawMinimapTile(x, (int) z, 0, tileDecor, tileDecor);
-					}
-
-					if (this.getTileDecorationID((int) (x + 1), z, plane) > 0 && Objects.requireNonNull(EntityHandler
-						.getTileDef(this.getTileDecorationID((int) (x + 1), z, plane) - 1)).getTileValue() == 4) {
-						int tileDecor = Objects.requireNonNull(EntityHandler.getTileDef(this.getTileDecorationID((int) (1 + x), z, plane) - 1))
-							.getColour();
-						this.drawMinimapTile(x, (int) z, 0, tileDecor, tileDecor);
-					}
-
-					if (this.getTileDecorationID((int) (x - 1), z, plane) > 0 && Objects.requireNonNull(EntityHandler
-						.getTileDef(this.getTileDecorationID((int) (x - 1), z, plane) - 1)).getTileValue() == 4) {
-						int tileDecor = Objects.requireNonNull(EntityHandler.getTileDef(this.getTileDecorationID((int) (x - 1), z, plane) - 1))
-							.getColour();
-						this.drawMinimapTile(x, (int) z, 0, tileDecor, tileDecor);
-					}
-				}
-			}
-		}
-
-		final int wallColor = 6316128;
-		for (int x = 0; x < 95; ++x)
-			for (int z = 0; z < 95; ++z) {
-
-				int wall = this.getVerticalWall(x, z);
-				if (wall > 0 && (Objects.requireNonNull(EntityHandler.getDoorDef(wall - 1)).getUnknown() == 0 || this.showInvisibleWalls)) {
-					this.minimapGraphics.drawLineHoriz(x * 3, z * 3, 3, wallColor);
-				}
-				wall = this.getHorizontalWall(x, z);
-				if (wall > 0 && (Objects.requireNonNull(EntityHandler.getDoorDef(wall - 1)).getUnknown() == 0 || this.showInvisibleWalls)) {
-					this.minimapGraphics.drawLineVert(x * 3, z * 3, wallColor, 3);
-				}
-				wall = this.getWallDiagonal(x, z);
-				if (wall > 0 && wall < 12000
-					&& (Objects.requireNonNull(EntityHandler.getDoorDef(wall - 1)).getUnknown() == 0 || this.showInvisibleWalls)) {
-					this.minimapGraphics.setPixel(x * 3, z * 3, wallColor);
-					this.minimapGraphics.setPixel(1 + x * 3, 1 + z * 3, wallColor);
-					this.minimapGraphics.setPixel(x * 3 + 2, 2 + z * 3, wallColor);
-				}
-				if (wall > 12000 && wall < 24000
-					&& (Objects.requireNonNull(EntityHandler.getDoorDef(wall - 12001)).getUnknown() == 0 || this.showInvisibleWalls)) {
-
-					this.minimapGraphics.setPixel(2 + x * 3, z * 3, wallColor);
-					this.minimapGraphics.setPixel(x * 3 + 1, z * 3 + 1, wallColor);
-					this.minimapGraphics.setPixel(x * 3, 2 + z * 3, wallColor);
-				}
-			}
-		this.minimapGraphics.copyPixelDataToSurface(GraphicsController.SPRITE_LAYER.WORLDMAP, 0, 0, 285, 285);
-	}
-
-	private void loadWorldmapSection(int sector, int height, int sectionX, int sectionY) {
-		worldMapSector[sector] = fetchSection(height, sectionX, sectionY);
-	}
-
 	private void loadSection(int sector, int height, int sectionX, int sectionY) {
 		sectors[sector] = fetchSection(height, sectionX, sectionY);
 	}
@@ -2202,16 +1600,6 @@ public final class World {
 			}
 		}
 		return s;
-	}
-
-	public int getWorldMapX() {
-		// TODO Auto-generated method stub
-		return mapPointX;
-	}
-
-	public int getWorldMapZ() {
-		// TODO Auto-generated method stub
-		return mapPointZ;
 	}
 
 }

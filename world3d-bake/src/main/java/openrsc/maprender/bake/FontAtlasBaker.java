@@ -4,11 +4,11 @@ import com.openrsc.data.DataFileDecrypter;
 import com.openrsc.data.DataOperations;
 import java.awt.image.BufferedImage;
 import java.io.File;
-import java.io.PrintWriter;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import javax.imageio.ImageIO;
 
 /**
@@ -30,6 +30,11 @@ public final class FontAtlasBaker {
       "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!\"\u00a3$%^&*()-_=+[{]};:'@#~,<.>/?\\| ";
 
   private static final int PADDING = 1;
+
+  /** One glyph's atlas rect + engine metrics (offsets/advance). */
+  private record Glyph(int c, int x, int y, int w, int h, int xo, int yo, int adv) {}
+
+  private record Atlas(long baked, int width, int height, int lineHeight, List<Glyph> chars) {}
 
   public static void export(String cacheDir, File outDir,
       java.util.function.Consumer<String> log) throws Exception {
@@ -53,7 +58,7 @@ public final class FontAtlasBaker {
     atlasH += 2 * PADDING;
 
     BufferedImage atlas = new BufferedImage(atlasW, atlasH, BufferedImage.TYPE_INT_ARGB);
-    StringBuilder cj = new StringBuilder();
+    List<Glyph> chars = new ArrayList<>(CHARSET.length());
     int penX = PADDING;
     for (int i = 0; i < CHARSET.length(); i++) {
       int idx = i * 9;
@@ -70,25 +75,13 @@ public final class FontAtlasBaker {
           }
         }
       }
-      if (cj.length() > 0) {
-        cj.append(',');
-      }
-      cj.append("{\"c\":").append((int) CHARSET.charAt(i))
-          .append(",\"x\":").append(penX).append(",\"y\":").append(PADDING)
-          .append(",\"w\":").append(w).append(",\"h\":").append(h)
-          .append(",\"xo\":").append(xo).append(",\"yo\":").append(yo)
-          .append(",\"adv\":").append(adv).append('}');
+      chars.add(new Glyph(CHARSET.charAt(i), penX, PADDING, w, h, xo, yo, adv));
       penX += w + PADDING;
     }
 
     ImageIO.write(atlas, "png", new File(outDir, "font-h12b.png"));
-    try (PrintWriter w = new PrintWriter(new File(outDir, "font-h12b.json"),
-        StandardCharsets.UTF_8)) {
-      w.print("{\"baked\":" + System.currentTimeMillis()
-          + ",\"width\":" + atlasW + ",\"height\":" + atlasH
-          + ",\"lineHeight\":" + lineHeight
-          + ",\"chars\":[" + cj + "]}");
-    }
+    BakeJson.MAPPER.writeValue(new File(outDir, "font-h12b.json"),
+        new Atlas(System.currentTimeMillis(), atlasW, atlasH, lineHeight, chars));
     log.accept("font atlas h12b: " + CHARSET.length() + " glyphs, " + atlasW + "x" + atlasH
         + ", lineHeight " + lineHeight);
   }

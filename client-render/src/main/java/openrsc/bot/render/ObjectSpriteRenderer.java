@@ -57,9 +57,6 @@ public final class ObjectSpriteRenderer {
    */
   private static final int Y_SQUASH = 64;
 
-  /** Camera pull-back giving PX_PER_TILE at SHIFT. */
-  private static final int ZOOM = 128 * (1 << SHIFT) / PX_PER_TILE;
-
   /** Straight-down pitch — the in-game clamp's top-down limit. */
   private static final int PITCH_TOP_DOWN = 768;
 
@@ -72,7 +69,6 @@ public final class ObjectSpriteRenderer {
   }
 
   private final WorldRenderer r;
-  private final int shift;
   private final int zoom;
 
   public ObjectSpriteRenderer(String cacheDir) {
@@ -81,7 +77,6 @@ public final class ObjectSpriteRenderer {
 
   /** Diagnostic variant with an explicit focal shift (flatness comparisons). */
   public ObjectSpriteRenderer(String cacheDir, int shift) {
-    this.shift = shift;
     this.zoom = 128 * (1 << shift) / PX_PER_TILE;
     this.r = new WorldRenderer(cacheDir, FRAME, FRAME);
     r.loadModels();

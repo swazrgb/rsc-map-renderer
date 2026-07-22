@@ -277,7 +277,7 @@ public final class WorldRenderer {
   /**
    * Load the 3D scenery models from {@code models.orsc} into the world's model
    * cache (indexed by {@code GameObjectDef.modelID}). Required before
-   * {@link #placeObject}. Mirrors {@code mudclient.loadModels()}.
+   * {@link #placeObjectClient}. Mirrors {@code mudclient.loadModels()}.
    */
   public void loadModels() {
     loadModels(false);
@@ -310,14 +310,6 @@ public final class WorldRenderer {
     world.setModelCache(cache);
     System.out.println("[WorldRenderer] models.orsc archive=" + archive.length
         + " bytes; modelCount=" + count + "; loaded=" + loaded);
-  }
-
-  /**
-   * Place a scenery object's 3D model at a region-local tile (0..95). Region
-   * must be loaded and {@link #loadModels} called first.
-   */
-  public void placeObject(int id, int localX, int localZ, int direction) {
-    world.placeObject(id, localX, localZ, direction);
   }
 
   /**
@@ -428,11 +420,6 @@ public final class WorldRenderer {
   /** Diagnostic: classify a scenery model's geometry. */
   public void debugModelExtents(int objectId) {
     world.debugModelExtents(objectId);
-  }
-
-  /** Set the diffuse-light args for placed scenery (light from above for overhead maps). */
-  public void setSceneryLight(int v1, int v2, int dirY, int v4, int dirX, int dirZ) {
-    world.setSceneryLight(v1, v2, dirY, v4, dirX, dirZ);
   }
 
   /** Draw floor-plan wall lines over the render (on by default off). */
@@ -610,7 +597,7 @@ public final class WorldRenderer {
 
   /** Proof entrypoint: sweep camera pitch over the Lumbridge region to find top-down. */
   public static void main(String[] args) throws Exception {
-    String cache = args.length > 0 ? args[0] : "../../idlersc/Cache";
+    String cache = args.length > 0 ? args[0] : "../../openrsc/Client_Base/Cache";
 
     WorldRenderer r = new WorldRenderer(cache, 512, 512);
     // Lumbridge sector (h0x50y50).

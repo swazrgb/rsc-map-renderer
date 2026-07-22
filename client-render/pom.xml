@@ -15,7 +15,7 @@
   <packaging>jar</packaging>
 
   <!--
-    Headless port of the OpenRSC client software renderer (idlersc lineage):
+    Headless port of the OpenRSC client software renderer:
     rasterizes terrain + scenery models + walls from the .orsc cache into a
     plain int[] pixel buffer, with no game loop, networking, input, UI or AWT
     windowing. Zero external dependencies (JDK + AWT/ImageIO only). Consumed by

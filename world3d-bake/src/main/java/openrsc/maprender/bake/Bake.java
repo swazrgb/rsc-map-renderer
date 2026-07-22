@@ -6,6 +6,7 @@ import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import openrsc.gamedata.ServerConf;
 
 /**
  * CLI: bake the complete static {@code /api/world3d/*} asset tree the WebGL
@@ -13,13 +14,15 @@ import java.nio.file.StandardCopyOption;
  * the viewer with no runtime backend.
  *
  * <pre>
- *   java -jar world3d-bake.jar &lt;clientCacheDir&gt; &lt;outDir&gt;
+ *   java -jar world3d-bake.jar [clientCacheDir] &lt;outDir&gt;
  * </pre>
  *
  * <ul>
- *   <li>{@code clientCacheDir} — the stock OpenRSC client cache
- *       ({@code Authentic_Landscape.orsc}, {@code Authentic_Sprites.orsc},
- *       {@code Custom_Sprites.osar} + compiled defs).</li>
+ *   <li>{@code clientCacheDir} — the stock OpenRSC client cache ({@code Client_Base/Cache}, whose
+ *       {@code video/} holds Authentic_Landscape.orsc, Authentic_Sprites.orsc, library.orsc, …).
+ *       Optional: omit it and it auto-resolves via {@link ServerConf#clientCache()} (walk-up for
+ *       {@code <ancestor>/openrsc/Client_Base/Cache}, overridable with
+ *       {@code -Dopenrsc.clientCacheDir} / {@code OPENRSC_CLIENT_CACHE}).</li>
  *   <li>{@code outDir} — the site root. The servable tree is written under
  *       {@code <outDir>/api/world3d/} so a host serving {@code <outDir>} answers
  *       the viewer's absolute {@code /api/world3d/*} fetches directly.</li>
@@ -36,30 +39,35 @@ import java.nio.file.StandardCopyOption;
 public final class Bake {
 
   public static void main(String[] args) throws Exception {
-    if (args.length < 2) {
-      System.err.println("usage: Bake <clientCacheDir> <outDir>");
+    // [clientCacheDir] outDir — the cache auto-resolves (ServerConf.clientCache) when omitted, so a
+    // one-arg invocation from inside the openrsc checkout needs no cache path.
+    String cacheDir;
+    Path siteRoot;
+    if (args.length >= 2) {
+      cacheDir = args[0];
+      siteRoot = new File(args[1]).toPath();
+    } else if (args.length == 1) {
+      cacheDir = ServerConf.clientCache().toString();
+      siteRoot = new File(args[0]).toPath();
+    } else {
+      System.err.println("usage: Bake [clientCacheDir] <outDir>");
       System.exit(2);
       return;
     }
-    String cacheDir = args[0];
-    Path siteRoot = new File(args[1]).toPath();
     Path api = siteRoot.resolve("api").resolve("world3d");
     Files.createDirectories(api);
 
     // 1. Core world tree (mesh cells, textures, objlib, doorlib, boundaries,
-    //    npc/item/font atlases, splats, projectiles) — flat layout, exactly as
-    //    the live WorldMeshController expects it.
+    //    npc/item/font atlases, splats, projectiles, and the per-layer player-
+    //    sprite atlas the viewer composites appearances from) — flat layout,
+    //    exactly as the live WorldMeshController expects it.
     WorldMeshExporter.export(cacheDir, api.toFile(), System.out::println);
 
-    // 2. Per-layer player-sprite atlas — the viewer composites any appearance
-    //    token client-side from this (no per-token pre-bake, no live server).
-    PlayerLayerAtlasBaker.export(cacheDir, api.resolve("player-layers"), System.out::println);
-
-    // 3. Auxiliary JSON the viewer fetches outside /api/world3d/ (scenery
+    // 2. Auxiliary JSON the viewer fetches outside /api/world3d/ (scenery
     //    placements + atlas, npc spawns, wearables).
     AuxDataBaker.export(cacheDir, siteRoot, System.out::println);
 
-    // 4. Rework the flat bake into the exact URL layout the viewer fetches
+    // 3. Rework the flat bake into the exact URL layout the viewer fetches
     //    (the live controller does this translation via routing; a static host
     //    needs the files physically placed to match the request paths).
     arrangeStatic(api);

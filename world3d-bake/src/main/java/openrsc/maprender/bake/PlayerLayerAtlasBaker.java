@@ -5,12 +5,11 @@ import com.openrsc.client.entityhandling.defs.extras.AnimationDef;
 import com.openrsc.client.model.Sprite;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
-import java.io.PrintWriter;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import javax.imageio.ImageIO;
@@ -18,8 +17,8 @@ import orsc.graphics.two.HeadlessSurface;
 
 /**
  * Bakes the per-layer sprite atlas that lets the <em>viewer</em> composite any
- * player appearance client-side (Option B), instead of pre-baking a full strip
- * per fixed appearance token (Option A, {@link PlayerSpriteService}).
+ * player appearance client-side, instead of pre-baking (or serving on demand) a
+ * full strip per fixed appearance token.
  *
  * <p>For every wearable animation ({@code player} + {@code equipment}) and every
  * facing/frame the engine can draw, one layer sprite is rendered pre-placed and
@@ -52,7 +51,7 @@ import orsc.graphics.two.HeadlessSurface;
  */
 public final class PlayerLayerAtlasBaker {
 
-  // Palette tables — identical to PlayerSpriteService (the wire carries indices).
+  // Palette tables — the wire carries indices into these (matching the engine).
   private static final int[] HAIR = {0xffc030, 0xffa040, 0x805030, 0x604020, 0x303030,
       0xff6020, 0xff4000, 0xffffff, 0x00ff00, 0x00ffff};
   private static final int[] CLOTHING = {0xff0000, 0xff8000, 0xffe000, 0xa0e000,
@@ -105,6 +104,18 @@ public final class PlayerLayerAtlasBaker {
   /** One reduced crop: tagged ARGB pixels + its bbox origin in the 512² frame. */
   private record Tagged(int[] argb, int w, int h, int dx, int dy) {}
 
+  /** Recolour palettes the viewer indexes with the wire's colour indices. */
+  private record Palettes(int[] hair, int[] clothing, int[] skin) {}
+
+  /**
+   * {@code index.json}: composition params + palettes + the shelf-packed atlas region table
+   * ({@code uid -> [ax, ay, w, h]}) + the crop tree ({@code animId -> slotClass -> "order,walk"
+   * -> [uid, dx, dy]}) the viewer replays to composite any appearance client-side.
+   */
+  private record Index(double scale, int originX, int originY, int width1, int height,
+                       Palettes palettes, int[][] layerOrder, int atlasW, int atlasH,
+                       List<int[]> atlas, Map<String, Map<String, Map<String, int[]>>> crops) {}
+
   public static void export(String clientCacheDir, Path outDir, java.util.function.Consumer<String> log)
       throws IOException {
     orsc.Config.F_CACHE_DIR = clientCacheDir;
@@ -127,13 +138,13 @@ public final class PlayerLayerAtlasBaker {
     // Shelf packer state + content-dedup (identical tagged pixels share a region).
     List<Tagged> unique = new ArrayList<>();
     Map<String, Integer> byHash = new HashMap<>();
-    // crops: animId -> slotClass -> "order,walk" -> [uid, dx, dy]
-    StringBuilder cropsJson = new StringBuilder();
+    // crops: animId -> slotClass -> "order,walk" -> [uid, dx, dy]. LinkedHashMaps
+    // keep bake order stable across runs (JSON key order carries no meaning to
+    // the viewer, but stable output keeps diffs clean).
+    Map<String, Map<String, Map<String, int[]>>> crops = new LinkedHashMap<>();
     int animCount = EntityHandler.animationCount();
     int baked = 0;
 
-    cropsJson.append('{');
-    boolean firstAnim = true;
     for (int animId = 0; animId < animCount; animId++) {
       AnimationDef anim = EntityHandler.getAnimationDef(animId);
       if (anim == null || !isWearable(anim)) {
@@ -141,9 +152,9 @@ public final class PlayerLayerAtlasBaker {
       }
       // slotClass 0 = normal; 3 = shield; 4 = weapon (only 3/4 get the stock
       // mirrored-walk nudge, and only where it differs from normal).
-      StringBuilder slots = new StringBuilder();
+      Map<String, Map<String, int[]>> slots = new LinkedHashMap<>();
       for (int slotClass : new int[]{0, 3, 4}) {
-        StringBuilder frames = new StringBuilder();
+        Map<String, int[]> frames = new LinkedHashMap<>();
         for (int order = 0; order < 10; order++) {
           for (int walk = 0; walk < 3; walk++) {
             Tagged t = bakeLayer(anim, slotClass, order, walk);
@@ -169,30 +180,18 @@ public final class PlayerLayerAtlasBaker {
               normalUid.put(key(animId, 0, order, walk), uid);
               normalPlace.put(key(animId, 0, order, walk), (t.dx() << 16) | (t.dy() & 0xFFFF));
             }
-            if (frames.length() > 0) {
-              frames.append(',');
-            }
-            frames.append('"').append(order).append(',').append(walk).append("\":[")
-                .append(uid).append(',').append(t.dx()).append(',').append(t.dy()).append(']');
+            frames.put(order + "," + walk, new int[]{uid, t.dx(), t.dy()});
             baked++;
           }
         }
-        if (frames.length() > 0) {
-          if (slots.length() > 0) {
-            slots.append(',');
-          }
-          slots.append('"').append(slotClass).append("\":{").append(frames).append('}');
+        if (!frames.isEmpty()) {
+          slots.put(String.valueOf(slotClass), frames);
         }
       }
-      if (slots.length() > 0) {
-        if (!firstAnim) {
-          cropsJson.append(',');
-        }
-        firstAnim = false;
-        cropsJson.append('"').append(animId).append("\":{").append(slots).append('}');
+      if (!slots.isEmpty()) {
+        crops.put(String.valueOf(animId), slots);
       }
     }
-    cropsJson.append('}');
 
     // Shelf-pack the unique crops into one atlas.
     int atlasW = 2048;
@@ -227,27 +226,16 @@ public final class PlayerLayerAtlasBaker {
     ImageIO.write(atlas, "png", outDir.resolve("atlas.png").toFile());
 
     // Atlas region table: uid -> [ax, ay, w, h].
-    StringBuilder atlasJson = new StringBuilder("[");
+    List<int[]> atlasRegions = new ArrayList<>(unique.size());
     for (int i = 0; i < unique.size(); i++) {
       Tagged t = unique.get(i);
-      if (i > 0) {
-        atlasJson.append(',');
-      }
-      atlasJson.append('[').append(regionX[i]).append(',').append(regionY[i]).append(',')
-          .append(t.w()).append(',').append(t.h()).append(']');
+      atlasRegions.add(new int[]{regionX[i], regionY[i], t.w(), t.h()});
     }
-    atlasJson.append(']');
 
-    try (PrintWriter w = new PrintWriter(outDir.resolve("index.json").toFile(), StandardCharsets.UTF_8)) {
-      w.print("{\"scale\":" + SCALE + ",\"originX\":" + ORIGIN_X + ",\"originY\":" + ORIGIN_Y
-          + ",\"width1\":" + width1 + ",\"height\":" + height
-          + ",\"palettes\":{\"hair\":" + arr(HAIR) + ",\"clothing\":" + arr(CLOTHING)
-          + ",\"skin\":" + arr(SKIN) + "}"
-          + ",\"layerOrder\":" + layerOrderJson()
-          + ",\"atlasW\":" + atlasW + ",\"atlasH\":" + Math.max(1, atlasH)
-          + ",\"atlas\":" + atlasJson
-          + ",\"crops\":" + cropsJson + "}");
-    }
+    BakeJson.MAPPER.writeValue(outDir.resolve("index.json").toFile(),
+        new Index(SCALE, ORIGIN_X, ORIGIN_Y, width1, height,
+            new Palettes(HAIR, CLOTHING, SKIN), LAYER_ORDER, atlasW, Math.max(1, atlasH),
+            atlasRegions, crops));
     log.accept("player layer atlas: " + baked + " frame-layers, " + unique.size()
         + " unique crops, atlas " + atlasW + "x" + Math.max(1, atlasH));
   }
@@ -414,27 +402,5 @@ public final class PlayerLayerAtlasBaker {
       h = (h ^ (p & 0xFFFFFFFFL)) * 1099511628211L;
     }
     return Long.toHexString(h);
-  }
-
-  private static String arr(int[] a) {
-    StringBuilder sb = new StringBuilder("[");
-    for (int i = 0; i < a.length; i++) {
-      if (i > 0) {
-        sb.append(',');
-      }
-      sb.append(a[i]);
-    }
-    return sb.append(']').toString();
-  }
-
-  private static String layerOrderJson() {
-    StringBuilder sb = new StringBuilder("[");
-    for (int r = 0; r < LAYER_ORDER.length; r++) {
-      if (r > 0) {
-        sb.append(',');
-      }
-      sb.append(arr(LAYER_ORDER[r]));
-    }
-    return sb.append(']').toString();
   }
 }

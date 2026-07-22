@@ -1,13 +1,12 @@
 import * as THREE from "three";
-import {playerSpriteUrls} from "./api";
+import {compositePlayerStrip} from "./playerCompositor";
 
 /**
- * Equipped player/bot sprites: per-appearance strips composed on demand by
- * the runner (engine drawPlayer rules) and cached by token. Entities sharing
- * an appearance share one texture + one dynamic quad batch; facing/walk/
- * mirror math matches the NPC sprite layer. The {json,png} strip URLs come
- * from the api module: a live server serves them on demand keyed by ?a=token,
- * a static host serves pre-baked files keyed by the token hash.
+ * Equipped player/bot sprites: per-appearance strips composited in the browser
+ * ({@link import("./playerCompositor")}) from the per-layer atlas and cached by
+ * token — any {@code layers|colours} appearance renders with no server and
+ * nothing pre-baked per token. Entities sharing an appearance share one texture
+ * + one dynamic quad batch; facing/walk/mirror math matches the NPC sprite layer.
  */
 
 interface StripFrame {
@@ -154,11 +153,10 @@ export class PlayerSpriteLayer {
     }
 
     private load(token: string, strip: Strip) {
-        // v must match PlayerSpriteService's cache-key version: the strips are
-        // served with a long max-age, so a frame-layout/composition change
-        // (v3 = stock mirrored-walk weapon swap) needs a URL change to bust
-        // browser caches.
-        playerSpriteUrls(token)
+        // Composite the appearance token into a strip in the browser (from the
+        // per-layer atlas) and upload it; tokens are cached so entities sharing
+        // an appearance reuse one strip.
+        compositePlayerStrip(token)
             .then(({json, png}) => fetch(json)
                 .then(r => {
                     if (!r.ok) throw new Error(`${r.status}`);

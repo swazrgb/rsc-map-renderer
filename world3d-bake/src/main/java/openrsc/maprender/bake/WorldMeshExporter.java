@@ -4,8 +4,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.File;
 import java.io.IOException;
-import java.io.PrintWriter;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
@@ -67,8 +65,11 @@ public final class WorldMeshExporter {
    * v11: objlib gains animation frame models + anims index (fires, torches…).
    * v12: npc atlas meta gains atk/lvl/cmd1/cmd2 and doorlib gains cmd1/cmd2
    *      (remote-control context menus).
+   * v13: per-layer player-sprite atlas (player-layers/) baked into the tree —
+   *      the viewer composites appearances client-side; the old on-demand
+   *      server strip service is gone.
    */
-  public static final int FORMAT_VERSION = 12;
+  public static final int FORMAT_VERSION = 13;
 
   /**
    * Kinds 0-3 exist for every plane (that plane's own session, base heights —
@@ -79,6 +80,13 @@ public final class WorldMeshExporter {
    */
   public static final String[] KIND_NAMES = {
       "terrain", "walls", "roofs", "scenery", "walls1", "roofs1", "walls2", "roofs2"};
+
+  /** One exported cell: its region params, bot-tile origin, and which kind files exist. */
+  private record Cell(int a, int b, int plane, int botX0, int botZ0, List<String> kinds) {}
+
+  /** {@code manifest.json} — bake format + world extent + the cell index. */
+  private record Manifest(int version, long baked, int cellTiles, int unitsPerTile, int textures,
+                          int botXTiles, int botZTiles, List<Cell> cells) {}
 
   /** Sector index ranges present in the landscape archive. */
   private static final int SEC_X_MIN = 48;
@@ -108,7 +116,7 @@ public final class WorldMeshExporter {
     // Terrain from the JAG map archives — the source the SERVER paths
     // against — not the .orsc repack (which carries cosmetic filled-in
     // sections the server knows nothing about). Rev 64 = Uranium
-    // based_map_data; matches BotEnvironment's collision loading.
+    // based_map_data; matches GameEnvironment's collision loading.
     JagLandscape jag = JagLandscape.open(conf.data().resolve("maps"), 64, true);
     if (jag == null) {
       throw new IllegalStateException("maps64.jag not found under " + conf.data().resolve("maps"));
@@ -137,8 +145,11 @@ public final class WorldMeshExporter {
     NpcSpriteAtlasBaker.export(outDir, log);
     ItemSpriteAtlasBaker.export(outDir, log);
     FontAtlasBaker.export(cacheDir, outDir, log);
+    // Per-layer player-sprite atlas: the viewer composites any appearance token
+    // from this in the browser (no server-side per-token strip service).
+    PlayerLayerAtlasBaker.export(cacheDir, new File(outDir, "player-layers").toPath(), log);
 
-    List<String> manifestCells = new ArrayList<>();
+    List<Cell> manifestCells = new ArrayList<>();
     long totalBytes = 0;
     int cells = 0;
 
@@ -200,6 +211,11 @@ public final class WorldMeshExporter {
               byKind[k].setWindow(WIN_MIN * 128, WIN_MIN * 128, WIN_MAX * 128, WIN_MAX * 128);
             }
           }
+          // Terrain: drop RSC's flat-colour water-passthrough bridge decks (the
+          // fill=-2 slabs the engine skips) — without this they paint the
+          // log-balance obstacles solid black. Textured wooden bridge decks
+          // (fill>=0) are KEPT so real bridge floors still render.
+          byKind[0].setDropFlatColourDecks(true);
           RegionExporter.exportTerrain(r.world(), byKind[0]);
           RegionExporter.exportWalls(r.world(), byKind[1], plane);
           RegionExporter.exportRoofs(r.world(), byKind[2], plane);
@@ -214,25 +230,38 @@ public final class WorldMeshExporter {
           // rocks, cut trees) can replace individual objects. Registration
           // above still stamps the terrain footprint shadows.
 
-          StringBuilder kinds = new StringBuilder();
+          // Un-flattened corner-elevation grid for the window (49x49). The
+          // terrain MESH flattens bridge/water tiles (tileValue==4) to y=0 so
+          // the water surface draws under the bridge, but the authentic clients
+          // (and rsc-c) place scenery/characters at the UN-flattened ground
+          // (World.getElevation -> getTileElevation); the viewer needs this grid
+          // to sit objects on the bridge deck instead of sinking them to the
+          // water. getElevation at an exact tile corner == getTileElevation, and
+          // is always a multiple of 3, so it fits one byte (value/3).
+          final int GRID = WIN_MAX - WIN_MIN + 1;
+          byte[] elevGrid = new byte[GRID * GRID];
+          for (int i = 0; i < GRID; i++) {
+            for (int j = 0; j < GRID; j++) {
+              elevGrid[i * GRID + j] =
+                  (byte) (r.elevation((WIN_MIN + i) * 128, (WIN_MIN + j) * 128) / 3);
+            }
+          }
+
+          List<String> kinds = new ArrayList<>();
           for (int kind = 0; kind < byKind.length; kind++) {
             byte[] bin = encodeCell(byKind[kind], plane, kind,
-                (a - 1) * 48 + WIN_MIN, (b - 1) * 48 + WIN_MIN);
+                (a - 1) * 48 + WIN_MIN, (b - 1) * 48 + WIN_MIN,
+                kind == 0 ? elevGrid : null, GRID);
             if (bin == null) {
               continue;
             }
             String name = "c_p" + plane + "_" + a + "_" + b + "_" + KIND_NAMES[kind] + ".bin";
             Files.write(new File(outDir, name).toPath(), bin);
             totalBytes += bin.length;
-            if (kinds.length() > 0) {
-              kinds.append(',');
-            }
-            kinds.append('"').append(KIND_NAMES[kind]).append('"');
+            kinds.add(KIND_NAMES[kind]);
           }
-          if (kinds.length() > 0) {
-            manifestCells.add("{\"a\":" + a + ",\"b\":" + b + ",\"plane\":" + plane
-                + ",\"botX0\":" + botX0 + ",\"botZ0\":" + botZ0
-                + ",\"kinds\":[" + kinds + "]}");
+          if (!kinds.isEmpty()) {
+            manifestCells.add(new Cell(a, b, plane, botX0, botZ0, kinds));
             cells++;
           }
         }
@@ -241,14 +270,9 @@ public final class WorldMeshExporter {
           + (totalBytes / 1024 / 1024) + " MB)");
     }
 
-    try (PrintWriter w = new PrintWriter(new File(outDir, "manifest.json"), StandardCharsets.UTF_8)) {
-      w.print("{\"version\":" + FORMAT_VERSION + ",\"baked\":" + System.currentTimeMillis()
-          + ",\"cellTiles\":48,\"unitsPerTile\":128,"
-          + "\"textures\":" + textures + ","
-          + "\"botXTiles\":" + ((SEC_X_MAX - SEC_X_MIN + 1) * 48) + ","
-          + "\"botZTiles\":" + ((SEC_Y_MAX - SEC_Y_MIN + 1) * 48) + ","
-          + "\"cells\":[" + String.join(",", manifestCells) + "]}");
-    }
+    BakeJson.MAPPER.writeValue(new File(outDir, "manifest.json"),
+        new Manifest(FORMAT_VERSION, System.currentTimeMillis(), 48, 128, textures,
+            (SEC_X_MAX - SEC_X_MIN + 1) * 48, (SEC_Y_MAX - SEC_Y_MIN + 1) * 48, manifestCells));
     log.accept("world mesh export complete: " + cells + " cells, "
         + (totalBytes / 1024 / 1024) + " MB, " + textures + " textures -> " + outDir);
   }
@@ -265,9 +289,14 @@ public final class WorldMeshExporter {
     return false;
   }
 
-  /** Encode one kind's groups; null when empty. */
+  /**
+   * Encode one kind's groups; null when empty. For the terrain kind a v2 trailer
+   * carries the un-flattened corner-elevation grid ({@code elevGrid}, {@code
+   * gridDim}×{@code gridDim} bytes = getElevation/3) so the viewer can place
+   * scenery on the real ground rather than the bridge-flattened water surface.
+   */
   private static byte[] encodeCell(MeshExporter ex, int plane, int kind,
-      int originTileX, int originTileZ) throws IOException {
+      int originTileX, int originTileZ, byte[] elevGrid, int gridDim) throws IOException {
     List<MeshExporter.Group> groups = new ArrayList<>();
     for (MeshExporter.Group g : ex.groups()) {
       if (!g.positions.isEmpty()) {
@@ -280,7 +309,7 @@ public final class WorldMeshExporter {
     ByteArrayOutputStream bos = new ByteArrayOutputStream(1 << 20);
     DataOutputStream out = new DataOutputStream(bos);
     out.writeInt(0x52534333); // 'RSC3'
-    out.writeShort(1);
+    out.writeShort(2);        // v2: optional un-flattened elevation trailer (terrain)
     out.writeByte(plane);
     out.writeByte(kind);
     out.writeInt(originTileX);
@@ -309,6 +338,12 @@ public final class WorldMeshExporter {
           out.writeShort(clampI16(Math.round(uv[1] * 512)));
         }
       }
+    }
+    // v2 terrain trailer: gridDim, then gridDim*gridDim corner elevations
+    // (row-major i=cornerX offset, j=cornerZ offset from the cell origin).
+    if (kind == 0 && elevGrid != null) {
+      out.writeShort(gridDim);
+      out.write(elevGrid);
     }
     out.flush();
     return bos.toByteArray();

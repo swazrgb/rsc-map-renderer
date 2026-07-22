@@ -5,8 +5,6 @@ import com.openrsc.client.entityhandling.defs.ItemDef;
 import com.openrsc.client.model.Sprite;
 import java.awt.image.BufferedImage;
 import java.io.File;
-import java.io.PrintWriter;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import javax.imageio.ImageIO;
@@ -28,6 +26,11 @@ public final class ItemSpriteAtlasBaker {
   /** Stock ground draw size in engine units — baked 1:1 (items are small). */
   private static final int ITEM_W = 96;
   private static final int ITEM_H = 64;
+
+  /** One item's atlas rect + bottom-centre anchor {@code (ax, ay)}. */
+  private record ItemFrame(int id, int x, int y, int w, int h, int ax, int ay) {}
+
+  private record Atlas(long baked, int width, int height, List<ItemFrame> frames) {}
 
   public static void export(File outDir, java.util.function.Consumer<String> log)
       throws Exception {
@@ -72,25 +75,17 @@ public final class ItemSpriteAtlasBaker {
     }
     int atlasH = penY + shelfH + PADDING;
     BufferedImage atlas = new BufferedImage(ATLAS_WIDTH, atlasH, BufferedImage.TYPE_INT_ARGB);
-    StringBuilder fj = new StringBuilder();
+    List<ItemFrame> meta = new ArrayList<>(frames.size());
     for (int i = 0; i < frames.size(); i++) {
       Frame f = frames.get(i);
       int[] r = rects.get(i);
       atlas.getGraphics().drawImage(f.img(), r[0], r[1], null);
-      if (fj.length() > 0) {
-        fj.append(',');
-      }
-      fj.append("{\"id\":").append(f.id())
-          .append(",\"x\":").append(r[0]).append(",\"y\":").append(r[1])
-          .append(",\"w\":").append(f.img().getWidth()).append(",\"h\":").append(f.img().getHeight())
-          .append(",\"ax\":").append(f.ax()).append(",\"ay\":").append(f.ay()).append('}');
+      meta.add(new ItemFrame(f.id(), r[0], r[1],
+          f.img().getWidth(), f.img().getHeight(), f.ax(), f.ay()));
     }
     ImageIO.write(atlas, "png", new File(outDir, "item-atlas.png"));
-    try (PrintWriter w = new PrintWriter(new File(outDir, "item-atlas.json"), StandardCharsets.UTF_8)) {
-      w.print("{\"baked\":" + System.currentTimeMillis()
-          + ",\"width\":" + ATLAS_WIDTH + ",\"height\":" + atlasH
-          + ",\"frames\":[" + fj + "]}");
-    }
+    BakeJson.MAPPER.writeValue(new File(outDir, "item-atlas.json"),
+        new Atlas(System.currentTimeMillis(), ATLAS_WIDTH, atlasH, meta));
     log.accept("item sprite atlas: " + frames.size() + " items, " + ATLAS_WIDTH + "x" + atlasH
         + (skipped > 0 ? ", skipped " + skipped : ""));
 

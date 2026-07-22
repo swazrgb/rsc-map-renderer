@@ -1,8 +1,6 @@
 package orsc.graphics.three;
 
-import com.openrsc.client.model.Sprite;
 import orsc.MiscFunctions;
-import orsc.buffers.BufferStack;
 import orsc.graphics.two.GraphicsController;
 import orsc.util.FastMath;
 import orsc.util.GenUtil;
@@ -121,9 +119,6 @@ public final class Scene {
 			this.m_T = new RSModel(var4 * 2, var4);
 			this.m_ob = new int[var4];
 			this.m_Eb = new int[var4];
-			if (BufferStack.s_i == null) {
-				BufferStack.s_i = new byte[17691];
-			}
 
 			this.m_Fb = new int[var4];
 			this.rot1024_off_y = 0;
@@ -201,15 +196,6 @@ public final class Scene {
 		} catch (RuntimeException var24) {
 			throw GenUtil.makeThrowable(var24, "lb.DA(" + false + ',' + (polyA != null ? "{...}" : "null") + ','
 				+ (polyB != null ? "{...}" : "null") + ')');
-		}
-	}
-
-	public final int[] getQB(byte var1) {
-		try {
-
-			return this.m_qb;
-		} catch (RuntimeException var3) {
-			throw GenUtil.makeThrowable(var3, "lb.C(" + var1 + ')');
 		}
 	}
 
@@ -642,23 +628,6 @@ public final class Scene {
 			this.m_D = new long[var4];
 		} catch (RuntimeException var6) {
 			throw GenUtil.makeThrowable(var6, "lb.U(" + var1 + ',' + var2 + ',' + var3 + ',' + var4 + ')');
-		}
-	}
-
-	public final void setFrustum(int var1, int var2, int var3, int var4, int var5, int var6) {
-		try {
-			if (var4 == 0 && var6 == 0 && var1 == 0) {
-				var4 = 32;
-			}
-
-
-			for (int var7 = var3; var7 < this.modelCount; ++var7) {
-				this.models[var7].setDiffuseLight(var2, var5, var6, -115, var4, var1);
-			}
-
-		} catch (RuntimeException var8) {
-			throw GenUtil.makeThrowable(var8,
-				"lb.KA(" + var1 + ',' + var2 + ',' + var3 + ',' + var4 + ',' + var5 + ',' + var6 + ')');
 		}
 	}
 
@@ -2329,32 +2298,6 @@ public final class Scene {
 		}
 	}
 
-	public final RSModel[] b(byte var1) {
-		try {
-			if (var1 < 95) {
-				return (RSModel[]) null;
-			} else {
-
-				return this.m_Ab;
-			}
-		} catch (RuntimeException var3) {
-			throw GenUtil.makeThrowable(var3, "lb.G(" + var1 + ')');
-		}
-	}
-
-	public final int b(int var1) {
-		try {
-
-			if (var1 != 0) {
-				this.m_S = (boolean[]) null;
-			}
-
-			return this.m_cc;
-		} catch (RuntimeException var3) {
-			throw GenUtil.makeThrowable(var3, "lb.N(" + var1 + ')');
-		}
-	}
-
 	private void b(int var1, boolean var2) {
 		try {
 			if (!var2) {
@@ -2489,45 +2432,6 @@ public final class Scene {
 			var4.minP2 = var19;
 		} catch (RuntimeException var21) {
 			throw GenUtil.makeThrowable(var21, "lb.IA(" + var1 + ',' + var2 + ')');
-		}
-	}
-
-	public final void d(int var1, int var2) {
-		try {
-
-			if (null != this.resourceDatabase[var2]) {
-				int[] var3 = this.resourceDatabase[var2];
-
-				int var5;
-				int var6;
-				for (int var4 = 0; var4 < 64; ++var4) {
-					var5 = 4032 + var4;
-					var6 = var3[var5];
-
-					for (int var7 = 0; var7 < 63; ++var7) {
-						var3[var5] = var3[var5 - 64];
-						var5 -= 64;
-					}
-
-					this.resourceDatabase[var2][var5] = var6;
-				}
-
-				if (var1 != 25013) {
-					this.cameraProjZ = 60;
-				}
-
-				short var9 = 4096;
-
-				for (var5 = 0; var5 < var9; ++var5) {
-					var6 = var3[var5];
-					var3[var9 + var5] = FastMath.bitwiseAnd(var6 - (var6 >>> 3), 16316671);
-					var3[var5 + var9 * 2] = FastMath.bitwiseAnd(16316671, var6 - (var6 >>> 2));
-					var3[var5 + var9 * 3] = FastMath.bitwiseAnd(16316671, var6 - (var6 >>> 3) - (var6 >>> 2));
-				}
-
-			}
-		} catch (RuntimeException var8) {
-			throw GenUtil.makeThrowable(var8, "lb.OA(" + var1 + ',' + var2 + ')');
 		}
 	}
 
@@ -2979,39 +2883,6 @@ public final class Scene {
 		}
 	}
 
-	public final void setCombatXOffset(int var1, int var2, int var3) {
-		try {
-			if (var1 <= 15) {
-				this.resourceDatabase = (int[][]) ((int[][]) null);
-			}
-
-			this.m_Q[var2] = var3;
-
-		} catch (RuntimeException var5) {
-			throw GenUtil.makeThrowable(var5, "lb.V(" + var1 + ',' + var2 + ',' + var3 + ')');
-		}
-	}
-
-	public final void setDiffuseDir(int dirZ, int dirY, boolean var3, int dirX) {
-		try {
-
-			if (dirX == 0 && dirY == 0 && dirZ == 0) {
-				dirX = 32;
-			}
-
-			if (!var3) {
-				this.endScene(-89);
-			}
-
-			for (int var5 = 0; var5 < this.modelCount; ++var5) {
-				this.models[var5].setDiffuseDir(false, dirX, dirY, dirZ);
-			}
-
-		} catch (RuntimeException var6) {
-			throw GenUtil.makeThrowable(var6, "lb.L(" + dirZ + ',' + dirY + ',' + var3 + ',' + dirX + ')');
-		}
-	}
-
 	public final void setFaceSpriteLocalPlayer(int var1, int var2) {
 		try {
 
@@ -3058,15 +2929,4 @@ public final class Scene {
 		}
 	}
 
-	public final void setMouseLoc(int var1, int x, int y) {
-		try {
-			this.m_K = true;
-			this.m_j = x - this.m_Zb;
-			this.m_Wb = y;
-			this.m_cc = var1;
-
-		} catch (RuntimeException var5) {
-			throw GenUtil.makeThrowable(var5, "lb.J(" + var1 + ',' + x + ',' + y + ')');
-		}
-	}
 }

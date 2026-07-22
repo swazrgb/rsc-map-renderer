@@ -15,7 +15,6 @@ public final class RSModel {
 	int faceHead;
 	int[] faceIndexCount;
 	int[][] faceIndices;
-	public int key = -1;
 	public boolean m_cb = false;
 	public int[] facePickIndex;
 	int diffuseParam1 = 32;
@@ -298,19 +297,6 @@ public final class RSModel {
 		}
 	}
 
-	final RSModel copyModel(boolean var1, int var2, boolean noDiffuse, boolean var4, boolean var5) {
-		try {
-
-			RSModel[] var6 = new RSModel[]{this};
-			RSModel copy = new RSModel(var6, 1, var4, var5, noDiffuse, var1);
-			copy.m_hc = this.m_hc;
-			return copy;
-		} catch (RuntimeException var9) {
-			throw GenUtil.makeThrowable(var9,
-				"ca.Q(" + var1 + ',' + var2 + ',' + noDiffuse + ',' + var4 + ',' + var5 + ')');
-		}
-	}
-
 	private void addModels(int offset, RSModel[] models, boolean var3, int modelCount) {
 		try {
 
@@ -587,110 +573,6 @@ public final class RSModel {
 			+ "  topFifthFaces=" + top20faces + " ofWhichCoverCentre=" + top20covering);
 	}
 
-	/**
-	 * Diagnostic: classify each face as TEXTURED (fill>=0, indexes the texture
-	 * table), COLOUR (fill<0, flat gouraud), or TRANSPARENT (12345678), bucketed
-	 * into top/mid/bottom thirds by height. A canopy made of textured leaf faces
-	 * behaves very differently under the texturer than one made of colour faces.
-	 */
-	public final void debugFaceFills(int objectId) {
-		int minY = Integer.MAX_VALUE, maxY = Integer.MIN_VALUE;
-		for (int i = 0; i < this.vertHead; i++) {
-			minY = Math.min(minY, this.vertY[i]);
-			maxY = Math.max(maxY, this.vertY[i]);
-		}
-		int span = Math.max(1, maxY - minY);
-		// [band][0=tex,1=col,2=transp] ; band 0=top(most -Y),1=mid,2=bottom
-		int[][] c = new int[3][3];
-		for (int f = 0; f < this.faceHead; f++) {
-			int[] vs = this.faceIndices[f];
-			long ay = 0;
-			for (int v : vs) ay += this.vertY[v];
-			int avgY = (int) (ay / vs.length);
-			int band = (int) (3L * (avgY - minY) / span);
-			if (band > 2) band = 2;
-			classifyFill(c[band], this.faceTextureFront[f]);
-			classifyFill(c[band], this.faceTextureBack[f]);
-		}
-		String[] bn = {"TOP   ", "MID   ", "BOTTOM"};
-		System.out.println("    fills obj " + objectId + " (per side, TOP=canopy):");
-		for (int b = 0; b < 3; b++) {
-			System.out.println("      " + bn[b] + " textured=" + c[b][0]
-				+ " colour=" + c[b][1] + " transparent=" + c[b][2]);
-		}
-	}
-
-	/**
-	 * Diagnostic: for the canopy (top-third) textured faces, how horizontal are
-	 * they? A face normal pointing mostly up/down (|ny|/|n| ~ 1) presents full
-	 * area from straight above (fills); a near-vertical face (|ny|/|n| ~ 0) is
-	 * edge-on from above (invisible). Prints the mean horizontalness and a
-	 * histogram so we can tell a dome canopy from a vertical-frond canopy.
-	 */
-	public final void debugCanopyOrientation(int objectId) {
-		int minY = Integer.MAX_VALUE, maxY = Integer.MIN_VALUE;
-		for (int i = 0; i < this.vertHead; i++) {
-			minY = Math.min(minY, this.vertY[i]);
-			maxY = Math.max(maxY, this.vertY[i]);
-		}
-		int span = Math.max(1, maxY - minY);
-		int topCut = minY + span / 3; // top third (most -Y)
-		int n = 0;
-		double sumH = 0;
-		int[] hist = new int[5]; // |ny|/|n| in [0,.2),[.2,.4)...[.8,1]
-		for (int f = 0; f < this.faceHead; f++) {
-			if (this.faceTextureFront[f] == 12345678 && this.faceTextureBack[f] == 12345678) continue;
-			int[] vs = this.faceIndices[f];
-			long ay = 0;
-			for (int v : vs) ay += this.vertY[v];
-			if ((int) (ay / vs.length) > topCut) continue; // canopy only
-			// Newell normal over the polygon.
-			double nx = 0, ny = 0, nz = 0;
-			for (int i = 0; i < vs.length; i++) {
-				int a = vs[i], b = vs[(i + 1) % vs.length];
-				nx += (double) (this.vertY[a] - this.vertY[b]) * (this.vertZ[a] + this.vertZ[b]);
-				ny += (double) (this.vertZ[a] - this.vertZ[b]) * (this.vertX[a] + this.vertX[b]);
-				nz += (double) (this.vertX[a] - this.vertX[b]) * (this.vertY[a] + this.vertY[b]);
-			}
-			double mag = Math.sqrt(nx * nx + ny * ny + nz * nz);
-			if (mag < 1e-6) continue;
-			double h = Math.abs(ny) / mag; // 1=horizontal(faces up/down), 0=vertical
-			sumH += h;
-			n++;
-			int bin = Math.min(4, (int) (h * 5));
-			hist[bin]++;
-		}
-		System.out.printf("    canopy obj %d: %d faces, meanHorizontalness=%.2f "
-			+ "hist[0-.2,.2-.4,.4-.6,.6-.8,.8-1]=%d,%d,%d,%d,%d%n",
-			objectId, n, n == 0 ? 0 : sumH / n, hist[0], hist[1], hist[2], hist[3], hist[4]);
-	}
-
-	/**
-	 * Diagnostic: stamp every non-transparent face (both sides) with a single
-	 * flat colour, killing all textures. If a model that renders sparse/see-through
-	 * with textures fills a solid silhouette with this, the geometry is fine and
-	 * the see-through is texture transparency, not missing faces.
-	 */
-	public final void debugForceSolidColour() {
-		int colour = -1;
-		for (int f = 0; f < this.faceHead; f++) {
-			if (this.faceTextureFront[f] != 12345678 && this.faceTextureFront[f] < 0) {
-				colour = this.faceTextureFront[f];
-				break;
-			}
-		}
-		for (int f = 0; f < this.faceHead; f++) {
-			this.faceTextureFront[f] = colour;
-			this.faceTextureBack[f] = colour;
-		}
-	}
-
-	private static void classifyFill(int[] bucket, int fill) {
-		if (fill == 12345678) bucket[2]++;
-		else if (fill >= 0) bucket[0]++;
-		else bucket[1]++;
-	}
-
 	/** Even-odd point-in-polygon on the XZ (top-down) projection of a face. */
 	private boolean pointInProjectedFace(int px, int pz, int[] vs) {
 		boolean in = false;
@@ -926,26 +808,6 @@ public final class RSModel {
 		} catch (RuntimeException var9) {
 			throw GenUtil.makeThrowable(var9, "ca.D(" + (faceVert != null ? "{...}" : "null") + ','
 				+ (dest != null ? "{...}" : "null") + ',' + faceVertCount + ',' + srcFaceID + ',' + var5 + ')');
-		}
-	}
-
-	public final void copyRot256AndTranslateFrom(RSModel model, int var2) {
-		try {
-			if (var2 != 6029) {
-				this.appliedTransform = -128;
-			}
-
-
-			this.translateX = model.translateX;
-			this.translateY = model.translateY;
-			this.translateZ = model.translateZ;
-			this.rot256X = model.rot256X;
-			this.rot256Y = model.rot256Y;
-			this.rot256Z = model.rot256Z;
-			this.computeAppliedTransform();
-			this.m_Yb = 1;
-		} catch (RuntimeException var4) {
-			throw GenUtil.makeThrowable(var4, "ca.AA(" + "{...}" + ',' + var2 + ')');
 		}
 	}
 
@@ -1485,19 +1347,6 @@ public final class RSModel {
 			this.rot256Z = 0;
 		} catch (RuntimeException var5) {
 			throw GenUtil.makeThrowable(var5, "ca.T(" + faceCount + ',' + vertexCount + ',' + var3 + ')');
-		}
-	}
-
-	final void setRot256(int rotX, int rotY, int rotZ) {
-		try {
-
-			this.rot256X = rotX & 255;
-			this.rot256Y = rotY & 255;
-			this.rot256Z = rotZ & 255;
-			this.computeAppliedTransform();
-			this.m_Yb = 1;
-		} catch (RuntimeException var6) {
-			throw GenUtil.makeThrowable(var6, "ca.EA(" + rotZ + ',' + "dummy" + ',' + rotX + ',' + rotY + ')');
 		}
 	}
 

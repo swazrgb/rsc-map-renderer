@@ -3,15 +3,6 @@ package com.openrsc.data;
 public class DataFileVariables {
 
 	public static int anIntArray489[];
-	final int anInt456 = 4096;
-	final int anInt457 = 16;
-	final int anInt458 = 258;
-	final int anInt459 = 23;
-	final int anInt460 = 1;
-	final int anInt461 = 6;
-	final int anInt462 = 50;
-	final int anInt463 = 4;
-	final int anInt464 = 18002;
 	public byte[] aByteArray465;
 	public int anInt466;
 	public int anInt467;
@@ -35,7 +26,6 @@ public class DataFileVariables {
 	public int[] anIntArray485;
 	public int anInt486;
 	public int[] anIntArray487;
-	int anIntArray488[];
 	public int anInt490;
 	public boolean[] aBooleanArray491;
 	public boolean[] aBooleanArray492;
@@ -53,7 +43,6 @@ public class DataFileVariables {
 	public DataFileVariables() {
 		anIntArray485 = new int[256];
 		anIntArray487 = new int[257];
-		anIntArray488 = new int[257];
 		aBooleanArray491 = new boolean[256];
 		aBooleanArray492 = new boolean[16];
 		aByteArray493 = new byte[256];

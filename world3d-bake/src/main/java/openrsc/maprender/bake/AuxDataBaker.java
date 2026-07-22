@@ -14,7 +14,6 @@ import openrsc.gamedata.NpcDefs;
 import openrsc.gamedata.NpcLocs;
 import openrsc.gamedata.SceneryLocs;
 import openrsc.gamedata.ServerConf;
-import tools.jackson.databind.ObjectMapper;
 
 /**
  * Bakes the static JSON the viewer fetches from endpoints OUTSIDE
@@ -45,7 +44,7 @@ public final class AuxDataBaker {
 
     var conf = ServerConf.resolve();
 
-    // Scenery: base + discontinued, exactly as BotEnvironment/SceneryController.
+    // Scenery: base + discontinued, exactly as GameEnvironment/SceneryController.
     List<SceneryLocs.Loc> scenery =
         new ArrayList<>(SceneryLocs.load(conf.locs().resolve("SceneryLocs.json")));
     Path disc = conf.locs().resolve("SceneryLocsDiscontinued.json");
@@ -57,7 +56,6 @@ public final class AuxDataBaker {
         conf.defs().resolve("NpcDefsCustom.json"));
     ItemDefs itemDefs = ItemDefs.load(conf.defs().resolve("ItemDefs.json"),
         conf.defs().resolve("ItemDefsCustom.json"));
-    ObjectMapper mapper = new ObjectMapper();
 
     Path map = siteRoot.resolve("api").resolve("map");
     Path apiRoot = siteRoot.resolve("api");
@@ -65,7 +63,7 @@ public final class AuxDataBaker {
     Files.createDirectories(apiRoot.resolve("items"));
 
     // ---- /api/map/scenery.json ----
-    mapper.writeValue(map.resolve("scenery.json").toFile(), DataViews.scenery(scenery));
+    BakeJson.MAPPER.writeValue(map.resolve("scenery.json").toFile(), DataViews.scenery(scenery));
     log.accept("scenery.json: " + scenery.size() + " placements");
 
     // ---- /api/map/scenery-atlas.{json,png} ----
@@ -77,13 +75,13 @@ public final class AuxDataBaker {
 
     // ---- /api/npc-spawns ----
     List<DataViews.SpawnDto> spawnDtos = DataViews.spawns(spawns, npcDefs);
-    mapper.writeValue(apiRoot.resolve("npc-spawns").toFile(), spawnDtos);
+    BakeJson.MAPPER.writeValue(apiRoot.resolve("npc-spawns").toFile(), spawnDtos);
     long named = spawnDtos.stream().filter(s -> s.name() != null).count();
     log.accept("npc-spawns: " + spawns.size() + " spawns (" + named + " named)");
 
     // ---- /api/items/wearables ----
     var wearables = DataViews.wearables(itemDefs);
-    mapper.writeValue(apiRoot.resolve("items").resolve("wearables").toFile(), wearables);
+    BakeJson.MAPPER.writeValue(apiRoot.resolve("items").resolve("wearables").toFile(), wearables);
     log.accept("wearables: " + wearables.size() + " appearance sprites");
   }
 

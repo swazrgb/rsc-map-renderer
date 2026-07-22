@@ -92,6 +92,26 @@ public final class MeshExporter {
     this.anchorZ = z;
   }
 
+  // Terrain-only: drop the flat-colour "water passthrough" bridge decks.
+  // RSC's landscape build (World.buildLandscape / rsc-c's "create bridge floor
+  // tiles over water") lays a second, raised deck quad over every water tile
+  // (tileValue==4), front-filled with the tile's decoration and back TRANSPARENT.
+  // That decoration is EITHER a texture (a real wooden bridge deck — tex#3) OR a
+  // flat near-black colour (fill<0, e.g. -2 → rgb(0,0,8)) marking "no deck, show
+  // the water below". The authentic rasterizer draws the textured decks but skips
+  // the flat-colour ones (verified: swapping fill -2→tex#3 turns the log's black
+  // slab into a wooden deck). Our double-sided export drew BOTH, so the -2 decks
+  // showed as opaque black slabs. Dropping only the flat-colour (front<0) decks
+  // reproduces the engine exactly while KEEPING the textured wooden floors.
+  // (First-pass up-facing terrain always front=TRANSPARENT, so front<0 uniquely
+  // selects these colour decks.)
+  private boolean dropFlatColourDecks;
+
+  /** Terrain export: skip RSC's flat-colour water-passthrough bridge decks. */
+  public void setDropFlatColourDecks(boolean drop) {
+    this.dropFlatColourDecks = drop;
+  }
+
   /**
    * Rebase only, no clipping — for scenery, which is deduplicated by anchor
    * tile instead: a tree anchored inside the window keeps faces that overhang
@@ -184,6 +204,13 @@ public final class MeshExporter {
     for (int f = 0; f < m.faceHead; f++) {
       int[] vs = m.faceIndices[f];
       if (vs == null || vs.length < 3) {
+        continue;
+      }
+      // Water-passthrough deck cull (terrain only): a landscape face whose FRONT
+      // is a flat colour (< 0) is one of RSC's "no deck, show water below" bridge
+      // quads (fill=-2). The engine skips these but draws textured decks, so drop
+      // only the flat-colour ones — textured wooden bridge floors are kept.
+      if (dropFlatColourDecks && m.faceTextureFront[f] < 0) {
         continue;
       }
       emitSide(m, relit, vs, xs, ys, zs, m.faceTextureFront[f], f, false);

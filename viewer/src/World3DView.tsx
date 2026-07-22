@@ -1,8 +1,9 @@
 import {useEffect, useRef, useState, type ReactNode} from "react";
 import * as THREE from "three";
-import type {BotLive, MapEntity, NpcRespawn, NpcSpawnInfo, RoutePoint} from "./api";
+import type {Observer, MapEntity, NpcRespawn, ObjectRespawn, NpcSpawnInfo, RoutePoint} from "./api";
 import {fetchNpcSpawns, sendInteract, sendWalk} from "./api";
 import {fetchWearables} from "./api";
+import {VirtualClock, pickCaptureDir, canvasPng, writeFrame} from "./capture";
 
 /** Worn-equipment rows from an appearance token. Each layer holds the server's
  *  appearance-sprite id (0 = nothing); layers 0–2 default to the base
@@ -111,26 +112,53 @@ function kindsFor(floor: FloorKey): {plane: number; kinds: string[]} {
 
 // ---------------------------------------------------------------------------
 // Fly-by tour: waypoints in URL units (bot tiles, degrees, view-height tiles).
-// `sec` = seconds to reach this point from the previous one. Edit freely —
-// this is deliberately hardcoded for recording videos.
+// It's a CLOSED LOOP — the evaluator runs the list cyclically (…→ last → first
+// →…) at constant speed, so recording exactly one period gives a seamless
+// loop (record from the ?capture button). `sec` = seconds for the leg ARRIVING
+// at this point; the first entry's `sec` is therefore the return leg (last →
+// first). Edit freely — deliberately hardcoded for recording videos.
 type FlyPoint = {x: number; z: number; yaw: number; pitch: number; zoom: number; sec?: number};
 
 const FLYBY: FlyPoint[] = [
-    {x: 120, z: 640, yaw: 45, pitch: 89, zoom: 500, sec: 0},   // high over Lumbridge
-    {x: 120, z: 640, yaw: 45, pitch: 40, zoom: 40, sec: 6},    // dive to the castle
+    {x: 120, z: 640, yaw: 45, pitch: 89, zoom: 500, sec: 10},  // high over Lumbridge (return leg lands here)
+    {x: 120, z: 640, yaw: 45, pitch: 40, zoom: 40, sec: 4},    // dive to the castle (snappy)
     {x: 122, z: 640, yaw: 225, pitch: 35, zoom: 35, sec: 8},   // orbit it
     {x: 215, z: 630, yaw: 270, pitch: 45, zoom: 60, sec: 8},   // glide to Draynor
     {x: 310, z: 570, yaw: 315, pitch: 50, zoom: 80, sec: 8},   // onward north-west
-    {x: 300, z: 560, yaw: 405, pitch: 89, zoom: 700, sec: 8},  // pull out to the world
+    {x: 300, z: 560, yaw: 405, pitch: 89, zoom: 700, sec: 8},  // pull out to the world, then sweep home
 ];
 
-/** Catmull-Rom through scalar samples, clamped ends. */
-function catmullRom(p0: number, p1: number, p2: number, p3: number, u: number): number {
-    const u2 = u * u;
-    const u3 = u2 * u;
-    return 0.5 * ((2 * p1) + (-p0 + p2) * u
-        + (2 * p0 - 5 * p1 + 4 * p2 - p3) * u2
-        + (-p0 + 3 * p1 - 3 * p2 + p3) * u3);
+/** Recording frame rate from `?capture=<fps>` (0 = not recording). */
+function readCaptureFps(): number {
+    const v = parseFloat(new URLSearchParams(location.search).get("capture") ?? "");
+    return Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
+}
+
+/** Parse a "WxH" recording resolution (blank = use the live canvas size).
+ *  Returns null for blank; throws on malformed input so the caller can warn. */
+function parseCaptureSize(s: string): {w: number; h: number} | null {
+    if (!s.trim()) return null;
+    const m = s.match(/^\s*(\d+)\s*[x×X]\s*(\d+)\s*$/);
+    const w = m ? parseInt(m[1], 10) : 0;
+    const h = m ? parseInt(m[2], 10) : 0;
+    if (!w || !h) throw new Error(`bad resolution "${s}" — use e.g. 1920x1080`);
+    return {w, h};
+}
+
+/**
+ * Cubic Hermite between p0 (at s=0) and p1 (at s=1) with endpoint velocities
+ * m0/m1 given per UNIT TIME and `dt` the segment's duration. Parameterizing by
+ * time (not the [0,1] index) is what keeps the flyby C¹ across waypoints whose
+ * legs have different durations — the shared endpoint velocity matches on both
+ * sides, so no speed lurch. Pair it with Catmull-Rom-style tangents
+ * `m_i = (p_{i+1} − p_{i−1}) / (t_{i+1} − t_{i−1})`.
+ */
+function hermite(p0: number, m0: number, p1: number, m1: number,
+    dt: number, s: number): number {
+    const s2 = s * s;
+    const s3 = s2 * s;
+    return (2 * s3 - 3 * s2 + 1) * p0 + (s3 - 2 * s2 + s) * dt * m0
+        + (-2 * s3 + 3 * s2) * p1 + (s3 - s2) * dt * m1;
 }
 
 const VERT = /* glsl */ `
@@ -234,6 +262,8 @@ function parseCell(buf: ArrayBuffer, worldWidthUnits: number,
     {tex: number; geometry: THREE.BufferGeometry}[] {
     const dv = new DataView(buf);
     if (dv.getUint32(0) !== 0x52534333) throw new Error("bad cell magic");
+    const version = dv.getUint16(4);
+    const kind = dv.getUint8(7);
     const originX = botX0 * 128;
     const originZ = botZ0 * 128;
     const groups = dv.getUint16(16);
@@ -279,15 +309,38 @@ function parseCell(buf: ArrayBuffer, worldWidthUnits: number,
         if (uvArr) geo.setAttribute("uv", new THREE.BufferAttribute(uvArr, 2));
         out.push({tex, geometry: geo});
     }
+    // v2 terrain trailer: the UN-FLATTENED corner-elevation grid. RSC flattens
+    // bridge/water tiles (tileValue==4) to y=0 in the terrain mesh so the water
+    // surface draws under the bridge — but the engine (and rsc-c) place scenery
+    // and characters at the un-flattened ground (getElevation → getTileElevation).
+    // Driving the height grid from this trailer (overriding the flattened mesh
+    // vertices sunk above) sits objects on the bridge deck instead of dropping
+    // them into the water. Corners: i = x offset, j = z offset from cell origin.
+    if (heightSink && version >= 2 && kind === 0) {
+        const dim = dv.getUint16(off);
+        off += 2;
+        for (let i = 0; i < dim; i++) {
+            for (let j = 0; j < dim; j++) {
+                heightSink(botX0 + i, botZ0 + j, dv.getUint8(off++) * 3);
+            }
+        }
+    }
     return out;
 }
 
 export function World3DView(props: {
     focus?: {x: number; z: number} | null;
-    bots?: BotLive[];
+    /** Live per-tick view: one {@link Observer} per vantage point (your bots, or
+     *  every online player for a whole-server view). The viewer merges,
+     *  deduplicates and interpolates them into one world. */
+    observers?: Observer[];
     /** Pending NPC respawns (tick-aligned via the SSE `npcRespawns` event) —
      *  rendered as ghost sprites at their spawns with a countdown. */
     npcRespawns?: NpcRespawn[];
+    /** Pending scenery respawns (depleted rock, looted chest) — the object
+     *  mirror of {@link npcRespawns}; each draws a countdown ghost of the object
+     *  it will become. */
+    objectRespawns?: ObjectRespawn[];
     selectedBot?: string | null;
     onSelectBot?: (username: string | null) => void;
     // ---- sidebar-consolidated controls (all optional: the standalone
@@ -402,6 +455,16 @@ export function World3DView(props: {
     }, []);
     const [flying, setFlying] = useState(false);
     const flightRef = useRef<{start: number} | null>(null);
+    // Deterministic recording (?capture=<fps>). The Fly button starts it — the
+    // folder picker needs a user gesture, so it can't auto-run from the URL. The
+    // effect publishes its starter here for the button to call.
+    const captureFps = readCaptureFps();
+    const startCaptureRef = useRef<((size: {w: number; h: number} | null) => void) | null>(null);
+    // Recording resolution field, pre-filled from ?size=WxH (blank = record at
+    // the live canvas size). Forced onto the canvas at pixelRatio 1 while
+    // recording, so the output is exactly this many pixels.
+    const [captureRes, setCaptureRes] = useState(
+        () => new URLSearchParams(location.search).get("size") ?? "");
     const projSeen = useRef(new Set<string>());
     const projFlights = useRef<ProjectileFlight[]>([]);
     // Stock right-click "Choose option" menu (walk/act tool): entries carry
@@ -441,13 +504,13 @@ export function World3DView(props: {
     // Follow: keep the shared floor on the followed bot's floor.
     useEffect(() => {
         if (!props.follow) return;
-        const b = (props.bots ?? []).find(x => x.username === props.follow);
+        const b = (props.observers ?? []).find(x => x.username === props.follow);
         const f = b?.position?.floor;
         if (f != null && FLOORS[f] && FLOORS[f].key !== floor) {
             setFloor(FLOORS[f].key);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [props.follow, props.bots]);
+    }, [props.follow, props.observers]);
     // Became the active tab → adopt the shared URL coords the map wrote while
     // we were hidden (the component no longer remounts to re-read them). The
     // 60ms beat lets the container regain real size after display:none→block,
@@ -471,8 +534,7 @@ export function World3DView(props: {
         observed: {plane: number; x: number; z: number; id: number}[];
         observedDoors: {plane: number; x: number; z: number; dir: number; id: number}[];
         observedRev: number;
-        respawnGhosts: {plane: number; x: number; z: number; dir: number;
-            id: number; name: string | null; t: number}[];
+        respawnGhosts: {plane: number; x: number; z: number; id: number; t: number}[];
         route: RoutePoint[] | null;
     }>({manifest: null, floor: "ground", roofs: true, sight: true, tags: true,
         focusBot: props.focus ?? {x: 120, z: 640}, // Lumbridge default
@@ -510,10 +572,10 @@ export function World3DView(props: {
         // Our own bots appear in each other's in-view player lists — filter
         // them by server index so they don't double-render as "players".
         const ownIndexes = new Set<number>();
-        for (const b of props.bots ?? []) {
+        for (const b of props.observers ?? []) {
             if (b.serverIndex != null) ownIndexes.add(b.serverIndex);
         }
-        for (const b of props.bots ?? []) {
+        for (const b of props.observers ?? []) {
             const pos = b.position;
             if (pos && pos.floor === plane) {
                 out.push({key: `bot:${b.username}`, kind: "bot",
@@ -587,7 +649,7 @@ export function World3DView(props: {
         // Ground items on the active floor, deduped across bots by (id, tile).
         const ground: GroundItem3D[] = [];
         const seenGround = new Set<string>();
-        for (const b of props.bots ?? []) {
+        for (const b of props.observers ?? []) {
             for (const g of b.groundItems ?? []) {
                 if (Math.floor(g.z / 944) !== plane) continue;
                 const k = `${g.id}:${g.x},${g.z}`;
@@ -603,7 +665,7 @@ export function World3DView(props: {
         // the affected scenery cells.
         const obs: {plane: number; x: number; z: number; id: number}[] = [];
         const seenObj = new Set<string>();
-        for (const b of props.bots ?? []) {
+        for (const b of props.observers ?? []) {
             for (const o of b.objects ?? []) {
                 const op = Math.floor(o.z / 944);
                 const k = `${op}:${o.x},${o.z % 944}`;
@@ -616,7 +678,7 @@ export function World3DView(props: {
 
         const obsDoors: {plane: number; x: number; z: number; dir: number; id: number}[] = [];
         const seenDoor = new Set<string>();
-        for (const b of props.bots ?? []) {
+        for (const b of props.observers ?? []) {
             for (const w of b.wallObjects ?? []) {
                 if (w.dir == null) continue; // pre-dir runner build
                 const wp = Math.floor(w.z / 944);
@@ -629,24 +691,18 @@ export function World3DView(props: {
         stateRef.current.observedDoors = obsDoors;
         stateRef.current.observedRev++;
 
-        // Spent scenery with a predicted respawn (depleted rock, looted
-        // chest): ghost of the object it will BECOME + countdown — the
-        // scenery mirror of the npc spawn ghosts. respawnId/Name/Ticks come
-        // from the shared respawn stores via the objects stream.
-        const rGhosts: {plane: number; x: number; z: number; dir: number;
-            id: number; name: string | null; t: number}[] = [];
+        // Spent scenery with a predicted respawn (depleted rock, looted chest):
+        // ghost of the object it will BECOME + countdown — the scenery mirror of
+        // the npc respawn ghosts, supplied as its own `objectRespawns` list. The
+        // ghost's name is resolved from the object library at render time.
+        const rGhosts: {plane: number; x: number; z: number; id: number; t: number}[] = [];
         const seenRg = new Set<string>();
-        for (const b of props.bots ?? []) {
-            for (const o of b.objects ?? []) {
-                if (o.respawnId == null || o.respawnTicks == null) continue;
-                const op = Math.floor(o.z / 944);
-                const k = `${op}:${o.x},${o.z % 944}`;
-                if (seenRg.has(k)) continue;
-                seenRg.add(k);
-                rGhosts.push({plane: op, x: o.x, z: o.z % 944,
-                    dir: o.dir ?? 0, id: o.respawnId,
-                    name: o.respawnName ?? null, t: o.respawnTicks});
-            }
+        for (const o of props.objectRespawns ?? []) {
+            const op = Math.floor(o.z / 944);
+            const k = `${op}:${o.x},${o.z % 944}`;
+            if (seenRg.has(k)) continue;
+            seenRg.add(k);
+            rGhosts.push({plane: op, x: o.x, z: o.z % 944, id: o.id, t: o.t});
         }
         stateRef.current.respawnGhosts = rGhosts;
 
@@ -655,13 +711,13 @@ export function World3DView(props: {
         // the projectile layer for the stock 0.8s.
         {
             const ownIdx = new Map<number, string>();
-            for (const b of props.bots ?? []) {
+            for (const b of props.observers ?? []) {
                 if (b.serverIndex != null) ownIdx.set(b.serverIndex, b.username);
             }
             const byKey = new Map<string, Entity3D>();
             for (const e of out) byKey.set(e.key, e);
             const now = performance.now();
-            for (const b of props.bots ?? []) {
+            for (const b of props.observers ?? []) {
                 for (const p of b.projectiles ?? []) {
                     const k = `${b.serverTick}:${p.sprite}:`
                         + `${p.fromNpc ? "n" : "p"}${p.from}:`
@@ -692,7 +748,28 @@ export function World3DView(props: {
         const host = hostRef.current;
         if (!host) return;
 
-        const renderer = new THREE.WebGLRenderer({antialias: true});
+        // ---- Deterministic capture mode (?capture=<fps>) -----------------
+        // A screen recorder samples the live canvas in real time, so it beats
+        // against the display refresh and captures every hitch under GPU load —
+        // that's the choppiness. Instead, when ?capture is set the Fly button
+        // drives the WHOLE animation off a virtual clock (see capture.ts): both
+        // this render loop AND the demo's NPC-tick loop derive all motion from
+        // the rAF timestamp, so faking that clock advances flyby, NPC walks,
+        // sprite animation, water and windmills together, one exact 1/fps step
+        // per frame. We render each frame as slowly as the machine needs and
+        // stream it to disk — perfectly smooth no matter the real frame rate.
+        // Wired up just below the loop (runCapture).
+        let capturing = false;
+        // When set, resize() forces the canvas to exactly these pixels (at
+        // pixelRatio 1) instead of tracking the window — the recording size.
+        let captureSize: {w: number; h: number} | null = null;
+
+        const renderer = new THREE.WebGLRenderer({
+            antialias: true,
+            // Frame-grabbing reads the drawing buffer after the draw call; keep
+            // it alive for that. Only pay the cost while recording.
+            preserveDrawingBuffer: captureFps > 0,
+        });
         renderer.setPixelRatio(window.devicePixelRatio);
         host.appendChild(renderer.domElement);
         const scene = new THREE.Scene();
@@ -967,9 +1044,13 @@ export function World3DView(props: {
         const q = new URLSearchParams(location.search);
         let viewHeightUnits = (num(q.get("zoom")) ?? 60) * 128; // view height in tiles
         const resize = () => {
-            const w = host.clientWidth || 800;
-            const h = host.clientHeight || 600;
-            renderer.setSize(w, h);
+            const w = captureSize ? captureSize.w : (host.clientWidth || 800);
+            const h = captureSize ? captureSize.h : (host.clientHeight || 600);
+            // While recording, pin pixelRatio to 1 and don't touch the canvas's
+            // CSS size (updateStyle=false) — the backing store becomes exactly
+            // w×h (what we grab) while the on-screen canvas keeps its layout.
+            renderer.setPixelRatio(captureSize ? 1 : window.devicePixelRatio);
+            renderer.setSize(w, h, !captureSize);
             const aspect = w / h;
             camera.left = -viewHeightUnits * aspect / 2;
             camera.right = viewHeightUnits * aspect / 2;
@@ -1111,11 +1192,79 @@ export function World3DView(props: {
             commitHover(e ? {type: "entity", ...e} : null);
         };
 
-        type Drag = {mode: "rotate" | "pan"; button: number;
+        type Drag = {mode: "rotate" | "pan"; button: number; pointerId: number;
             lastX: number; lastY: number;
             downX: number; downY: number; pivot: THREE.Vector3 | null;
-            plateKey: string | null};
+            plateKey: string | null; noClick?: boolean};
         let drag: Drag | null = null;
+
+        // --- Multi-touch camera gestures ---------------------------------
+        // Active touch points by pointerId. One finger keeps the single-finger
+        // pan/tap path below; a second finger down switches to a two-finger
+        // gesture: pinch = zoom, twist = yaw, vertical drag = pitch (the
+        // Google-Maps-style scheme — the only way to zoom or rotate on a touch
+        // device, which has no wheel and no middle/right button).
+        const pointers = new Map<number, {x: number; y: number}>();
+        type Gesture = {dist: number; midX: number; midY: number;
+            angle: number; pivot: THREE.Vector3 | null};
+        let gesture: Gesture | null = null;
+
+        // Scale the ortho frustum by `factor` about a screen point, keeping the
+        // view-plane point under (clientX, clientY) fixed. Shared by wheel zoom
+        // and pinch zoom.
+        const zoomAbout = (clientX: number, clientY: number, factor: number) => {
+            const r = renderer.domElement.getBoundingClientRect();
+            const ndcX = r.width ? ((clientX - r.left) / r.width) * 2 - 1 : 0;
+            const ndcY = r.height ? -(((clientY - r.top) / r.height) * 2 - 1) : 0;
+            const halfW = camera.right;
+            const halfH = camera.top;
+            const oldH = viewHeightUnits;
+            viewHeightUnits = Math.min(1024 * 128, Math.max(6 * 128, viewHeightUnits * factor));
+            const f = viewHeightUnits / oldH;
+            resize();
+            const {right, up} = screenBasis();
+            target.addScaledVector(right, ndcX * halfW * (1 - f))
+                  .addScaledVector(up, ndcY * halfH * (1 - f));
+            regroundTarget();
+            applyCamera();
+        };
+
+        // The two active fingers' distance / midpoint / angle — the baseline a
+        // gesture takes deltas from.
+        const twoPointer = () => {
+            const [a, b] = [...pointers.values()];
+            return {dist: Math.hypot(a.x - b.x, a.y - b.y),
+                midX: (a.x + b.x) / 2, midY: (a.y + b.y) / 2,
+                angle: Math.atan2(b.y - a.y, b.x - a.x)};
+        };
+        const startGesture = () => {
+            const p = twoPointer();
+            gesture = {...p,
+                pivot: surfacePoint(p.midX, p.midY) ?? groundPoint(p.midX, p.midY)};
+        };
+        const applyGesture = () => {
+            if (!gesture || pointers.size < 2) return;
+            const p = twoPointer();
+            // Pinch: spreading the fingers (dist grows) zooms IN, about the
+            // midpoint so the world stays pinned under both fingertips.
+            if (gesture.dist > 0 && p.dist > 0) {
+                zoomAbout(p.midX, p.midY, gesture.dist / p.dist);
+            }
+            // Twist -> yaw (scene follows the fingers); two-finger vertical drag
+            // -> pitch (drag DOWN tilts toward top-down, matching the rotate-drag
+            // convention). A deliberate pinch/twist/tilt each moves mainly one of
+            // dist/angle/midY, so applying all three per frame stays clean.
+            let dYaw = p.angle - gesture.angle;
+            if (dYaw > Math.PI) dYaw -= 2 * Math.PI;
+            else if (dYaw < -Math.PI) dYaw += 2 * Math.PI;
+            const dPitch = (p.midY - gesture.midY) * 0.008;
+            rotateAboutPivot(gesture.pivot ?? target, -dYaw, dPitch);
+            gesture.dist = p.dist;
+            gesture.midX = p.midX;
+            gesture.midY = p.midY;
+            gesture.angle = p.angle;
+        };
+
         const el = renderer.domElement;
         // Camera input listens on the HOST (canvas + overlay divs), not the
         // canvas: nameplates float above it, and events over them never
@@ -1127,6 +1276,19 @@ export function World3DView(props: {
             if (flightRef.current) {
                 flightRef.current = null;
                 setFlying(false);
+            }
+            if (e.pointerType === "touch") {
+                pointers.set(e.pointerId, {x: e.clientX, y: e.clientY});
+                host.setPointerCapture(e.pointerId);
+                if (pointers.size >= 2) {
+                    // Second finger down: abandon the single-finger pan/tap and
+                    // drive the camera by the two-finger gesture instead.
+                    drag = null;
+                    pendingHover = {kind: "none"};
+                    if (pointers.size === 2) startGesture();
+                    return;
+                }
+                // One finger: fall through to the normal pan-drag setup below.
             }
             if (e.button !== 0 && e.button !== 1 && e.button !== 2) return;
             // A press begins a drag; don't let a queued hover resolve mid-drag.
@@ -1144,7 +1306,7 @@ export function World3DView(props: {
             // plate, so plates can't own their click handlers).
             const plate = (e.target as HTMLElement).closest?.(
                 "[data-entity-key]") as HTMLElement | null;
-            drag = {mode, button: e.button,
+            drag = {mode, button: e.button, pointerId: e.pointerId,
                 lastX: e.clientX, lastY: e.clientY,
                 downX: e.clientX, downY: e.clientY,
                 pivot: mode === "rotate"
@@ -1156,6 +1318,13 @@ export function World3DView(props: {
             host.setPointerCapture(e.pointerId);
         });
         host.addEventListener("pointermove", e => {
+            if (e.pointerType === "touch" && pointers.has(e.pointerId)) {
+                pointers.set(e.pointerId, {x: e.clientX, y: e.clientY});
+                if (gesture && pointers.size >= 2) {
+                    applyGesture();
+                    return;
+                }
+            }
             if (!drag) {
                 // Record what's under the cursor and let the render loop resolve
                 // it once this frame — resolving inline would fire a synchronous
@@ -1258,7 +1427,7 @@ export function World3DView(props: {
                             useDone();
                         }});
                 } else {
-                    const self = (propsRef.current.bots ?? [])
+                    const self = (propsRef.current.observers ?? [])
                         .find(b => b.username === user);
                     if (info?.atk) {
                         const delta = (self?.combatLvl ?? 0) - (info.lvl ?? 0);
@@ -1291,10 +1460,10 @@ export function World3DView(props: {
             } else if (ent && (ent.kind === "player" || ent.kind === "bot")
                        && !(ent.kind === "bot" && ent.name === user)) {
                 // Player verbs need the target's server index: players carry
-                // it in their key (pl:<idx>); swarm bots resolve via BotLive.
+                // it in their key (pl:<idx>); own observers resolve via Observer.
                 const idx = ent.kind === "player"
                     ? parseInt(ent.key.slice(3), 10)
-                    : (propsRef.current.bots ?? [])
+                    : (propsRef.current.observers ?? [])
                         .find(b => b.username === ent.name)?.serverIndex;
                 const nm = ent.name ?? "player";
                 const x = Math.round(ent.x);
@@ -1431,7 +1600,7 @@ export function World3DView(props: {
         };
 
         const endDrag = (e: PointerEvent) => {
-            const wasClick = drag
+            const wasClick = drag && !drag.noClick
                 && Math.hypot(e.clientX - drag.downX, e.clientY - drag.downY) < 4;
             // Any click while the option menu is open just closes it (the
             // menu's own entries stop propagation before reaching here).
@@ -1450,7 +1619,7 @@ export function World3DView(props: {
                 if (host.hasPointerCapture(e.pointerId)) host.releasePointerCapture(e.pointerId);
                 return;
             }
-            if (drag && drag.button === 0
+            if (drag && drag.button === 0 && !drag.noClick
                 && Math.hypot(e.clientX - drag.downX, e.clientY - drag.downY) < 4) {
                 // A click, not a drag: select whatever is under the cursor.
                 // A nameplate press selects its entity — same as clicking
@@ -1504,33 +1673,55 @@ export function World3DView(props: {
             drag = null;
             if (host.hasPointerCapture(e.pointerId)) host.releasePointerCapture(e.pointerId);
         };
-        host.addEventListener("pointerup", endDrag);
-        host.addEventListener("pointercancel", endDrag);
+        // Touch: keep the pointer map current and unwind the gesture before the
+        // single-finger tap/drag logic runs. Lifting from two fingers to one
+        // re-seeds a click-suppressed pan so the remaining finger keeps panning
+        // without a re-press.
+        const onPointerUp = (e: PointerEvent) => {
+            if (e.pointerType === "touch") {
+                const wasTracked = pointers.delete(e.pointerId);
+                if (gesture) {
+                    // Release only the lifted finger; the other keeps its capture
+                    // so the re-seeded pan still receives its moves.
+                    if (host.hasPointerCapture(e.pointerId)) host.releasePointerCapture(e.pointerId);
+                    if (pointers.size < 2) {
+                        gesture = null;
+                        if (pointers.size === 1) {
+                            const [[remId, rem]] = [...pointers.entries()];
+                            drag = {mode: "pan", button: 0, pointerId: remId,
+                                lastX: rem.x, lastY: rem.y,
+                                downX: rem.x, downY: rem.y,
+                                pivot: null, plateKey: null, noClick: true};
+                        } else {
+                            drag = null;
+                        }
+                    }
+                    return;
+                }
+                if (!wasTracked) return;
+                // Single-finger tap/drag: fall to endDrag, which consumes `drag`
+                // for selection BEFORE releasing capture (releasing here first
+                // could null the drag via lostpointercapture and eat the tap).
+            }
+            endDrag(e);
+        };
+        host.addEventListener("pointerup", onPointerUp);
+        host.addEventListener("pointercancel", onPointerUp);
         // Leaving the view entirely drops the hover highlight.
         host.addEventListener("pointerleave", () => {
             if (!drag) pendingHover = {kind: "none"};
         });
-        host.addEventListener("lostpointercapture", () => { drag = null; });
+        // Only drop the drag whose pointer actually lost capture — a two-finger
+        // gesture releases the lifted finger's capture (firing this) while the
+        // re-seeded pan is bound to the OTHER, still-captured finger.
+        host.addEventListener("lostpointercapture", e => {
+            if (drag && drag.pointerId === e.pointerId) drag = null;
+        });
 
         host.addEventListener("wheel", e => {
             e.preventDefault();
-            const r = renderer.domElement.getBoundingClientRect();
-            const ndcX = r.width ? ((e.clientX - r.left) / r.width) * 2 - 1 : 0;
-            const ndcY = r.height ? -(((e.clientY - r.top) / r.height) * 2 - 1) : 0;
-            const halfW = camera.right;
-            const halfH = camera.top;
-            const oldH = viewHeightUnits;
-            viewHeightUnits = Math.min(1024 * 128,
-                Math.max(6 * 128, viewHeightUnits * Math.pow(1.0015, e.deltaY)));
-            const f = viewHeightUnits / oldH;
-            resize();
-            // Zoom about the cursor, exactly: the view-plane point under the
-            // cursor stays under it when the frustum scales by f.
-            const {right, up} = screenBasis();
-            target.addScaledVector(right, ndcX * halfW * (1 - f))
-                  .addScaledVector(up, ndcY * halfH * (1 - f));
-            regroundTarget();
-            applyCamera();
+            // Zoom about the cursor: the view-plane point under it stays fixed.
+            zoomAbout(e.clientX, e.clientY, Math.pow(1.0015, e.deltaY));
         }, {passive: false});
 
         // Ground-height lookup built from parsed terrain cells (corner grid,
@@ -2043,7 +2234,7 @@ export function World3DView(props: {
                         entityHost.appendChild(div);
                         respawnTagPool.set(k, div);
                     }
-                    const text = `${g.name ?? g.id} · ${g.t}t`;
+                    const text = `${objLib?.objects.get(g.id)?.name ?? g.id} · ${g.t}t`;
                     if (div.textContent !== text) div.textContent = text;
                     div.style.left = `${((v.x + 1) / 2) * w}px`;
                     div.style.top = `${((1 - v.y) / 2) * h - 26}px`;
@@ -2768,36 +2959,70 @@ export function World3DView(props: {
             }
         }, 5000);
 
-        // ---- Fly-by evaluation ------------------------------------------
-        // Precompute per-waypoint cumulative times and unwrapped yaw (so the
-        // spline never takes the long way around) + log-space zoom.
+        // ---- Fly-by evaluation (cyclic) ---------------------------------
+        // The tour is a closed loop: waypoint i connects to (i+1) mod N, the
+        // last wrapping back to the first. Precompute cyclic segment times and a
+        // continuously-unwrapped yaw so both the spline and the heading join
+        // seamlessly across the wrap.
         const flyPts = FLYBY.map(w => ({...w}));
-        for (let i = 1; i < flyPts.length; i++) {
-            let dy = flyPts[i].yaw - flyPts[i - 1].yaw;
-            dy = ((dy + 180) % 360 + 360) % 360 - 180;
-            flyPts[i].yaw = flyPts[i - 1].yaw + dy;
+        const flyN = flyPts.length;
+        // Shortest per-leg yaw deltas around the whole cycle (incl. the wrap
+        // leg). Their sum is the net turn per loop — always a multiple of 360,
+        // so the heading returns to its start with matching velocity.
+        const flyDyaw: number[] = [];
+        for (let i = 0; i < flyN; i++) {
+            let d = flyPts[(i + 1) % flyN].yaw - flyPts[i].yaw;
+            d = ((d + 180) % 360 + 360) % 360 - 180;
+            flyDyaw.push(d);
         }
+        const flyYawWind = flyDyaw.reduce((a, b) => a + b, 0);
+        const flyYawCum = [flyPts[0].yaw];
+        for (let i = 0; i < flyN; i++) flyYawCum.push(flyYawCum[i] + flyDyaw[i]);
+        // Continuous unwrapped yaw at any (cyclic) waypoint index.
+        const flyYawU = (k: number): number => {
+            const turns = Math.floor(k / flyN);
+            const r = ((k % flyN) + flyN) % flyN;
+            return flyYawCum[r] + turns * flyYawWind;
+        };
+        // Duration of the leg ARRIVING at waypoint (i+1); index 0's `sec` is the
+        // wrap leg (last → first).
+        const flySeg: number[] = [];
+        for (let i = 0; i < flyN; i++) flySeg.push(flyPts[(i + 1) % flyN].sec ?? 6);
         const flyT: number[] = [0];
-        for (let i = 1; i < flyPts.length; i++) {
-            flyT.push(flyT[i - 1] + (flyPts[i].sec ?? 6));
-        }
-        const flyTotal = flyT[flyT.length - 1];
+        for (let i = 0; i < flyN; i++) flyT.push(flyT[i] + flySeg[i]);
+        const flyTotal = flyT[flyN];
+        // t_{k+1} − t_{k−1} around (cyclic) knot k — the denominator for the
+        // time-based Hermite tangents.
+        const flyDtAround = (k: number) =>
+            flySeg[((k % flyN) + flyN) % flyN] + flySeg[(((k - 1) % flyN) + flyN) % flyN];
         const flyAt = (tSec: number) => {
             const manifest = stateRef.current.manifest;
             if (!manifest) return;
-            const tt = Math.min(tSec, flyTotal);
+            // Constant-speed, cyclic: wrap time into one period and run the
+            // Catmull-Rom over cyclic neighbours. No global ease — easing to zero
+            // velocity at the ends would STALL the camera at the wrap, breaking
+            // the loop; constant flow keeps position AND velocity continuous
+            // across the seam. (The earlier per-segment easing that caused the
+            // "lag"/hard-stop is gone either way.) Uneven `sec` still shapes the
+            // pacing; equal `sec`s give perfectly uniform speed.
+            const tt = flyTotal > 0 ? ((tSec % flyTotal) + flyTotal) % flyTotal : 0;
             let i = 0;
-            while (i < flyT.length - 2 && tt > flyT[i + 1]) i++;
-            let u = (tt - flyT[i]) / Math.max(1e-6, flyT[i + 1] - flyT[i]);
-            // Gentle start and finish; constant flow in between.
-            if (i === 0) u = u * u * (3 - 2 * u);
-            if (i === flyT.length - 2) u = u * u * (3 - 2 * u);
-            const P = (k: number) => flyPts[Math.max(0, Math.min(flyPts.length - 1, k))];
-            const comp = (get: (w: FlyPoint) => number) =>
-                catmullRom(get(P(i - 1)), get(P(i)), get(P(i + 1)), get(P(i + 2)), u);
+            while (i < flyN - 1 && tt >= flyT[i + 1]) i++;
+            const u = (tt - flyT[i]) / Math.max(1e-6, flySeg[i]);
+            const P = (k: number) => flyPts[((k % flyN) + flyN) % flyN];
+            // Time-based Catmull-Rom tangents → C¹ in time across every seam.
+            const comp = (get: (w: FlyPoint) => number) => {
+                const m0 = (get(P(i + 1)) - get(P(i - 1))) / flyDtAround(i);
+                const m1 = (get(P(i + 2)) - get(P(i))) / flyDtAround(i + 1);
+                return hermite(get(P(i)), m0, get(P(i + 1)), m1, flySeg[i], u);
+            };
+            const yawM0 = (flyYawU(i + 1) - flyYawU(i - 1)) / flyDtAround(i);
+            const yawM1 = (flyYawU(i + 2) - flyYawU(i)) / flyDtAround(i + 1);
+            const yawDeg = hermite(
+                flyYawU(i), yawM0, flyYawU(i + 1), yawM1, flySeg[i], u);
             const worldWidthUnits = manifest.botXTiles * 128;
             target.set(worldWidthUnits - comp(w => w.x) * 128, 0, comp(w => w.z) * 128);
-            yaw = (comp(w => w.yaw) * Math.PI) / 180;
+            yaw = (yawDeg * Math.PI) / 180;
             pitch = Math.max(PITCH_MIN, Math.min(PITCH_MAX, (comp(w => w.pitch) * Math.PI) / 180));
             viewHeightUnits = Math.exp(comp(w => Math.log(w.zoom * 128)));
             resize();
@@ -2945,6 +3170,8 @@ export function World3DView(props: {
             if (fl) {
                 const tSec = (t - fl.start) / 1000;
                 flyAt(tSec);
+                // Clearing flightRef ends the flyby; in capture mode this is
+                // also runCapture's signal that the last frame has rendered.
                 if (tSec >= flyTotal) {
                     flightRef.current = null;
                     setFlying(false);
@@ -2967,6 +3194,63 @@ export function World3DView(props: {
             }
             renderer.render(scene, camera);
         };
+
+        // Deterministic recorder (see the ?capture note by the renderer). Drives
+        // the render loop and the demo's NPC-tick loop off one virtual clock so
+        // every frame is exactly 1/fps apart, streaming lossless PNGs to a
+        // user-picked folder. Runs the whole scripted flyby, then restores the
+        // real clock. MUST be invoked straight from a click handler: the folder
+        // picker below needs the user gesture, so nothing may `await` before it.
+        async function runCapture(size: {w: number; h: number} | null): Promise<void> {
+            if (capturing) return;
+            capturing = true;
+            cancelAnimationFrame(raf);   // take the loop off the real clock
+            let dir: FileSystemDirectoryHandle;
+            try {
+                dir = await pickCaptureDir();   // first await — gesture spent here
+            } catch (e) {
+                console.error("[capture] no output folder — aborting.", e);
+                capturing = false;
+                raf = requestAnimationFrame(loop);   // resume the normal loop
+                return;
+            }
+            // Force the recording resolution (if any) before the first frame.
+            captureSize = size;
+            resize();
+            const canvas = renderer.domElement;
+            const clock = new VirtualClock(captureFps);
+            flightRef.current = {start: clock.now()};
+            setFlying(true);
+            requestAnimationFrame(loop);   // enqueue the loop on the virtual clock
+            // Record exactly one period, [0, flyTotal). We stop one frame short
+            // of flyTotal on purpose: the tour is cyclic, so the frame at
+            // flyTotal equals the frame at 0 — including it would double the seam
+            // and hitch the loop.
+            const total = Math.max(1, Math.round(flyTotal * captureFps));
+            let frame = 0;
+            try {
+                for (; frame < total; frame++) {
+                    clock.tick();                    // render loop + NPC ticks
+                    await clock.yieldMacrotask();    // let React commit positions
+                    await writeFrame(dir, frame, await canvasPng(canvas));
+                }
+            } finally {
+                flightRef.current = null;
+                setFlying(false);
+                clock.uninstall();
+                capturing = false;
+                captureSize = null;
+                resize();                            // restore the live canvas size
+                raf = requestAnimationFrame(loop);   // back to the real clock
+            }
+            console.info(`[capture] wrote ${frame} frames @ ${captureFps}fps. Encode e.g.:\n`
+                + `  ffmpeg -framerate ${captureFps} -i %06d.png -c:v libwebp `
+                + "-loop 0 -lossless 0 -q:v 75 -fps_mode passthrough flyby.webp");
+        }
+        // Publish the starter for the Fly button (invoked within its click, so
+        // the folder picker's user-gesture requirement is satisfied).
+        startCaptureRef.current = runCapture;
+
         raf = requestAnimationFrame(loop);
         resize();
         applyCamera();
@@ -2974,6 +3258,7 @@ export function World3DView(props: {
         return () => {
             disposed = true;
             adoptUrlRef.current = null;
+            startCaptureRef.current = null;
             for (const key of [...sceneryMeshes.keys(), ...animMeshes.keys(),
                 ...windmillMeshes.keys()]) {
                 disposeSceneryCell(key);
@@ -3049,8 +3334,31 @@ export function World3DView(props: {
                         tags
                     </label>
                     {props.extraToggles}
+                    {captureFps > 0 && !flying && (
+                        <input type="text" value={captureRes}
+                               onChange={e => setCaptureRes(e.target.value)}
+                               placeholder={`${window.innerWidth}x${window.innerHeight} (blank = window)`}
+                               title="Recording resolution WxH (blank = live canvas size)"
+                               style={{marginLeft: 8, width: 150, padding: "2px 6px",
+                                   font: "inherit"}}/>
+                    )}
                     <button style={{marginLeft: 8}}
                             onClick={() => {
+                                // ?capture: record the flyby deterministically.
+                                // Called straight from this click so the folder
+                                // picker gets its required user gesture.
+                                if (captureFps > 0) {
+                                    if (flying) return;
+                                    let size: {w: number; h: number} | null;
+                                    try {
+                                        size = parseCaptureSize(captureRes);
+                                    } catch (err) {
+                                        alert(String(err instanceof Error ? err.message : err));
+                                        return;
+                                    }
+                                    startCaptureRef.current?.(size);
+                                    return;
+                                }
                                 if (flightRef.current) {
                                     flightRef.current = null;
                                     setFlying(false);
@@ -3059,7 +3367,9 @@ export function World3DView(props: {
                                     setFlying(true);
                                 }
                             }}>
-                        {flying ? "Stop" : "Fly"}
+                        {captureFps > 0
+                            ? (flying ? `● Recording ${captureFps}fps…` : "● Record flyby")
+                            : (flying ? "Stop" : "Fly")}
                     </button>
                 </>}
                 {status && <span style={{marginLeft: 8, opacity: .8}}>{status}</span>}

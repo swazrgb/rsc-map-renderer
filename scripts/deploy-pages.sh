@@ -38,6 +38,3 @@ git -C "$WORK" -c user.email=deploy@local -c user.name=deploy \
   commit -qm "deploy $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 git -C "$WORK" push -f "$URL" gh-pages
 rm -rf "$WORK"
-
-echo "Pushed $SITE -> $REMOTE gh-pages."
-echo "Enable once: repo Settings -> Pages -> Source: Deploy from a branch -> gh-pages / (root)."

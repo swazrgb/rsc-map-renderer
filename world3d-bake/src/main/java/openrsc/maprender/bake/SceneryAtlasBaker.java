@@ -15,7 +15,6 @@ import openrsc.gamedata.SceneryLocs;
 import openrsc.bot.render.ObjectSpriteRenderer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import tools.jackson.databind.ObjectMapper;
 
 /**
  * Bakes the world-map scenery sprite atlas: one top-down sprite per unique
@@ -145,7 +144,7 @@ public final class SceneryAtlasBaker {
     Path pngTmp = outDir.resolve(".atlas.png.tmp");
     Path jsonTmp = outDir.resolve(".atlas.json.tmp");
     ImageIO.write(atlas, "png", pngTmp.toFile());
-    new ObjectMapper().writeValue(jsonTmp.toFile(), new Index(VERSION, entries));
+    BakeJson.MAPPER.writeValue(jsonTmp.toFile(), new Index(VERSION, entries));
     Files.move(pngTmp, atlasPng(outDir), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
     Files.move(jsonTmp, atlasJson(outDir), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
 

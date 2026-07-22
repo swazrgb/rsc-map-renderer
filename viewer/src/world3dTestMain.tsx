@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useRef, useState} from "react";
 import {createRoot} from "react-dom/client";
-import type {BotLive, MapEntity} from "./api";
+import type {Observer, MapEntity} from "./api";
 import {World3DView} from "./World3DView";
 import {asset} from "./api";
 
@@ -47,9 +47,9 @@ function expand(e: DemoEntity): Int16Array {
     return p;
 }
 
-/** Stable empty-bots reference: when the simulation is off there are no
+/** Stable empty-observers reference: when the simulation is off there are no
  *  observers, so World3DView draws every spawn as a ghost. */
-const NO_BOTS: BotLive[] = [];
+const NO_OBSERVERS: Observer[] = [];
 
 function Demo({data}: {data: DemoData}) {
     // Precompute every entity's looping position track once.
@@ -77,8 +77,8 @@ function Demo({data}: {data: DemoData}) {
         return () => cancelAnimationFrame(raf);
     }, [data.tickMs, simulation]);
 
-    const bots: BotLive[] = useMemo(() => {
-        if (!simulation) return NO_BOTS;
+    const observers: Observer[] = useMemo(() => {
+        if (!simulation) return NO_OBSERVERS;
         const npcs: MapEntity[] = tracks.npcs.map(e => {
             const t = (tick % e.n) * 2;
             return {serverIndex: e.si, id: e.id, name: data.names[e.id] ?? null,
@@ -100,7 +100,7 @@ function Demo({data}: {data: DemoData}) {
 
     return (
         <div style={{width: "100vw", height: "100vh"}}>
-            <World3DView bots={bots} focus={{x: 122, z: 650}} hideSight
+            <World3DView observers={observers} focus={{x: 122, z: 650}} hideSight
                          extraToggles={
                              <label style={{marginLeft: 8, display: "flex",
                                  alignItems: "center", gap: 4}}>
@@ -124,7 +124,7 @@ function App() {
     }, []);
     if (err) {
         return <div style={{width: "100vw", height: "100vh"}}>
-            <World3DView bots={[]} focus={{x: 122, z: 650}}/>
+            <World3DView observers={[]} focus={{x: 122, z: 650}}/>
         </div>;
     }
     if (!data) return <div style={{padding: 16}}>Loading world…</div>;

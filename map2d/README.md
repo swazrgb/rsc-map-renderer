@@ -3,8 +3,9 @@
 Standalone world-map renderer for the OpenRSC game data. It loads the server's on-disk data tree (defs, locs, skill extras and the
 JAG landscape) and bakes the world map per floor:
 
-- a terrain colour raster (PNG),
-- a walls / diagonals / blocked-tile overlay (transparent PNG), and
+- two terrain colour rasters (PNG): `light` (full saturation) and `dim` (the washed-out
+  stock-minimap shading),
+- a walls overlay and a blocked-tile overlay (separate transparent PNGs), and
 - a GeoJSON feature layer (doors + NPC spawns, with wander boxes).
 
 ## Data source
@@ -22,7 +23,10 @@ present, falling back to `data/Authentic_Landscape.orsc`.
 ## Build & run
 
 ```bash
-# build a runnable fat jar
+# convenience wrapper (builds the jar, then renders): outDir defaults to ./map-out
+scripts/render-map.sh [outDir] [scale]
+
+# or by hand — build a runnable fat jar
 mvn -pl . package
 
 # render to ./map-out (run from inside the openrsc checkout)
@@ -32,9 +36,14 @@ java -jar target/rsc-map-renderer.jar [outputDir]
 mvn exec:java -Dexec.args="map-out"
 ```
 
-Output, for each floor `f` in `0..3`:
+Pass `-Dmap.scale=N` (or the script's `scale` arg) to bake every layer at `N`× the native
+3 px/tile — the layers scale together so they stay in registration.
 
-- `floor-f.png`       — terrain colour raster (3 px/tile, matches the stock minimap)
-- `floor-f.walls.png` — walls + diagonals + impassable-tile overlay (transparent RGBA PNG)
-- `floor-f.geojson`   — `FeatureCollection` of door edges and NPC spawns (each spawn carries id,
+Output, for each floor `f` in `0..3` (3 px/tile by default, `×scale` with `-Dmap.scale`):
+
+- `floor-f.light.png`   — terrain colour raster, full saturation (the brighter web-map look)
+- `floor-f.dim.png`     — terrain colour raster, washed out (the stock-minimap shading)
+- `floor-f.walls.png`   — wall + diagonal outlines only (transparent RGBA PNG)
+- `floor-f.blocked.png` — impassable-tile fill only (transparent RGBA PNG)
+- `floor-f.geojson`     — `FeatureCollection` of door edges and NPC spawns (each spawn carries id,
   name, combat level, aggressive flag and, when it roams, a wander-box polygon)

@@ -1,7 +1,7 @@
 package orsc;
 
 /**
- * Headless stub replacing idlersc's {@code orsc.mudclient} god-object.
+ * Headless stub replacing the {@code orsc.mudclient} god-object.
  *
  * <p>The ported OpenRSC renderer closure (Scene/World/RSModel/GraphicsController/
  * Shader/EntityHandler/...) references only a handful of static members of the
@@ -23,10 +23,6 @@ public final class mudclient {
   public static final int spriteUtil = 2100;
   public static final int spriteItem = 2150;
   public static final int spriteProjectile = 3160;
-
-  /** Raw sprite colour/width buffers, as in the original client. */
-  public static byte[][] s_kb = new byte[250][];
-  public static int[] s_wb;
 
   /** Headless render is always software-3D; never gated off. */
   public static boolean isRender3DEnabled() {

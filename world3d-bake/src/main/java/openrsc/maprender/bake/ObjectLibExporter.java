@@ -1,11 +1,10 @@
 package openrsc.maprender.bake;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.File;
 import java.io.IOException;
-import java.io.PrintWriter;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -37,6 +36,23 @@ import orsc.graphics.three.RegionExporter;
  * objects:[{id,model,w,h,lift,name}]}}.
  */
 public final class ObjectLibExporter {
+
+  /** Where a model's baked geometry lives in {@code objlib.bin} ({@code off}..{@code off+len}). */
+  private record ModelSpan(int model, int off, int len) {}
+
+  /**
+   * One object id → its model + footprint + menu commands. {@code cmd1}/{@code cmd2} are present
+   * only for real actions (the stock "WalkTo"/"Examine" sentinels are omitted).
+   */
+  @JsonInclude(JsonInclude.Include.NON_NULL)
+  private record ObjEntry(int id, int model, int w, int h, int lift, String name,
+                          String cmd1, String cmd2) {}
+
+  /** An animated object id → the model ids of its cycled frames. */
+  private record AnimEntry(int id, List<Integer> frames) {}
+
+  private record ObjLib(long baked, List<ModelSpan> models, List<ObjEntry> objects,
+                        List<AnimEntry> anims) {}
 
   /**
    * The client's animated scenery (mudclient_animate_objects): object id → its frame MODEL
@@ -73,7 +89,7 @@ public final class ObjectLibExporter {
       java.util.function.Consumer<String> log) throws IOException {
     ByteArrayOutputStream blob = new ByteArrayOutputStream(8 << 20);
     Map<Integer, int[]> modelSpans = new LinkedHashMap<>(); // modelId -> {off,len}
-    List<String> objectEntries = new ArrayList<>();
+    List<ObjEntry> objectEntries = new ArrayList<>();
 
     int baked = 0;
     for (int id = 0; id < 4000; id++) {
@@ -103,26 +119,19 @@ public final class ObjectLibExporter {
       if (cmd2 != null && cmd2.equalsIgnoreCase("Examine")) {
         cmd2 = null;
       }
-      objectEntries.add("{\"id\":" + id + ",\"model\":" + modelId
-          + ",\"w\":" + def.getWidth() + ",\"h\":" + def.getHeight()
-          + ",\"lift\":" + (id == 74 ? 480 : 0)
-          + ",\"name\":\"" + def.getName().replace("\"", "") + "\""
-          + (cmd1 == null || cmd1.isBlank() || cmd1.equalsIgnoreCase("WalkTo")
-              ? "" : ",\"cmd1\":\"" + cmd1.replace("\"", "") + "\"")
-          + (cmd2 == null || cmd2.isBlank() || cmd2.equalsIgnoreCase("WalkTo")
-              ? "" : ",\"cmd2\":\"" + cmd2.replace("\"", "") + "\"")
-          + "}");
+      objectEntries.add(new ObjEntry(id, modelId, def.getWidth(), def.getHeight(),
+          id == 74 ? 480 : 0, def.getName(), menuCmd(cmd1), menuCmd(cmd2)));
     }
 
     // Animation frames: bake each frame model with its object's placement
     // recipe, and index id → frame model ids for the viewer's animator.
-    List<String> animEntries = new ArrayList<>();
+    List<AnimEntry> animEntries = new ArrayList<>();
     for (Map.Entry<Integer, String[]> e : ANIM_FRAMES.entrySet()) {
       int id = e.getKey();
       if (ObjectSpriteRenderer.objectDef(id) == null) {
         continue;
       }
-      List<String> frameIds = new ArrayList<>();
+      List<Integer> frameIds = new ArrayList<>();
       boolean ok = true;
       for (String name : e.getValue()) {
         int modelId = com.openrsc.client.entityhandling.EntityHandler.storeModel(name);
@@ -138,31 +147,23 @@ public final class ObjectLibExporter {
           ok = false;
           break;
         }
-        frameIds.add(String.valueOf(modelId));
+        frameIds.add(modelId);
       }
       if (ok) {
-        animEntries.add("{\"id\":" + id + ",\"frames\":[" + String.join(",", frameIds) + "]}");
+        animEntries.add(new AnimEntry(id, frameIds));
+      }
+    }
+
+    List<ModelSpan> models = new ArrayList<>();
+    for (Map.Entry<Integer, int[]> e : modelSpans.entrySet()) {
+      if (e.getValue() != null) {
+        models.add(new ModelSpan(e.getKey(), e.getValue()[0], e.getValue()[1]));
       }
     }
 
     Files.write(new File(outDir, "objlib.bin").toPath(), blob.toByteArray());
-    try (PrintWriter w = new PrintWriter(new File(outDir, "objlib.json"), StandardCharsets.UTF_8)) {
-      w.print("{\"baked\":" + System.currentTimeMillis() + ",\"models\":[");
-      boolean first = true;
-      for (Map.Entry<Integer, int[]> e : modelSpans.entrySet()) {
-        if (e.getValue() == null) {
-          continue;
-        }
-        if (!first) {
-          w.print(",");
-        }
-        first = false;
-        w.print("{\"model\":" + e.getKey() + ",\"off\":" + e.getValue()[0]
-            + ",\"len\":" + e.getValue()[1] + "}");
-      }
-      w.print("],\"objects\":[" + String.join(",", objectEntries)
-          + "],\"anims\":[" + String.join(",", animEntries) + "]}");
-    }
+    BakeJson.MAPPER.writeValue(new File(outDir, "objlib.json"),
+        new ObjLib(System.currentTimeMillis(), models, objectEntries, animEntries));
     log.accept("object library: " + baked + " models, " + objectEntries.size()
         + " object ids, " + (blob.size() / 1024) + " KB");
   }
@@ -246,6 +247,18 @@ public final class ObjectLibExporter {
 
   private static int clampI16(int v) {
     return Math.max(Short.MIN_VALUE, Math.min(Short.MAX_VALUE, v));
+  }
+
+  /**
+   * A context-menu command, or {@code null} when it's the stock "no action"
+   * sentinel (command "WalkTo", or blank). The "Examine" default on command2 is
+   * cleared by the caller before this is applied.
+   */
+  private static String menuCmd(String cmd) {
+    if (cmd == null || cmd.isBlank() || cmd.equalsIgnoreCase("WalkTo")) {
+      return null;
+    }
+    return cmd;
   }
 
   private ObjectLibExporter() {}

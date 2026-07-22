@@ -12,8 +12,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import openrsc.gamedata.NpcDefs;
-import openrsc.bot.core.runtime.BotEnvironment;
-import openrsc.bot.core.world.CollisionMap;
+import openrsc.gamedata.runtime.GameEnvironment;
+import openrsc.gamedata.world.CollisionMap;
 import openrsc.gamedata.NpcLocs;
 import openrsc.gamedata.ServerConf;
 import tools.jackson.databind.ObjectMapper;
@@ -40,6 +40,9 @@ import tools.jackson.databind.ObjectMapper;
  * or a pause), which the viewer expands into a looping position track.
  */
 public final class DemoEntityBaker {
+
+  /** Shared, thread-safe mapper — one instance avoids re-building serializers per bake. */
+  private static final ObjectMapper MAPPER = new ObjectMapper();
 
   private static final int TICK_MS = 640;        // authentic RSC server tick
   private static final int WANDER_TICKS = 469;   // ~5 min at 640ms before looping
@@ -78,7 +81,7 @@ public final class DemoEntityBaker {
     Files.createDirectories(out);
 
     ServerConf conf = ServerConf.resolve();
-    BotEnvironment env = BotEnvironment.loadDefault(conf);
+    GameEnvironment env = GameEnvironment.loadDefault(conf);
     CollisionMap cm = env.collisionMap();
     List<NpcLocs.Spawn> spawns = env.npcLocs();
     NpcDefs defs = env.npcDefs();
@@ -331,7 +334,7 @@ public final class DemoEntityBaker {
     for (Track t : players) {
       playerOut.add(new PlayerOut(t.serverIndex(), t.appearance(), t.x(), t.z(), t.d()));
     }
-    new ObjectMapper().writeValue(file.toFile(),
+    MAPPER.writeValue(file.toFile(),
         new Entities(TICK_MS, names, npcOut, playerOut));
   }
 

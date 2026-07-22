@@ -19,6 +19,10 @@ import java.nio.file.Path;
  *       or from any module directory.</li>
  * </ol>
  * A candidate is accepted only if {@code defs/ItemDefs.json} exists under it.
+ *
+ * <p>The same checkout's client cache ({@code Client_Base/Cache}) is located in parallel by
+ * {@link #clientCache()} — same walk-up over {@code <ancestor>/openrsc/…}, with the matching
+ * {@code -Dopenrsc.clientCacheDir} / {@code OPENRSC_CLIENT_CACHE} overrides.
  */
 public record ServerConf(Path root) {
 
@@ -98,5 +102,47 @@ public record ServerConf(Path root) {
 
   private static boolean isConfRoot(Path p) {
     return Files.exists(p.resolve("defs/ItemDefs.json"));
+  }
+
+  /**
+   * Locate the OpenRSC client cache — {@code Client_Base/Cache}, whose {@code video/} subdir holds
+   * the sprites/textures/models the 3D bake reads. Resolution mirrors {@link #resolve()}:
+   * {@code -Dopenrsc.clientCacheDir} system property, then {@code OPENRSC_CLIENT_CACHE} environment
+   * variable, then a walk-up for {@code <ancestor>/openrsc/Client_Base/Cache}. A candidate is
+   * accepted only if {@code video/library.orsc} exists under it.
+   */
+  public static Path clientCache() {
+    String prop = System.getProperty("openrsc.clientCacheDir");
+    if (prop != null && !prop.isBlank()) {
+      return validatedCache(Path.of(prop), "-Dopenrsc.clientCacheDir");
+    }
+    String env = System.getenv("OPENRSC_CLIENT_CACHE");
+    if (env != null && !env.isBlank()) {
+      return validatedCache(Path.of(env), "$OPENRSC_CLIENT_CACHE");
+    }
+    Path dir = Path.of("").toAbsolutePath();
+    for (Path p = dir; p != null; p = p.getParent()) {
+      Path candidate = p.resolve("openrsc/Client_Base/Cache");
+      if (isClientCache(candidate)) {
+        return candidate.normalize();
+      }
+    }
+    throw new IllegalStateException(
+        "Could not locate the OpenRSC client cache (looked for "
+        + "<ancestor>/openrsc/Client_Base/Cache above " + dir + "). "
+        + "Pass -Dopenrsc.clientCacheDir=/path/to/Client_Base/Cache or set OPENRSC_CLIENT_CACHE.");
+  }
+
+  private static Path validatedCache(Path p, String source) {
+    if (!isClientCache(p)) {
+      throw new IllegalStateException(
+          "Client cache from " + source + " (" + p + ") does not look like "
+          + "Client_Base/Cache — video/library.orsc not found under it.");
+    }
+    return p.toAbsolutePath().normalize();
+  }
+
+  private static boolean isClientCache(Path p) {
+    return Files.exists(p.resolve("video/library.orsc"));
   }
 }

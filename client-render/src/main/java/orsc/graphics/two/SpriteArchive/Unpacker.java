@@ -2,7 +2,6 @@ package orsc.graphics.two.SpriteArchive;
 
 import java.io.*;
 import java.nio.ByteBuffer;
-import java.util.regex.Pattern;
 import java.util.zip.GZIPInputStream;
 
 public class Unpacker {
@@ -50,34 +49,6 @@ public class Unpacker {
 
 			return newWorkspace;
 		} catch (Exception a) {
-			a.printStackTrace();
-			return null;
-		}
-	}
-
-	public Entry unpackEntry(File file) {
-		if (!file.exists())
-			return null;
-
-		try {
-			FileInputStream fis = new FileInputStream(file);
-			GZIPInputStream gIS = new GZIPInputStream(fis);
-			DataInputStream input = new DataInputStream(gIS);
-
-			Entry.TYPE type;
-
-//            Entry newEntry = new Entry(
-//                    FilenameUtils.removeExtension(file.getName()),
-//                    type = TYPE.get((int) input.get() & 0xFF),
-//                    type.getLayers().length == 0 ? null : LAYER.get((int) input.get() & 0xFF),
-//                    (int) input.get() & 0xFF
-//            );
-//
-//            readEntry(input, newEntry);
-
-			return null;
-
-		} catch (IOException a) {
 			a.printStackTrace();
 			return null;
 		}
