@@ -211,11 +211,16 @@ public interface ServerData {
 
   /**
    * Woodcutting table for a tree scenery id, or {@code null} if not cuttable (server
-   * {@code getObjectWoodcuttingDef}).
+   * {@code getObjectWoodcuttingDef}). {@code respawnTime} is in <em>seconds</em> (the server does
+   * {@code respawnTime * 1000} → {@code scaledGameMs} → ms before scheduling the stump→tree respawn;
+   * see {@code Woodcutting.batchWoodcutting}). Unlike mining, the tree schedule calls
+   * {@code delayedSpawnObject} directly — skipping the {@code submit → ImmediateEvent} hop that gives
+   * rocks their {@code +1} — so a tree respawns one tick earlier than the rock formula; predict in
+   * ticks via {@code respawnTime * 1000 / 640} (no {@code +1}), pinned by {@code TreeRespawnTimingIT}.
    */
   Woodcutting woodcutting(int sceneryId);
 
-  record Woodcutting(int requiredLevel, int logId, int exp) {
+  record Woodcutting(int requiredLevel, int logId, int exp, int respawnTime) {
 
   }
 

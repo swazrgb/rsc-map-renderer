@@ -152,7 +152,7 @@ public final class ServerDataImpl implements ServerData {
   @Override
   public Woodcutting woodcutting(int sceneryId) {
     var d = defs.woodcutting().get(sceneryId);
-    return d == null ? null : new Woodcutting(d.requiredLevel(), d.logId(), d.exp());
+    return d == null ? null : new Woodcutting(d.requiredLevel(), d.logId(), d.exp(), d.respawnTime());
   }
 
   @Override
