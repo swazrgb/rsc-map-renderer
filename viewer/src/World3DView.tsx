@@ -398,12 +398,16 @@ export function World3DView(props: {
      *  toggles double as perf levers on a busy swarm. */
     layers?: {bots?: boolean; npcs?: boolean; players?: boolean;
         npcSpawns?: boolean; transports?: boolean; shops?: boolean};
-    /** Static transports on the ACTIVE floor (source x/z floor-local). Drawn
-     *  as draped tile OUTLINES (not labels); hovering one raises a clickable
-     *  chip that jumps the camera to the destination (dx/dz floor-local on
-     *  floor dfloor — same semantics as the 2D map's jumpToTransportDest). */
-    transports?: {x: number; z: number; name: string;
-        dx: number; dz: number; dfloor: number; req?: string | null}[];
+    /** Static transports on the ACTIVE floor, grouped per transport. The
+     *  OWNING scenery object (anchor, floor-local) glows persistently;
+     *  hovering it highlights the entry tiles and raises a clickable chip
+     *  that follows the transport (dx/dz floor-local on floor dfloor — same
+     *  semantics as the 2D map's jumpToTransportDest). Anchorless transports
+     *  (npc-talk crossings) currently have no 3D affordance. */
+    transports?: {name: string; req?: string | null;
+        anchor: {x: number; z: number} | null;
+        entries: {x: number; z: number}[];
+        dx: number; dz: number; dfloor: number}[];
     /** Static shop registry. Shops attach to their shopkeeper NPCs (npcIds):
      *  a matching npc's nameplate gets a ⚖ glyph, and clicking it reports the
      *  shop id so the shell can open its drawer. */
@@ -1499,7 +1503,6 @@ export function World3DView(props: {
             host.setPointerCapture(e.pointerId);
         });
         host.addEventListener("pointermove", e => {
-            if (!drag && !areaDrag) updateTransportHover(e.clientX, e.clientY);
             if (areaDrag) {
                 const at = groundTile(e.clientX, e.clientY);
                 if (at && areaRect) {
@@ -1957,6 +1960,10 @@ export function World3DView(props: {
         // across switches, so each keeps its own valid heights. ~4MB per
         // visited plane (1009×1009 floats).
         const HGRID = 1009;
+        // Bumped whenever a terrain cell sinks its corner heights in — draped
+        // one-shot geometry (transport glows, trail/route/area ribbons) redrapes
+        // on change, so nothing extruded early stays baked at sea level.
+        let heightsRev = 0;
         const heightsByPlane: (Float32Array | null)[] = [null, null, null, null];
         const heightsFor = (plane: number): Float32Array => {
             let g = heightsByPlane[plane];
@@ -2021,6 +2028,7 @@ export function World3DView(props: {
         const routeRibbon = new Ribbon(scene, 0x4da3ff, 0.6, 0.16);
         let lastRoute: RoutePoint[] | null | undefined;
         let lastRouteFloor: FloorKey | null = null;
+        let lastRouteHeightsRev = -1;
         const rebuildRoute = (plane: number,
                               toWorld: (x: number, z: number) => THREE.Vector3) => {
             const chains: {pts: {x: number; z: number}[]; closed: boolean}[] = [];
@@ -2043,6 +2051,7 @@ export function World3DView(props: {
         const areaRibbon = new Ribbon(scene, 0x4ec9ff, 0.9, 0.3);
         let areaRect: {x0: number; z0: number; x1: number; z1: number} | null = null;
         let areaRectDirty = false;
+        let lastAreaHeightsRev = -1;
         let lastAreaArmed = false;
         const rebuildAreaRect = (toWorld: (x: number, z: number) => THREE.Vector3) => {
             if (!areaRect) {
@@ -2068,6 +2077,7 @@ export function World3DView(props: {
         const trailRibbon = new Ribbon(scene, 0xe8a33d, 0.7, 0.14);
         let lastTrail: TrailPoint[] | null | undefined;
         let lastTrailFloor: FloorKey | null = null;
+        let lastTrailHeightsRev = -1;
         const rebuildTrail = (plane: number,
                               toWorld: (x: number, z: number) => THREE.Vector3) => {
             const chains: {pts: {x: number; z: number}[]; closed: boolean}[] = [];
@@ -2398,7 +2408,7 @@ export function World3DView(props: {
             | null;
 
         // Tile/footprint highlight: a small pool of translucent ground quads.
-        const TILE_POOL = 16;
+        const TILE_POOL = 48;
         const tileGeo = new THREE.BufferGeometry();
         tileGeo.setAttribute("position",
             new THREE.BufferAttribute(new Float32Array(TILE_POOL * 4 * 3), 3));
@@ -2531,57 +2541,67 @@ export function World3DView(props: {
             }
         };
 
-        // Transports: draped tile OUTLINES (labels were huge + in the way).
-        // Hovering a transport tile raises one clickable chip that jumps the
-        // camera to the destination (click rides the capture-safe endDrag
-        // path via data-transport, like nameplates/shop glyphs).
-        const transportRibbon = new Ribbon(scene, 0x7ee3ff, 0.55, 0.12);
+        // Transports: the OWNING scenery object glows persistently (dim cyan,
+        // additive — the same technique as the hover glow); hovering it
+        // highlights the transport's entry tiles (terrain-height quads) and
+        // raises one clickable chip that jumps the camera to the destination.
+        // No labels and no free-floating tile outlines.
+        type TransportMarker = {name: string; req?: string | null;
+            anchor: {x: number; z: number} | null;
+            entries: {x: number; z: number}[];
+            dx: number; dz: number; dfloor: number};
+        const transportGlowMat = new THREE.MeshBasicMaterial({
+            color: 0x7ee3ff, transparent: true, opacity: 0.16,
+            blending: THREE.AdditiveBlending, depthWrite: false,
+        });
+        const transportGlows: THREE.Group[] = [];
+        const transportByAnchor = new Map<string, TransportMarker>();
+        const rebuildTransportGlows = () => {
+            for (const g of transportGlows) {
+                scene.remove(g);
+                g.traverse(m => {
+                    if (m instanceof THREE.Mesh) m.geometry.dispose();
+                });
+            }
+            transportGlows.length = 0;
+            transportByAnchor.clear();
+            const manifest = stateRef.current.manifest;
+            const shown = propsRef.current.layers?.transports !== false;
+            if (!shown || !objLib || !manifest) return;
+            const plane = kindsFor(stateRef.current.floor).plane;
+            for (const t of propsRef.current.transports ?? []) {
+                if (!t.anchor) continue;
+                // Resolve the anchor tile to its actual placement (id + dir)
+                // so the glow re-assembles the real model.
+                const objs = sceneryByTile.get(`${plane}:${t.anchor.x},${t.anchor.z}`);
+                const o = objs?.find(oo => oo.ax === t.anchor!.x && oo.az === t.anchor!.z)
+                    ?? objs?.[0];
+                if (!o) continue;
+                transportByAnchor.set(`${o.ax},${o.az}`, t);
+                const group = new THREE.Group();
+                for (const {geometry} of assembleCell(objLib,
+                    [{id: o.id, dir: o.dir, x: o.ax, z: o.az}],
+                    manifest.botXTiles * 128, heightAt)) {
+                    const mesh = new THREE.Mesh(geometry, transportGlowMat);
+                    mesh.renderOrder = 8;
+                    group.add(mesh);
+                }
+                group.userData.noPick = true;
+                transportGlows.push(group);
+                scene.add(group);
+            }
+        };
         let lastTransports: unknown;
         let lastTransportsShown: boolean | undefined;
-        type TransportMarker = {x: number; z: number; name: string;
-            dx: number; dz: number; dfloor: number; req?: string | null};
-        const transportByTile = new Map<string, TransportMarker>();
-        const rebuildTransports = (toWorld: (x: number, z: number) => THREE.Vector3) => {
-            const shown = propsRef.current.layers?.transports !== false;
-            const list = shown ? propsRef.current.transports ?? [] : [];
-            transportByTile.clear();
-            const chains: {pts: {x: number; z: number}[]; closed: boolean}[] = [];
-            for (const t of list) {
-                transportByTile.set(`${t.x},${t.z}`, t);
-                chains.push({closed: true, pts: [
-                    {x: t.x - 0.5, z: t.z - 0.5},
-                    {x: t.x + 0.5, z: t.z - 0.5},
-                    {x: t.x + 0.5, z: t.z + 0.5},
-                    {x: t.x - 0.5, z: t.z + 0.5},
-                ]});
-            }
-            transportRibbon.extrude(chains, toWorld);
-        };
+        let lastTransportsFloor: unknown;
+        let lastTransportsHeightsRev = -1;
+        let lastTransportsSceneryCount = -1;
         let hoverTransport: TransportMarker | null = null;
         let transportChip: HTMLDivElement | null = null;
-        const updateTransportHover = (cx: number, cy: number) => {
-            if (transportByTile.size === 0) {
-                hoverTransport = null;
-                return;
-            }
-            const at = groundTile(cx, cy);
-            if (!at) {
-                hoverTransport = null;
-                return;
-            }
-            // Radius-1 match keeps the chip up while the cursor travels the
-            // short hop from the tile onto the chip itself.
-            let hit: TransportMarker | null = null;
-            for (let dx = -1; dx <= 1 && !hit; dx++) {
-                for (let dz = -1; dz <= 1 && !hit; dz++) {
-                    hit = transportByTile.get(`${at.x + dx},${at.z + dz}`) ?? null;
-                }
-            }
-            hoverTransport = hit;
-        };
         const frameTransportChip = (toWorld: (x: number, z: number) => THREE.Vector3) => {
             const t = hoverTransport;
-            if (!t) {
+            const at = t ? t.anchor ?? t.entries[0] : null;
+            if (!t || !at) {
                 if (transportChip) transportChip.style.display = "none";
                 return;
             }
@@ -2598,7 +2618,7 @@ export function World3DView(props: {
                 entityHost.appendChild(transportChip);
             }
             camera.updateMatrixWorld();
-            const v = toWorld(t.x, t.z).project(camera);
+            const v = toWorld(at.x, at.z).project(camera);
             if (v.z > 1 || v.z < -1 || v.x < -1.05 || v.x > 1.05
                 || v.y < -1.05 || v.y > 1.05) {
                 transportChip.style.display = "none";
@@ -2610,11 +2630,11 @@ export function World3DView(props: {
             if (transportChip.textContent !== text) {
                 transportChip.textContent = text;
                 transportChip.title = (t.req ? `requires ${t.req} — ` : "")
-                    + "click to jump to the destination";
+                    + "click to follow the transport";
             }
             transportChip.style.display = "";
             transportChip.style.left = `${((v.x + 1) / 2) * w}px`;
-            transportChip.style.top = `${((1 - v.y) / 2) * h - 10}px`;
+            transportChip.style.top = `${((1 - v.y) / 2) * h - 24}px`;
         };
 
                 const objectAtTile = (plane: number, x: number, z: number): Target => {
@@ -3003,8 +3023,20 @@ export function World3DView(props: {
                         tiles.push({x: tgt.ax + dx, z: tgt.az + dz});
                     }
                 }
+                // Hovering a transport's owning object also lights its ENTRY
+                // tiles and raises the follow chip.
+                const tr = transportByAnchor.get(`${tgt.ax},${tgt.az}`) ?? null;
+                hoverTransport = tr;
+                if (tr) {
+                    for (const en of tr.entries) tiles.push({x: en.x, z: en.z});
+                }
                 setTileHighlights(tiles);
             } else {
+                // Keep the chip while the cursor sits ON it — travelling from
+                // the object onto the chip must not clear the hover.
+                if (!(transportChip && transportChip.matches(":hover"))) {
+                    hoverTransport = null;
+                }
                 setSceneryGlow(null);
                 if (tgt?.type === "entity" || tgt?.type === "grounditem") {
                     setTileHighlights([{x: Math.round(tgt.x), z: Math.round(tgt.z)}]);
@@ -3172,6 +3204,7 @@ export function World3DView(props: {
                         loaded.set(key, group);
                         scene.add(group);
                         if (kind === "terrain") {
+                            heightsRev++;
                             // Heights for this cell are in — scenery can sit
                             // on real ground now.
                             const ck = cellKeyOf(cell.plane, cell.botX0, cell.botZ0);
@@ -3430,14 +3463,18 @@ export function World3DView(props: {
                     sightLayer.update(
                         st.entities.filter(e => e.kind === "bot"), toWorld);
                 }
-                if (st.route !== lastRoute || st.floor !== lastRouteFloor) {
+                if (st.route !== lastRoute || st.floor !== lastRouteFloor
+                    || heightsRev !== lastRouteHeightsRev) {
                     lastRoute = st.route;
                     lastRouteFloor = st.floor;
+                    lastRouteHeightsRev = heightsRev;
                     rebuildRoute(kindsFor(st.floor).plane, toWorld);
                 }
-                if (st.trail !== lastTrail || st.floor !== lastTrailFloor) {
+                if (st.trail !== lastTrail || st.floor !== lastTrailFloor
+                    || heightsRev !== lastTrailHeightsRev) {
                     lastTrail = st.trail;
                     lastTrailFloor = st.floor;
+                    lastTrailHeightsRev = heightsRev;
                     rebuildTrail(kindsFor(st.floor).plane, toWorld);
                 }
                 // Area-select rectangle: re-arming the tool clears the old
@@ -3448,8 +3485,9 @@ export function World3DView(props: {
                     areaRectDirty = true;
                 }
                 lastAreaArmed = areaArmed;
-                if (areaRectDirty) {
+                if (areaRectDirty || heightsRev !== lastAreaHeightsRev) {
                     areaRectDirty = false;
+                    lastAreaHeightsRev = heightsRev;
                     rebuildAreaRect(toWorld);
                 }
                 frameRespawnTags(kindsFor(st.floor).plane, st.tags,
@@ -3457,11 +3495,17 @@ export function World3DView(props: {
                 {
                     const shown = propsRef.current.layers?.transports !== false;
                     if (propsRef.current.transports !== lastTransports
-                        || shown !== lastTransportsShown) {
+                        || shown !== lastTransportsShown
+                        || st.floor !== lastTransportsFloor
+                        || heightsRev !== lastTransportsHeightsRev
+                        || sceneryByTile.size !== lastTransportsSceneryCount) {
                         lastTransports = propsRef.current.transports;
                         lastTransportsShown = shown;
+                        lastTransportsFloor = st.floor;
+                        lastTransportsHeightsRev = heightsRev;
+                        lastTransportsSceneryCount = sceneryByTile.size;
                         hoverTransport = null;
-                        rebuildTransports(toWorld);
+                        rebuildTransportGlows();
                     }
                 }
                 frameTransportChip(toWorld);
@@ -3669,7 +3713,13 @@ export function World3DView(props: {
             projectileLayer.dispose();
             for (const [, div] of respawnTagPool) div.remove();
             respawnTagPool.clear();
-            transportRibbon.dispose(scene);
+            for (const g of transportGlows) {
+                scene.remove(g);
+                g.traverse(m => {
+                    if (m instanceof THREE.Mesh) m.geometry.dispose();
+                });
+            }
+            transportGlowMat.dispose();
             transportChip?.remove();
             npcSprites.dispose(scene);
             playerSprites.dispose();
