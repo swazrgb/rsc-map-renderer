@@ -33,6 +33,10 @@ export interface Entity3D {
     combatLvl?: number | null;
     /** Player shows a PK skull — nameplate gets a skull prefix. */
     skulled?: boolean;
+    /** Shop this npc keeps (static registry match on npc id) — the nameplate
+     *  gets a clickable ⚖ glyph (data-shop-id, resolved by the view's
+     *  capture-safe click path) that opens the shell's shop drawer. */
+    shopId?: string;
     /** Server sprite direction: 0-7 facing, 8/9 = combat stance A/B. */
     dir?: number | null;
     /** Current/max hitpoints when known (health bar). */
@@ -248,6 +252,7 @@ export class EntityLayer {
                 t.inCombat = e.inCombat;
                 t.kind = e.kind;
                 t.npcId = e.npcId;
+                t.shopId = e.shopId;
                 t.appearance = e.appearance;
                 t.combatLvl = e.combatLvl;
                 t.skulled = e.skulled;
@@ -444,7 +449,8 @@ export class EntityLayer {
                     : t.kind !== "npc" && ab && now <= ab.until
                         ? ab.id : null;
                 const contentKey =
-                    `${plateText}|${bubbleId ?? ""}|${this.itemFrame ? 1 : 0}`;
+                    `${plateText}|${bubbleId ?? ""}|${this.itemFrame ? 1 : 0}`
+                    + `|${t.shopId ?? ""}`;
                 if (div.dataset.content !== contentKey) {
                     div.dataset.content = contentKey;
                     div.textContent = "";
@@ -464,6 +470,15 @@ export class EntityLayer {
                         div.appendChild(icon);
                     }
                     div.appendChild(document.createTextNode(plateText));
+                    if (t.shopId) {
+                        const shop = document.createElement("span");
+                        shop.dataset.shopId = t.shopId;
+                        shop.title = "open shop";
+                        shop.style.cssText =
+                            "margin-left:4px;cursor:pointer;color:#ffd27a;";
+                        shop.textContent = "⚖";
+                        div.appendChild(shop);
+                    }
                 }
                 // Ghost tooltip: the full decision inputs — window bounds,
                 // provenance, and how stale the last look is (the patrol
