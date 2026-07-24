@@ -375,6 +375,12 @@ export function World3DView(props: {
      *  scrubber): positions snap instead of lerping, so the scene lands in
      *  lockstep with the slider and the (snapping) 2D map. */
     scrubbing?: boolean;
+    /** One-shot camera pan to a world tile (z absolute, floor folded) — the 3D
+     *  twin of the 2D map's panTarget: search hits, chat-sender jumps, drawer
+     *  "locate" actions. `nonce` re-triggers on repeat clicks; the floor
+     *  switches through onFloorIndexChange like the 2D's onFloorChange. */
+    panTarget?: {x: number; z: number; floor: number; label: string;
+        nonce: number} | null;
     /** Walk/act tool: clicks command the selected bot instead of selecting.
      *  Left click runs the top menu entry by stock priority (walk, object
      *  command-1, Talk-to, Take…); right click opens the "Choose option"
@@ -528,6 +534,20 @@ export function World3DView(props: {
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [props.follow, props.observers]);
+    // One-shot pan (search hit, chat jump, "locate"): switch floor if the
+    // target is elsewhere, then swing the camera. Keyed on nonce so repeat
+    // clicks on the same tile still re-center.
+    useEffect(() => {
+        const p = props.panTarget;
+        if (!p) return;
+        const f = Math.max(0, Math.min(3, p.floor));
+        if (props.onFloorIndexChange && props.floorIndex != null
+            && props.floorIndex !== f) {
+            props.onFloorIndexChange(f);
+        }
+        panToRef.current?.(p.x, p.z - f * 944);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [props.panTarget?.nonce]);
     // Became the active tab → adopt the shared URL coords the map wrote while
     // we were hidden (the component no longer remounts to re-read them). The
     // 60ms beat lets the container regain real size after display:none→block,
@@ -562,6 +582,9 @@ export function World3DView(props: {
 
     const propsRef = useRef(props);
     propsRef.current = props;
+    // Imperative camera pan installed by the scene effect (needs its closure's
+    // target/applyCamera); consumed by the panTarget effect below.
+    const panToRef = useRef<((x: number, zLocal: number) => void) | null>(null);
     stateRef.current.floor = floor;
     stateRef.current.roofs = roofs;
     stateRef.current.sight = sight;
@@ -1099,6 +1122,19 @@ export function World3DView(props: {
             applyCamera();
         };
         adoptUrlRef.current = adoptShared;
+        // One-shot pan for the panTarget effect: land the camera on a tile
+        // (local z), zooming in first if the view is too far out to read.
+        panToRef.current = (x: number, zLocal: number) => {
+            const mf = stateRef.current.manifest;
+            if (!mf) return;
+            target.x = mf.botXTiles * 128 - (x * 128 + 64);
+            target.z = zLocal * 128 + 64;
+            if (viewHeightUnits > 120 * 128) {
+                viewHeightUnits = 60 * 128;
+                resize();
+            }
+            applyCamera();
+        };
 
         // ---- Hover info: tile + scenery under the cursor ----------------
         // Placements from /api/map/scenery.json; names + footprints from the
