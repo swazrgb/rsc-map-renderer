@@ -257,6 +257,13 @@ export interface RoutePoint {
     hop: boolean;
 }
 
+/** One walked tile of a recorded session's trail (absolute z, floor folded).
+ *  Unlike RoutePoint there's no hop flag — teleports are inferred from jumps. */
+export interface TrailPoint {
+    x: number;
+    z: number;
+}
+
 export interface SceneryPlacement {
     id: number;
     dir: number;

@@ -1,6 +1,7 @@
 import {useEffect, useRef, useState, type ReactNode} from "react";
 import * as THREE from "three";
-import type {Observer, MapEntity, NpcRespawn, ObjectRespawn, NpcSpawnInfo, RoutePoint} from "./api";
+import type {Observer, MapEntity, NpcRespawn, ObjectRespawn, NpcSpawnInfo, RoutePoint,
+    TrailPoint} from "./api";
 import {fetchNpcSpawns, sendInteract, sendWalk} from "./api";
 import {fetchWearables} from "./api";
 import {VirtualClock, pickCaptureDir, canvasPng, writeFrame} from "./capture";
@@ -367,6 +368,13 @@ export function World3DView(props: {
     /** The selected bot's planned route (absolute tiles, hop = transport
      *  landing) — drawn as a draped ribbon like the map's polyline. */
     route?: RoutePoint[] | null;
+    /** A recorded session's walked trail (inspector Events tab toggle) —
+     *  drawn as an amber ribbon, the 3D twin of the 2D trail polyline. */
+    trail?: TrailPoint[] | null;
+    /** True while `observers` carry a RECONSTRUCTED past instant (the global
+     *  scrubber): positions snap instead of lerping, so the scene lands in
+     *  lockstep with the slider and the (snapping) 2D map. */
+    scrubbing?: boolean;
     /** Walk/act tool: clicks command the selected bot instead of selecting.
      *  Left click runs the top menu entry by stock priority (walk, object
      *  command-1, Talk-to, Take…); right click opens the "Choose option"
@@ -545,11 +553,12 @@ export function World3DView(props: {
         observedRev: number;
         respawnGhosts: {plane: number; x: number; z: number; id: number; t: number}[];
         route: RoutePoint[] | null;
+        trail: TrailPoint[] | null;
     }>({manifest: null, floor: "ground", roofs: true, sight: true, tags: true,
         focusBot: props.focus ?? {x: 120, z: 640}, // Lumbridge default
         entities: [], entitiesRev: 0, groundItems: [],
         observed: [], observedDoors: [], observedRev: 0, respawnGhosts: [],
-        route: null});
+        route: null, trail: null});
 
     const propsRef = useRef(props);
     propsRef.current = props;
@@ -558,6 +567,7 @@ export function World3DView(props: {
     stateRef.current.sight = sight;
     stateRef.current.tags = tags;
     stateRef.current.route = props.route ?? null;
+    stateRef.current.trail = props.trail ?? null;
     if (props.focus) stateRef.current.focusBot = props.focus;
 
     // Assemble the live entity set for the ACTIVE floor. MapEntity.z and
@@ -1819,6 +1829,36 @@ export function World3DView(props: {
             if (cur.length > 1) chains.push({pts: cur, closed: false});
             routeRibbon.extrude(chains, toWorld);
         };
+        // Walked session trail — amber to match the 2D map's trail polyline
+        // (vs the blue planned route).
+        const trailRibbon = new Ribbon(scene, 0xe8a33d, 0.7, 0.14);
+        let lastTrail: TrailPoint[] | null | undefined;
+        let lastTrailFloor: FloorKey | null = null;
+        const rebuildTrail = (plane: number,
+                              toWorld: (x: number, z: number) => THREE.Vector3) => {
+            const chains: {pts: {x: number; z: number}[]; closed: boolean}[] = [];
+            let cur: {x: number; z: number}[] = [];
+            let prev: TrailPoint | null = null;
+            for (const p of stateRef.current.trail ?? []) {
+                // The backend emits a point per tick, so standing still yields
+                // long same-tile runs — skip them (degenerate ribbon miters).
+                if (prev && p.x === prev.x && p.z === prev.z) continue;
+                const onPlane = Math.floor(p.z / 944) === plane;
+                // Trail points carry no hop flag; walking moves 1 tile/tick, so
+                // any jump beyond a few tiles is a teleport/transport — break
+                // the chain there (and at floor changes) like the route does.
+                const jump = prev != null
+                    && Math.max(Math.abs(p.x - prev.x), Math.abs(p.z - prev.z)) > 5;
+                if (jump || !onPlane) {
+                    if (cur.length > 1) chains.push({pts: cur, closed: false});
+                    cur = [];
+                }
+                if (onPlane) cur.push({x: p.x, z: p.z % 944});
+                prev = p;
+            }
+            if (cur.length > 1) chains.push({pts: cur, closed: false});
+            trailRibbon.extrude(chains, toWorld);
+        };
         const npcSprites = new NpcSpriteLayer(scene);
         const playerSprites = new PlayerSpriteLayer(scene);
         // Overlay anchors (bars/splats/plates) use each npc's real sprite size.
@@ -3057,7 +3097,8 @@ export function World3DView(props: {
                 const sightDirty = st.entitiesRev !== lastEntitiesRev;
                 if (sightDirty) {
                     lastEntitiesRev = st.entitiesRev;
-                    entityLayer.update(st.entities, t);
+                    entityLayer.update(st.entities, t,
+                        propsRef.current.scrubbing === true);
                 }
                 const worldWidthUnits = st.manifest.botXTiles * 128;
                 const toWorld = (x: number, z: number) => new THREE.Vector3(
@@ -3073,6 +3114,11 @@ export function World3DView(props: {
                     lastRoute = st.route;
                     lastRouteFloor = st.floor;
                     rebuildRoute(kindsFor(st.floor).plane, toWorld);
+                }
+                if (st.trail !== lastTrail || st.floor !== lastTrailFloor) {
+                    lastTrail = st.trail;
+                    lastTrailFloor = st.floor;
+                    rebuildTrail(kindsFor(st.floor).plane, toWorld);
                 }
                 frameRespawnTags(kindsFor(st.floor).plane, st.tags,
                     viewHeightUnits / 128, toWorld);
@@ -3275,6 +3321,7 @@ export function World3DView(props: {
             for (const key of [...doorMeshes.keys()]) disposeDoorCell(key);
             sightLayer.dispose(scene);
             routeRibbon.dispose(scene);
+            trailRibbon.dispose(scene);
             projectileLayer.dispose();
             for (const [, div] of respawnTagPool) div.remove();
             respawnTagPool.clear();

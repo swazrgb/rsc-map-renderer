@@ -184,7 +184,10 @@ export class EntityLayer {
     }
 
     /** Replace the entity set (call when fresh data arrives). */
-    update(list: Entity3D[], now: number) {
+    /** `snap` = positions are a jump in TIME (scrubbing a historical instant),
+     *  not motion — apply instantly so the 3D scene lands exactly where the
+     *  slider (and the snapping 2D map) says, instead of gliding there. */
+    update(list: Entity3D[], now: number, snap = false) {
         const seen = new Set<string>();
         for (const e of list) {
             seen.add(e.key);
@@ -221,7 +224,11 @@ export class EntityLayer {
                     curX: e.x, curZ: e.z, t0: now,
                 });
             } else {
-                if ((t.ghost ?? false) !== (e.ghost ?? false)) {
+                if (snap) {
+                    t.fromX = t.toX = t.curX = e.x;
+                    t.fromZ = t.toZ = t.curZ = e.z;
+                    t.t0 = now - LERP_MS;
+                } else if ((t.ghost ?? false) !== (e.ghost ?? false)) {
                     // Ghost↔live swap (npc appeared in a bot's view, or
                     // dropped back to its spawn marker): a REPRESENTATION
                     // change, not movement — snap, never lerp the sprite
