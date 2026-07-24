@@ -387,6 +387,18 @@ export function World3DView(props: {
      *  tool is re-armed (a fresh drag replaces it). */
     areaSelect?: boolean;
     onAreaSelected?: (box: {x0: number; z0: number; x1: number; z1: number}) => void;
+    /** 2D-map layer parity (all default ON; the standalone demo passes none).
+     *  Turning a class off skips its ASSEMBLY, not just its visibility — the
+     *  toggles double as perf levers on a busy swarm. */
+    layers?: {bots?: boolean; npcs?: boolean; players?: boolean;
+        npcSpawns?: boolean; transports?: boolean; shops?: boolean};
+    /** Static transport markers for the ACTIVE floor (floor-local z), from the
+     *  shell's per-floor GeoJSON; drawn as pooled screen-space tags. */
+    transports?: {x: number; z: number; name: string; dest: string}[];
+    /** Static shop markers (absolute z — plotted on their own floor). A tag
+     *  click reports the shop id so the shell can open its drawer. */
+    shops?: {id: string; name: string; x: number; z: number}[];
+    onSelectShop?: (id: string) => void;
     /** Walk/act tool: clicks command the selected bot instead of selecting.
      *  Left click runs the top menu entry by stock priority (walk, object
      *  command-1, Talk-to, Take…); right click opens the "Choose option"
@@ -607,6 +619,12 @@ export function World3DView(props: {
         const out: Entity3D[] = [];
         const seenNpc = new Map<number, Entity3D>();
         const seenPlayer = new Map<number, Entity3D>();
+        // Layer parity with the 2D map: an off toggle skips the class's whole
+        // assembly pass (cheaper frames, not just hidden sprites).
+        const showBots = props.layers?.bots !== false;
+        const showNpcs = props.layers?.npcs !== false;
+        const showPlayers = props.layers?.players !== false;
+        const showSpawns = props.layers?.npcSpawns !== false;
         // First sighting wins per serverIndex, but a later sighting may carry
         // chat the first viewer missed (it walked into view after the npcsay)
         // — patch the newest line onto the kept entry.
@@ -625,7 +643,7 @@ export function World3DView(props: {
         }
         for (const b of props.observers ?? []) {
             const pos = b.position;
-            if (pos && pos.floor === plane) {
+            if (showBots && pos && pos.floor === plane) {
                 out.push({key: `bot:${b.username}`, kind: "bot",
                     x: pos.x, z: pos.z - pos.floor * 944, name: b.username,
                     selected: b.username === props.selectedBot,
@@ -636,7 +654,7 @@ export function World3DView(props: {
                     bubble: b.bubble, bubbleTick: b.bubbleTick,
                     sleeping: b.sleeping});
             }
-            for (const n of b.npcs ?? []) {
+            for (const n of showNpcs ? b.npcs ?? [] : []) {
                 if (Math.floor(n.z / 944) !== plane) continue;
                 const kept = seenNpc.get(n.serverIndex);
                 if (kept) {
@@ -651,7 +669,7 @@ export function World3DView(props: {
                 seenNpc.set(n.serverIndex, e);
                 out.push(e);
             }
-            for (const pl of b.players ?? []) {
+            for (const pl of showPlayers ? b.players ?? [] : []) {
                 if (Math.floor(pl.z / 944) !== plane
                     || ownIndexes.has(pl.serverIndex)) continue;
                 const kept = seenPlayer.get(pl.serverIndex);
@@ -677,10 +695,10 @@ export function World3DView(props: {
         // respawn window (and the store clears it on the next live
         // sighting).
         const pendingByIdx = new Map<number, NpcRespawn>();
-        for (const g of props.npcRespawns ?? []) {
+        for (const g of showSpawns ? props.npcRespawns ?? [] : []) {
             pendingByIdx.set(g.serverIndex, g);
         }
-        for (const s of npcSpawns) {
+        for (const s of showSpawns ? npcSpawns : []) {
             if (Math.floor(s.z / 944) !== plane || seenNpc.has(s.serverIndex)) continue;
             const pend = pendingByIdx.get(s.serverIndex);
             out.push({key: `npc:${s.serverIndex}`, kind: "npc",
@@ -1267,7 +1285,8 @@ export function World3DView(props: {
         type Drag = {mode: "rotate" | "pan"; button: number; pointerId: number;
             lastX: number; lastY: number;
             downX: number; downY: number; pivot: THREE.Vector3 | null;
-            plateKey: string | null; noClick?: boolean};
+            plateKey: string | null; shopId?: string | null;
+            noClick?: boolean};
         let drag: Drag | null = null;
 
         // --- Multi-touch camera gestures ---------------------------------
@@ -1396,7 +1415,12 @@ export function World3DView(props: {
                 pivot: mode === "rotate"
                     ? (surfacePoint(e.clientX, e.clientY) ?? groundPoint(e.clientX, e.clientY))
                     : null,
-                plateKey: plate?.dataset.entityKey ?? null};
+                plateKey: plate?.dataset.entityKey ?? null,
+                // Shop tags work like nameplates: pointer capture retargets
+                // their click to the host, so the press records the tag and
+                // endDrag's click path dispatches it.
+                shopId: ((e.target as HTMLElement).closest?.("[data-shop-id]") as
+                    HTMLElement | null)?.dataset.shopId ?? null};
             (window as any).__w3dPivot = drag.pivot
                 ? {x: drag.pivot.x, y: drag.pivot.y, z: drag.pivot.z} : null;
             host.setPointerCapture(e.pointerId);
@@ -1714,6 +1738,13 @@ export function World3DView(props: {
             }
             if (drag && drag.button === 0 && !drag.noClick
                 && Math.hypot(e.clientX - drag.downX, e.clientY - drag.downY) < 4) {
+                // A click on a shop tag opens the shell's shop drawer.
+                if (drag.shopId) {
+                    propsRef.current.onSelectShop?.(drag.shopId);
+                    drag = null;
+                    if (host.hasPointerCapture(e.pointerId)) host.releasePointerCapture(e.pointerId);
+                    return;
+                }
                 // A click, not a drag: select whatever is under the cursor.
                 // A nameplate press selects its entity — same as clicking
                 // the sprite itself.
@@ -2407,6 +2438,78 @@ export function World3DView(props: {
                 if (!used.has(k)) {
                     div.remove();
                     respawnTagPool.delete(k);
+                }
+            }
+        };
+
+        // Static world markers (transports, shops): the same pooled screen-
+        // space tag technique as the respawn tags — zoom-gated, frustum-
+        // culled, one DOM div per on-screen marker, reused across frames.
+        // Shop tags are clickable (they open the shell's shop drawer).
+        const staticTagPool = new Map<string, HTMLDivElement>();
+        const frameStaticTags = (plane: number, zoomTiles: number,
+                                 toWorld: (x: number, z: number) => THREE.Vector3) => {
+            const p = propsRef.current;
+            const used = new Set<string>();
+            const w = host.clientWidth || 800;
+            const h = host.clientHeight || 600;
+            let matrixFresh = false;
+            const place = (key: string, x: number, zLocal: number, text: string,
+                           style: string, title: string, shopId?: string) => {
+                if (!matrixFresh) {
+                    // Lazy: skip the matrix update entirely on frames where
+                    // both layers are off/out of zoom (same fix as nameplates).
+                    camera.updateMatrixWorld();
+                    matrixFresh = true;
+                }
+                const v = toWorld(x, zLocal).project(camera);
+                if (v.z > 1 || v.z < -1 || v.x < -1.05 || v.x > 1.05
+                    || v.y < -1.05 || v.y > 1.05) return;
+                used.add(key);
+                let div = staticTagPool.get(key);
+                if (!div) {
+                    div = document.createElement("div");
+                    div.style.cssText =
+                        "position:absolute;transform:translate(-50%,-100%);" +
+                        "font:10px monospace;padding:0 4px;border-radius:4px;" +
+                        "white-space:nowrap;z-index:880000;" + style;
+                    div.title = title;
+                    if (shopId != null) {
+                        // Clicks are dispatched via the host's endDrag path
+                        // (pointer capture retargets them away from the tag).
+                        div.dataset.shopId = shopId;
+                        div.style.pointerEvents = "auto";
+                        div.style.cursor = "pointer";
+                    } else {
+                        div.style.pointerEvents = "none";
+                    }
+                    entityHost.appendChild(div);
+                    staticTagPool.set(key, div);
+                }
+                if (div.textContent !== text) div.textContent = text;
+                div.style.left = `${((v.x + 1) / 2) * w}px`;
+                div.style.top = `${((1 - v.y) / 2) * h - 8}px`;
+            };
+            // Transports are numerous — same 60-tile zoom gate as respawn tags.
+            if (p.layers?.transports !== false && zoomTiles <= 60) {
+                for (const t of p.transports ?? []) {
+                    place(`tr:${t.x},${t.z}`, t.x, t.z, `⇋ ${t.name}`,
+                        "color:#7ee3ff;background:rgba(10,24,32,.55);", t.dest);
+                }
+            }
+            // Shops are few (~40 world-wide) — readable from further out.
+            if (p.layers?.shops !== false && zoomTiles <= 140) {
+                for (const s of p.shops ?? []) {
+                    if (Math.floor(s.z / 944) !== plane) continue;
+                    place(`sh:${s.id}`, s.x, s.z % 944, `⚖ ${s.name}`,
+                        "color:#ffd27a;background:rgba(32,24,10,.6);", s.name,
+                        s.id);
+                }
+            }
+            for (const [k, div] of staticTagPool) {
+                if (!used.has(k)) {
+                    div.remove();
+                    staticTagPool.delete(k);
                 }
             }
         };
@@ -3248,6 +3351,8 @@ export function World3DView(props: {
                 }
                 frameRespawnTags(kindsFor(st.floor).plane, st.tags,
                     viewHeightUnits / 128, toWorld);
+                frameStaticTags(kindsFor(st.floor).plane,
+                    viewHeightUnits / 128, toWorld);
                 // Scenery animation, stock cadence: water texture scrolls
                 // 1px per 20ms client frame (64px loop = 1.28s); fires/
                 // torches step their model frame every 6 client frames.
@@ -3452,6 +3557,8 @@ export function World3DView(props: {
             projectileLayer.dispose();
             for (const [, div] of respawnTagPool) div.remove();
             respawnTagPool.clear();
+            for (const [, div] of staticTagPool) div.remove();
+            staticTagPool.clear();
             npcSprites.dispose(scene);
             playerSprites.dispose();
             groundItems.dispose(scene);
