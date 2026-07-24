@@ -384,9 +384,14 @@ export function World3DView(props: {
     /** Area-select tool armed: a left drag sweeps a ground rectangle instead
      *  of panning; on release the swept tile box (floor-local z, inclusive)
      *  fires onAreaSelected. The committed rectangle stays drawn until the
-     *  tool is re-armed (a fresh drag replaces it). */
+     *  tool is re-armed (a fresh drag replaces it) — or, when the host
+     *  drives areaRectVisible, until that goes false. */
     areaSelect?: boolean;
     onAreaSelected?: (box: {x0: number; z0: number; x1: number; z1: number}) => void;
+    /** Host-controlled lifetime for the committed rectangle: pass false to
+     *  clear it (e.g. the selection results panel closed). Leave undefined
+     *  for the persist-until-rearmed default (standalone demo). */
+    areaRectVisible?: boolean;
     /** The deduped world state (entities across every observer, keyed by serverIndex) —
      *  when provided, entity assembly reads these pools instead of merging the observers'
      *  per-bot lists (the shell's live stream no longer carries those). The standalone
@@ -3527,6 +3532,13 @@ export function World3DView(props: {
                     areaRectDirty = true;
                 }
                 lastAreaArmed = areaArmed;
+                // Host says the selection is gone (results panel closed):
+                // drop the committed box. Armed drags are exempt (the box is
+                // being swept right now); undefined keeps the demo default.
+                if (propsRef.current.areaRectVisible === false && !areaArmed && areaRect) {
+                    areaRect = null;
+                    areaRectDirty = true;
+                }
                 if (areaRectDirty || heightsRev !== lastAreaHeightsRev) {
                     areaRectDirty = false;
                     lastAreaHeightsRev = heightsRev;
