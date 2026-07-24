@@ -2226,10 +2226,14 @@ export function World3DView(props: {
                 const tk = tileKeyOf(plane, pl.x, pl.z);
                 staticTiles.add(tk);
                 const ov = overrides.get(tk);
+                // id -1 is a server tombstone: the default object was removed
+                // outright (no replacement id) — render nothing at the tile.
+                if (ov === -1) continue;
                 resolved.push({id: ov ?? pl.id, dir: pl.dir, x: pl.x, z: pl.z});
             }
             // Observed objects at tiles with NO static placement (spawned).
             for (const [tk, id] of overrides) {
+                if (id < 0) continue;
                 const [p0, xz] = [tk.split(":")[0], tk.split(":")[1]];
                 if (parseInt(p0, 10) !== plane || staticTiles.has(tk)) continue;
                 const [x, z] = xz.split(",").map(Number);
@@ -2345,9 +2349,13 @@ export function World3DView(props: {
                 const ek = edgeKeyOf(plane, b.x, b.z, b.dir);
                 staticEdges.add(ek);
                 const ov = doorOverrides.get(ek);
+                // id -1 tombstone: default boundary removed outright (an open
+                // quest door that has no "open" id) — render nothing here.
+                if (ov === -1) continue;
                 resolved.push(ov != null ? {...b, id: ov} : b);
             }
             for (const [ek, id] of doorOverrides) {
+                if (id < 0) continue;
                 const [p0, rest] = [ek.split(":")[0], ek.split(":")[1]];
                 if (parseInt(p0, 10) !== plane || staticEdges.has(ek)) continue;
                 const [x, z, dir] = rest.split(",").map(Number);
