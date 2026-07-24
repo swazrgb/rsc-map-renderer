@@ -77,6 +77,15 @@ const FLOORS = [
 ] as const;
 type FloorKey = (typeof FLOORS)[number]["key"];
 
+// FLOORS above is the toolbar's DISPLAY order (underground on top). Numeric floor
+// values — the `floorIndex` prop, `position.floor`, the 2D map's floor — use RSC's
+// SEMANTIC numbering instead: 0 ground, 1/2 upper storeys, 3 underground. Convert
+// numeric floors through THIS map, never the display array (that offset every
+// floor and desynced the 2D/3D views).
+const FLOOR_KEYS_BY_INDEX = ["ground", "floor1", "floor2", "underground"] as const;
+const floorKeyForIndex = (i: number): FloorKey =>
+    FLOOR_KEYS_BY_INDEX[Math.max(0, Math.min(3, i))];
+
 // The stock client's "show roofs" hides MORE than roofs when you're under
 // one (mudclient.c draw loop): the current plane's roofs plus ALL
 // upper-storey walls and roofs — that's what opens up building interiors.
@@ -395,10 +404,10 @@ export function World3DView(props: {
     const [floorState, setFloorState] = useState<FloorKey>(initialFloor);
     const controlled = props.overlays != null;
     const floor: FloorKey = props.floorIndex != null
-        ? FLOORS[Math.max(0, Math.min(3, props.floorIndex))].key : floorState;
+        ? floorKeyForIndex(props.floorIndex) : floorState;
     const setFloor = (k: FloorKey) => {
         if (props.onFloorIndexChange) {
-            props.onFloorIndexChange(FLOORS.findIndex(f => f.key === k));
+            props.onFloorIndexChange(FLOOR_KEYS_BY_INDEX.indexOf(k));
         } else {
             setFloorState(k);
         }
@@ -407,8 +416,8 @@ export function World3DView(props: {
     useEffect(() => {
         if (props.floorIndex != null) {
             const k = initialFloor();
-            if (k !== FLOORS[props.floorIndex]?.key) {
-                props.onFloorIndexChange?.(FLOORS.findIndex(f => f.key === k));
+            if (k !== floorKeyForIndex(props.floorIndex)) {
+                props.onFloorIndexChange?.(FLOOR_KEYS_BY_INDEX.indexOf(k));
             }
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -506,8 +515,8 @@ export function World3DView(props: {
         if (!props.follow) return;
         const b = (props.observers ?? []).find(x => x.username === props.follow);
         const f = b?.position?.floor;
-        if (f != null && FLOORS[f] && FLOORS[f].key !== floor) {
-            setFloor(FLOORS[f].key);
+        if (f != null && FLOOR_KEYS_BY_INDEX[f] && FLOOR_KEYS_BY_INDEX[f] !== floor) {
+            setFloor(FLOOR_KEYS_BY_INDEX[f]);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [props.follow, props.observers]);
