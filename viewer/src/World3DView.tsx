@@ -3482,6 +3482,11 @@ export function World3DView(props: {
         // Follow-cam smoothing: timestamp of the previous follow frame (0 =
         // not currently following → next follow frame snaps instead of easing).
         let followPrevT = 0;
+        // The username the ease is currently tracking: switching the followed
+        // bot must SNAP like the first follow frame — easing from the old
+        // bot's spot sends the camera swooshing across the world, streaming
+        // cells the whole way (reads as a spurious floor switch).
+        let followTarget: string | null = null;
         let raf = 0;
         const loop = (t: number) => {
             raf = requestAnimationFrame(loop);
@@ -3581,6 +3586,10 @@ export function World3DView(props: {
                 // flyby is running.
                 const fol = propsRef.current.follow;
                 if (fol && !drag && !flightRef.current) {
+                    if (fol !== followTarget) {
+                        followTarget = fol;
+                        followPrevT = 0; // new bot: snap, don't ease across the map
+                    }
                     const b = entityLayer.current()
                         .find(c => c.key === `bot:${fol}`);
                     if (b) {
