@@ -614,7 +614,10 @@ export function World3DView(props: {
     // Assemble the live entity set for the ACTIVE floor. MapEntity.z and
     // BotPosition.z are absolute (floor baked in as z + floor*944); rings use
     // floor-local tiles. NPC/player views dedupe across bots by serverIndex.
-    {
+    // Skipped while the tab is hidden: per-tick props keep re-rendering the
+    // (mounted) component, and the O(bots × entities) merge was pure hidden
+    // cost — the reveal render re-runs it against the then-current props.
+    if (props.visible !== false) {
         const plane = kindsFor(floor).plane;
         const out: Entity3D[] = [];
         const seenNpc = new Map<number, Entity3D>();
