@@ -675,6 +675,7 @@ export function World3DView(props: {
                     x: pos.x, z: pos.z - pos.floor * 944, name: b.username,
                     selected: b.username === props.selectedBot,
                     inCombat: b.inCombat ?? false, appearance: b.appearance,
+                    skulled: b.skulled,
                     dir: b.dir, hp: b.hits, maxHp: b.maxHits,
                     dmg: b.dmg, dmgTick: b.dmg != null ? b.serverTick : null,
                     msg: b.msg, msgTick: b.msgTick,
@@ -2550,9 +2551,8 @@ export function World3DView(props: {
             anchor: {x: number; z: number} | null;
             entries: {x: number; z: number}[];
             dx: number; dz: number; dfloor: number};
-        const transportGlowMat = new THREE.MeshBasicMaterial({
-            color: 0x7ee3ff, transparent: true, opacity: 0.16,
-            blending: THREE.AdditiveBlending, depthWrite: false,
+        const transportOutlineMat = new THREE.LineBasicMaterial({
+            color: 0x7ee3ff, transparent: true, opacity: 0.85,
         });
         const transportGlows: THREE.Group[] = [];
         const transportByAnchor = new Map<string, TransportMarker>();
@@ -2560,7 +2560,7 @@ export function World3DView(props: {
             for (const g of transportGlows) {
                 scene.remove(g);
                 g.traverse(m => {
-                    if (m instanceof THREE.Mesh) m.geometry.dispose();
+                    if (m instanceof THREE.Mesh || m instanceof THREE.Line) m.geometry.dispose();
                 });
             }
             transportGlows.length = 0;
@@ -2582,9 +2582,14 @@ export function World3DView(props: {
                 for (const {geometry} of assembleCell(objLib,
                     [{id: o.id, dir: o.dir, x: o.ax, z: o.az}],
                     manifest.botXTiles * 128, heightAt)) {
-                    const mesh = new THREE.Mesh(geometry, transportGlowMat);
-                    mesh.renderOrder = 8;
-                    group.add(mesh);
+                    // Cyan EDGE outline of the model (silhouette + creases),
+                    // not a fill — reads as "this object is a transport"
+                    // without painting over it.
+                    const edges = new THREE.EdgesGeometry(geometry, 35);
+                    geometry.dispose();
+                    const line = new THREE.LineSegments(edges, transportOutlineMat);
+                    line.renderOrder = 8;
+                    group.add(line);
                 }
                 group.userData.noPick = true;
                 transportGlows.push(group);
@@ -2597,6 +2602,25 @@ export function World3DView(props: {
         let lastTransportsHeightsRev = -1;
         let lastTransportsSceneryCount = -1;
         let hoverTransport: TransportMarker | null = null;
+        // Cyan outlines around the hovered transport's ENTRY tiles — extruded
+        // at hover time (heights long since streamed) and redraped on
+        // heightsRev like every draped one-shot.
+        const entryRibbon = new Ribbon(scene, 0x7ee3ff, 0.9, 0.25);
+        let lastEntryHover: TransportMarker | null = null;
+        let lastEntryHeightsRev = -1;
+        const rebuildEntryOutline = (toWorld: (x: number, z: number) => THREE.Vector3) => {
+            const t = hoverTransport;
+            const chains: {pts: {x: number; z: number}[]; closed: boolean}[] = [];
+            for (const en of t ? t.entries : []) {
+                chains.push({closed: true, pts: [
+                    {x: en.x - 0.5, z: en.z - 0.5},
+                    {x: en.x + 0.5, z: en.z - 0.5},
+                    {x: en.x + 0.5, z: en.z + 0.5},
+                    {x: en.x - 0.5, z: en.z + 0.5},
+                ]});
+            }
+            entryRibbon.extrude(chains, toWorld);
+        };
         let transportChip: HTMLDivElement | null = null;
         const frameTransportChip = (toWorld: (x: number, z: number) => THREE.Vector3) => {
             const t = hoverTransport;
@@ -3023,13 +3047,11 @@ export function World3DView(props: {
                         tiles.push({x: tgt.ax + dx, z: tgt.az + dz});
                     }
                 }
-                // Hovering a transport's owning object also lights its ENTRY
-                // tiles and raises the follow chip.
-                const tr = transportByAnchor.get(`${tgt.ax},${tgt.az}`) ?? null;
-                hoverTransport = tr;
-                if (tr) {
-                    for (const en of tr.entries) tiles.push({x: en.x, z: en.z});
-                }
+                // Hovering a transport's owning object raises the follow chip
+                // and outlines its ENTRY tiles (cyan ribbon, drawn by the
+                // render loop off hoverTransport) — separate from the yellow
+                // footprint fill so the two read differently.
+                hoverTransport = transportByAnchor.get(`${tgt.ax},${tgt.az}`) ?? null;
                 setTileHighlights(tiles);
             } else {
                 // Keep the chip while the cursor sits ON it — travelling from
@@ -3509,6 +3531,12 @@ export function World3DView(props: {
                     }
                 }
                 frameTransportChip(toWorld);
+                if (hoverTransport !== lastEntryHover
+                    || heightsRev !== lastEntryHeightsRev) {
+                    lastEntryHover = hoverTransport;
+                    lastEntryHeightsRev = heightsRev;
+                    rebuildEntryOutline(toWorld);
+                }
                 // Scenery animation, stock cadence: water texture scrolls
                 // 1px per 20ms client frame (64px loop = 1.28s); fires/
                 // torches step their model frame every 6 client frames.
@@ -3716,10 +3744,11 @@ export function World3DView(props: {
             for (const g of transportGlows) {
                 scene.remove(g);
                 g.traverse(m => {
-                    if (m instanceof THREE.Mesh) m.geometry.dispose();
+                    if (m instanceof THREE.Mesh || m instanceof THREE.Line) m.geometry.dispose();
                 });
             }
-            transportGlowMat.dispose();
+            transportOutlineMat.dispose();
+            entryRibbon.dispose(scene);
             transportChip?.remove();
             npcSprites.dispose(scene);
             playerSprites.dispose();

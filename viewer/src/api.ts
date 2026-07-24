@@ -169,6 +169,9 @@ export interface Observer {
     dir?: number | null;
     /** The observer's current hitpoints (with {@link Observer.maxHits}, draws its health bar). */
     hits?: number | null;
+    /** True while the bot displays a PK skull — its nameplate gets the same
+     *  skull prefix as foreign players'. */
+    skulled?: boolean;
     /** The observer's maximum hitpoints. */
     maxHits?: number | null;
     /** Damage just dealt to the observer (`0` = blocked); flashes a splat at {@link Observer.serverTick}. */

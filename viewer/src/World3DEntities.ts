@@ -379,7 +379,9 @@ export class EntityLayer {
                 ? (t.skulled ? "☠ " : "") + (t.name ?? "player")
                     + (t.combatLvl ? ` (${t.combatLvl})` : "")
                 : t.kind === "bot"
-                ? t.name
+                // Own bots carry the same skull prefix as foreign players —
+                // skulled = drop-everything-on-death, worth seeing at a glance.
+                ? (t.skulled ? "☠ " : "") + t.name
                 : t.npcId != null
                     ? `${t.name ?? "npc"} #${t.npcId},${t.key.slice(4)}`
                         // Pop window: "· 42t" = witnessed, tick-exact; "· 12–31t?"
