@@ -381,6 +381,12 @@ export function World3DView(props: {
      *  switches through onFloorIndexChange like the 2D's onFloorChange. */
     panTarget?: {x: number; z: number; floor: number; label: string;
         nonce: number} | null;
+    /** Area-select tool armed: a left drag sweeps a ground rectangle instead
+     *  of panning; on release the swept tile box (floor-local z, inclusive)
+     *  fires onAreaSelected. The committed rectangle stays drawn until the
+     *  tool is re-armed (a fresh drag replaces it). */
+    areaSelect?: boolean;
+    onAreaSelected?: (box: {x0: number; z0: number; x1: number; z1: number}) => void;
     /** Walk/act tool: clicks command the selected bot instead of selecting.
      *  Left click runs the top menu entry by stock priority (walk, object
      *  command-1, Talk-to, Take…); right click opens the "Choose option"
@@ -1041,6 +1047,17 @@ export function World3DView(props: {
             }
             return p;
         };
+        /** Cursor position -> ground tile (floor-local coords), or null. */
+        const groundTile = (cx: number, cy: number): {x: number; z: number} | null => {
+            const p = groundPoint(cx, cy);
+            const mf = stateRef.current.manifest;
+            if (!p || !mf) return null;
+            return {x: Math.max(0, Math.floor((mf.botXTiles * 128 - p.x) / 128)),
+                z: Math.max(0, Math.floor(p.z / 128))};
+        };
+        // Area-select drag (see the areaSelect prop): true between a left
+        // press with the tool armed and its release.
+        let areaDrag = false;
 
         /** Rigidly rotate the camera+target pair about `pivot`, then re-anchor
          * the target to where the view axis meets the ground plane. In an
@@ -1348,6 +1365,18 @@ export function World3DView(props: {
             if (e.button !== 0 && e.button !== 1 && e.button !== 2) return;
             // A press begins a drag; don't let a queued hover resolve mid-drag.
             pendingHover = {kind: "none"};
+            // Area-select armed: LEFT drag sweeps a ground rectangle instead
+            // of panning (shift+left keeps its rotate fallback).
+            if (propsRef.current.areaSelect && e.button === 0 && !e.shiftKey) {
+                const at = groundTile(e.clientX, e.clientY);
+                if (at) {
+                    areaDrag = true;
+                    areaRect = {x0: at.x, z0: at.z, x1: at.x, z1: at.z};
+                    areaRectDirty = true;
+                    host.setPointerCapture(e.pointerId);
+                    return;
+                }
+            }
             // Stock-like controls: LEFT drag pans the map, MIDDLE or RIGHT
             // drag rotates the camera (shift+left = rotate fallback for
             // trackpads). A no-drag right CLICK still opens the option menu,
@@ -1373,6 +1402,15 @@ export function World3DView(props: {
             host.setPointerCapture(e.pointerId);
         });
         host.addEventListener("pointermove", e => {
+            if (areaDrag) {
+                const at = groundTile(e.clientX, e.clientY);
+                if (at && areaRect) {
+                    areaRect.x1 = at.x;
+                    areaRect.z1 = at.z;
+                    areaRectDirty = true;
+                }
+                return;
+            }
             if (e.pointerType === "touch" && pointers.has(e.pointerId)) {
                 pointers.set(e.pointerId, {x: e.clientX, y: e.clientY});
                 if (gesture && pointers.size >= 2) {
@@ -1733,6 +1771,21 @@ export function World3DView(props: {
         // re-seeds a click-suppressed pan so the remaining finger keeps panning
         // without a re-press.
         const onPointerUp = (e: PointerEvent) => {
+            if (areaDrag) {
+                areaDrag = false;
+                if (host.hasPointerCapture(e.pointerId)) {
+                    host.releasePointerCapture(e.pointerId);
+                }
+                if (areaRect) {
+                    propsRef.current.onAreaSelected?.({
+                        x0: Math.min(areaRect.x0, areaRect.x1),
+                        x1: Math.max(areaRect.x0, areaRect.x1),
+                        z0: Math.min(areaRect.z0, areaRect.z1),
+                        z1: Math.max(areaRect.z0, areaRect.z1),
+                    });
+                }
+                return;
+            }
             if (e.pointerType === "touch") {
                 const wasTracked = pointers.delete(e.pointerId);
                 if (gesture) {
@@ -1864,6 +1917,31 @@ export function World3DView(props: {
             }
             if (cur.length > 1) chains.push({pts: cur, closed: false});
             routeRibbon.extrude(chains, toWorld);
+        };
+        // Area-select rectangle — cyan like the 2D tool's dashed box. Perimeter
+        // is sampled per-tile (strided when huge) so the ribbon drapes terrain.
+        const areaRibbon = new Ribbon(scene, 0x4ec9ff, 0.9, 0.3);
+        let areaRect: {x0: number; z0: number; x1: number; z1: number} | null = null;
+        let areaRectDirty = false;
+        let lastAreaArmed = false;
+        const rebuildAreaRect = (toWorld: (x: number, z: number) => THREE.Vector3) => {
+            if (!areaRect) {
+                areaRibbon.extrude([], toWorld);
+                return;
+            }
+            const x0 = Math.min(areaRect.x0, areaRect.x1);
+            const x1 = Math.max(areaRect.x0, areaRect.x1);
+            const z0 = Math.min(areaRect.z0, areaRect.z1);
+            const z1 = Math.max(areaRect.z0, areaRect.z1);
+            const per = 2 * (x1 - x0 + z1 - z0) + 4;
+            const stride = Math.max(1, Math.ceil(per / 512));
+            const pts: {x: number; z: number}[] = [];
+            for (let x = x0; x < x1; x += stride) pts.push({x, z: z0});
+            for (let z = z0; z < z1; z += stride) pts.push({x: x1, z});
+            for (let x = x1; x > x0; x -= stride) pts.push({x, z: z1});
+            for (let z = z1; z > z0; z -= stride) pts.push({x: x0, z});
+            if (pts.length < 2) pts.push({x: x0, z: z0}, {x: x1, z: z1});
+            areaRibbon.extrude([{pts, closed: true}], toWorld);
         };
         // Walked session trail — amber to match the 2D map's trail polyline
         // (vs the blue planned route).
@@ -3156,6 +3234,18 @@ export function World3DView(props: {
                     lastTrailFloor = st.floor;
                     rebuildTrail(kindsFor(st.floor).plane, toWorld);
                 }
+                // Area-select rectangle: re-arming the tool clears the old
+                // committed box; the drag handlers mark it dirty per move.
+                const areaArmed = propsRef.current.areaSelect === true;
+                if (areaArmed && !lastAreaArmed && areaRect) {
+                    areaRect = null;
+                    areaRectDirty = true;
+                }
+                lastAreaArmed = areaArmed;
+                if (areaRectDirty) {
+                    areaRectDirty = false;
+                    rebuildAreaRect(toWorld);
+                }
                 frameRespawnTags(kindsFor(st.floor).plane, st.tags,
                     viewHeightUnits / 128, toWorld);
                 // Scenery animation, stock cadence: water texture scrolls
@@ -3358,6 +3448,7 @@ export function World3DView(props: {
             sightLayer.dispose(scene);
             routeRibbon.dispose(scene);
             trailRibbon.dispose(scene);
+            areaRibbon.dispose(scene);
             projectileLayer.dispose();
             for (const [, div] of respawnTagPool) div.remove();
             respawnTagPool.clear();
