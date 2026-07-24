@@ -387,6 +387,12 @@ export function World3DView(props: {
      *  tool is re-armed (a fresh drag replaces it). */
     areaSelect?: boolean;
     onAreaSelected?: (box: {x0: number; z0: number; x1: number; z1: number}) => void;
+    /** The deduped world state (entities across every observer, keyed by serverIndex) —
+     *  when provided, entity assembly reads these pools instead of merging the observers'
+     *  per-bot lists (the shell's live stream no longer carries those). The standalone
+     *  demo omits it and keeps the per-observer merge. */
+    world?: {npcs: MapEntity[]; players: MapEntity[]; objects: MapEntity[];
+        wallObjects: MapEntity[]; groundItems: MapEntity[]};
     /** 2D-map layer parity (all default ON; the standalone demo passes none).
      *  Turning a class off skips its ASSEMBLY, not just its visibility — the
      *  toggles double as perf levers on a busy swarm. */
@@ -644,6 +650,9 @@ export function World3DView(props: {
         for (const b of props.observers ?? []) {
             if (b.serverIndex != null) ownIndexes.add(b.serverIndex);
         }
+        // Pooled world state (the shell's deduped stream); per-observer lists
+        // are the standalone-demo fallback.
+        const pooled = props.world;
         for (const b of props.observers ?? []) {
             const pos = b.position;
             if (showBots && pos && pos.floor === plane) {
@@ -657,7 +666,7 @@ export function World3DView(props: {
                     bubble: b.bubble, bubbleTick: b.bubbleTick,
                     sleeping: b.sleeping});
             }
-            for (const n of showNpcs ? b.npcs ?? [] : []) {
+            for (const n of showNpcs && !pooled ? b.npcs ?? [] : []) {
                 if (Math.floor(n.z / 944) !== plane) continue;
                 const kept = seenNpc.get(n.serverIndex);
                 if (kept) {
@@ -672,7 +681,7 @@ export function World3DView(props: {
                 seenNpc.set(n.serverIndex, e);
                 out.push(e);
             }
-            for (const pl of showPlayers ? b.players ?? [] : []) {
+            for (const pl of showPlayers && !pooled ? b.players ?? [] : []) {
                 if (Math.floor(pl.z / 944) !== plane
                     || ownIndexes.has(pl.serverIndex)) continue;
                 const kept = seenPlayer.get(pl.serverIndex);
@@ -689,6 +698,30 @@ export function World3DView(props: {
                     bubble: pl.bubble, bubbleTick: pl.bubbleTick};
                 seenPlayer.set(pl.serverIndex, e);
                 out.push(e);
+            }
+        }
+        if (pooled) {
+            // Pool entries are pre-deduped (and chat/damage freshest-merged) server-side.
+            for (const n of showNpcs ? pooled.npcs : []) {
+                if (Math.floor(n.z / 944) !== plane) continue;
+                const e: Entity3D = {key: `npc:${n.serverIndex}`, kind: "npc",
+                    x: n.x, z: n.z % 944, name: n.name, inCombat: n.inCombat,
+                    npcId: n.id, dir: n.dir, hp: n.hp, maxHp: n.maxHp,
+                    dmg: n.dmg, dmgTick: n.dmgTick,
+                    msg: n.msg, msgTick: n.msgTick};
+                seenNpc.set(n.serverIndex, e);
+                out.push(e);
+            }
+            for (const pl of showPlayers ? pooled.players : []) {
+                if (Math.floor(pl.z / 944) !== plane
+                    || ownIndexes.has(pl.serverIndex)) continue;
+                out.push({key: `pl:${pl.serverIndex}`, kind: "player",
+                    x: pl.x, z: pl.z % 944, name: pl.name, inCombat: pl.inCombat,
+                    appearance: pl.appearance, dir: pl.dir,
+                    combatLvl: pl.combatLvl, skulled: pl.skulled,
+                    hp: pl.hp, maxHp: pl.maxHp, dmg: pl.dmg, dmgTick: pl.dmgTick,
+                    msg: pl.msg, msgTick: pl.msgTick,
+                    bubble: pl.bubble, bubbleTick: pl.bubbleTick});
             }
         }
         // Ghost NPCs: every static spawn whose NPC no bot currently sees —
@@ -715,16 +748,24 @@ export function World3DView(props: {
         stateRef.current.entities = out;
         stateRef.current.entitiesRev++;
 
-        // Ground items on the active floor, deduped across bots by (id, tile).
+        // Ground items on the active floor (pool is pre-deduped; the fallback
+        // dedupes across bots by (id, tile)).
         const ground: GroundItem3D[] = [];
-        const seenGround = new Set<string>();
-        for (const b of props.observers ?? []) {
-            for (const g of b.groundItems ?? []) {
+        if (pooled) {
+            for (const g of pooled.groundItems) {
                 if (Math.floor(g.z / 944) !== plane) continue;
-                const k = `${g.id}:${g.x},${g.z}`;
-                if (seenGround.has(k)) continue;
-                seenGround.add(k);
                 ground.push({id: g.id, x: g.x, z: g.z % 944, name: g.name});
+            }
+        } else {
+            const seenGround = new Set<string>();
+            for (const b of props.observers ?? []) {
+                for (const g of b.groundItems ?? []) {
+                    if (Math.floor(g.z / 944) !== plane) continue;
+                    const k = `${g.id}:${g.x},${g.z}`;
+                    if (seenGround.has(k)) continue;
+                    seenGround.add(k);
+                    ground.push({id: g.id, x: g.x, z: g.z % 944, name: g.name});
+                }
             }
         }
         stateRef.current.groundItems = ground;
@@ -734,7 +775,14 @@ export function World3DView(props: {
         // the affected scenery cells.
         const obs: {plane: number; x: number; z: number; id: number}[] = [];
         const seenObj = new Set<string>();
-        for (const b of props.observers ?? []) {
+        for (const o of pooled ? pooled.objects : []) {
+            const op = Math.floor(o.z / 944);
+            const k = `${op}:${o.x},${o.z % 944}`;
+            if (seenObj.has(k)) continue;
+            seenObj.add(k);
+            obs.push({plane: op, x: o.x, z: o.z % 944, id: o.id});
+        }
+        for (const b of pooled ? [] : props.observers ?? []) {
             for (const o of b.objects ?? []) {
                 const op = Math.floor(o.z / 944);
                 const k = `${op}:${o.x},${o.z % 944}`;
@@ -746,8 +794,13 @@ export function World3DView(props: {
         stateRef.current.observed = obs;
 
         const obsDoors: {plane: number; x: number; z: number; dir: number; id: number}[] = [];
+        for (const w of pooled ? pooled.wallObjects : []) {
+            if (w.dir == null) continue;
+            obsDoors.push({plane: Math.floor(w.z / 944), x: w.x, z: w.z % 944,
+                dir: w.dir, id: w.id});
+        }
         const seenDoor = new Set<string>();
-        for (const b of props.observers ?? []) {
+        for (const b of pooled ? [] : props.observers ?? []) {
             for (const w of b.wallObjects ?? []) {
                 if (w.dir == null) continue; // pre-dir runner build
                 const wp = Math.floor(w.z / 944);
