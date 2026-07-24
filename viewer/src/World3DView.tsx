@@ -3272,18 +3272,36 @@ export function World3DView(props: {
             // static placements; changed tiles dirty their cell only.
             if (st.observedRev !== lastObservedRev && objLib) {
                 lastObservedRev = st.observedRev;
+                // Overrides mirror the observed DEVIATION set exactly. The
+                // runner ships only objects that differ from the static map,
+                // so "back to the default" (stump regrew, door closed) arrives
+                // as the entry LEAVING the pool — never as an observation of
+                // the original id. Anything overridden but no longer observed
+                // reverts to the static object.
+                const dirtyKey = (k: string) => {
+                    const [p0, rest] = [k.split(":")[0], k.split(":")[1]];
+                    const [x, z] = rest.split(",").map(Number);
+                    dirtyCells.add(cellKeyOf(parseInt(p0, 10), x, z));
+                };
                 if (doorDefs) {
+                    const freshDoors = new Map<string, number>();
                     for (const d of st.observedDoors) {
                         const ek = edgeKeyOf(d.plane, d.x, d.z, d.dir);
                         const stat = staticDoorByEdge.get(ek);
                         if (!stat || stat.id !== d.id) {
-                            if (doorOverrides.get(ek) !== d.id) {
-                                doorOverrides.set(ek, d.id);
-                                dirtyCells.add(cellKeyOf(d.plane, d.x, d.z));
-                            }
-                        } else if (doorOverrides.has(ek)) {
+                            freshDoors.set(ek, d.id);
+                        }
+                    }
+                    for (const [ek, id] of freshDoors) {
+                        if (doorOverrides.get(ek) !== id) {
+                            doorOverrides.set(ek, id);
+                            dirtyKey(ek);
+                        }
+                    }
+                    for (const ek of [...doorOverrides.keys()]) {
+                        if (!freshDoors.has(ek)) {
                             doorOverrides.delete(ek);
-                            dirtyCells.add(cellKeyOf(d.plane, d.x, d.z));
+                            dirtyKey(ek);
                         }
                     }
                 }
@@ -3295,22 +3313,16 @@ export function World3DView(props: {
                         fresh.set(tk, o.id); // replaced (or spawned) object
                     }
                 }
-                // New/changed overrides
                 for (const [tk, id] of fresh) {
                     if (overrides.get(tk) !== id) {
                         overrides.set(tk, id);
-                        const [p0, xz] = tk.split(":");
-                        const [x, z] = xz.split(",").map(Number);
-                        dirtyCells.add(cellKeyOf(parseInt(p0, 10), x, z));
+                        dirtyKey(tk);
                     }
                 }
-                // Overrides contradicted by a fresh original-id observation
-                for (const o of st.observed) {
-                    const tk = tileKeyOf(o.plane, o.x, o.z);
-                    const stat = staticByTile.get(tk);
-                    if (stat && stat.id === o.id && overrides.has(tk)) {
+                for (const tk of [...overrides.keys()]) {
+                    if (!fresh.has(tk)) {
                         overrides.delete(tk);
-                        dirtyCells.add(cellKeyOf(o.plane, o.x, o.z));
+                        dirtyKey(tk);
                     }
                 }
             }
