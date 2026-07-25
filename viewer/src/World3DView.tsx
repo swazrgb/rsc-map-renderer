@@ -392,6 +392,9 @@ export function World3DView(props: {
      *  clear it (e.g. the selection results panel closed). Leave undefined
      *  for the persist-until-rearmed default (standalone demo). */
     areaRectVisible?: boolean;
+    /** Standing dwarf multicannons (live swarm state): drawn as amber owner
+     *  nametags at their tile. stage is 1 base .. 4 complete. */
+    cannons?: {owner: string; x: number; z: number; stage: number}[];
     /** The deduped world state (entities across every observer, keyed by serverIndex) —
      *  when provided, entity assembly reads these pools instead of merging the observers'
      *  per-bot lists (the shell's live stream no longer carries those). The standalone
@@ -2555,6 +2558,52 @@ export function World3DView(props: {
             }
         };
 
+        // ---- Cannon tags: amber owner nameplate over each standing cannon ----
+        // Same pooled-DOM pattern as the respawn tags; repositioned per frame.
+        const cannonTagPool = new Map<string, HTMLDivElement>();
+        const frameCannonTags = (plane: number, zoomTiles: number,
+                                 toWorld: (x: number, z: number) => THREE.Vector3) => {
+            const cannons = propsRef.current.cannons ?? [];
+            const used = new Set<string>();
+            if (cannons.length > 0 && zoomTiles <= 200) {
+                camera.updateMatrixWorld();
+                const w = host.clientWidth || 800;
+                const h = host.clientHeight || 600;
+                for (const c of cannons) {
+                    if (Math.floor(c.z / 944) !== plane) continue;
+                    const k = `${c.x},${c.z}`;
+                    const v = toWorld(c.x, c.z % 944).project(camera);
+                    if (v.z > 1 || v.z < -1 || v.x < -1.05 || v.x > 1.05
+                        || v.y < -1.05 || v.y > 1.05) continue;
+                    used.add(k);
+                    let div = cannonTagPool.get(k);
+                    if (!div) {
+                        div = document.createElement("div");
+                        div.style.cssText =
+                            "position:absolute;transform:translate(-50%,-100%);" +
+                            "font:10px monospace;color:#f0c674;" +
+                            "background:rgba(24,18,8,.55);padding:0 4px;" +
+                            "border:1px solid rgba(240,198,116,.35);" +
+                            "border-radius:4px;pointer-events:none;" +
+                            "white-space:nowrap;z-index:880000;";
+                        entityHost.appendChild(div);
+                        cannonTagPool.set(k, div);
+                    }
+                    const text = `⚒ ${c.owner}`
+                        + (c.stage < 4 ? ` ${c.stage}/4` : "");
+                    if (div.textContent !== text) div.textContent = text;
+                    div.style.left = `${((v.x + 1) / 2) * w}px`;
+                    div.style.top = `${((1 - v.y) / 2) * h - 26}px`;
+                }
+            }
+            for (const [k, div] of cannonTagPool) {
+                if (!used.has(k)) {
+                    div.remove();
+                    cannonTagPool.delete(k);
+                }
+            }
+        };
+
         // Transports: the OWNING scenery object glows persistently (dim cyan,
         // additive — the same technique as the hover glow); hovering it
         // highlights the transport's entry tiles (terrain-height quads) and
@@ -3550,6 +3599,8 @@ export function World3DView(props: {
                     rebuildAreaRect(toWorld);
                 }
                 frameRespawnTags(kindsFor(st.floor).plane, st.tags,
+                    viewHeightUnits / 128, toWorld);
+                frameCannonTags(kindsFor(st.floor).plane,
                     viewHeightUnits / 128, toWorld);
                 {
                     const shown = propsRef.current.layers?.transports !== false;
