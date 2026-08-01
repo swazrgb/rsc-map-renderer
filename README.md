@@ -105,6 +105,8 @@ interface Observer {
   inCombat?: boolean;
   /** Asleep (Zzz on the nameplate). */
   sleeping?: boolean;
+  /** Shows the PK-skull prefix on the nameplate. */
+  skulled?: boolean;
   /** Latest overhead chat line… */
   msg?: string;
   /** …and the tick it was said (drawn as a chat bubble). */
@@ -196,7 +198,10 @@ Feed a **fresh array once per server tick**. The viewer:
   (ground items / scenery), so overlapping fields-of-view merge into one world
   and nothing is drawn twice (nor an observer re-drawn as a player another sees);
 - reconciles observed `objects` / `wallObjects` against the static bake, rebuilding
-  only the affected scenery cells (a mined rock, an opened door).
+  only the affected scenery cells (a mined rock, an opened door). An entry
+  **leaving** the pool folds back to the static object — the tree regrew, the
+  door closed — and an entry with `id: -1` is a tombstone: the static object is
+  outright gone (delloc'd quest doors) and its tile renders empty.
 
 ```tsx
 function Live() {
@@ -221,6 +226,42 @@ object's name from the library, so no name is sent.
 path, drawn as a line across the map — one `{x, z}` tile per step, in order. A
 step with `hop: true` is a jump rather than a walk (a transport, ladder, or
 teleport landing), so the line breaks there instead of tracing the ground.
+
+**Pooled world state.** At scale, merging every observer's view client-side
+gets expensive. `world` takes the already-deduped entity pools
+(`npcs`/`players`/`objects`/`wallObjects`/`groundItems`, keyed by
+`serverIndex`) and entity assembly reads them directly instead of merging the
+observers' per-observer lists — `observers` then only needs each observer's own
+vitals and position. The standalone demo omits it and keeps the per-observer
+merge.
+
+### Overlays, tools and camera — the rest of the props
+
+Everything below is optional and host-driven; the standalone demo passes none
+of it. Each prop's full contract is documented inline in
+[`World3DView.tsx`](viewer/src/World3DView.tsx).
+
+| Prop | What it does |
+| --- | --- |
+| `trail: TrailPoint[]` | A recorded session's walked trail as an amber draped ribbon — the 3D twin of a 2D trail polyline. No `hop` flag; teleports are inferred from jumps. |
+| `scrubbing` | True while `observers` carry a *reconstructed past instant*: positions snap instead of interpolating, so the scene lands in lockstep with your scrub slider. |
+| `layers` | Per-class toggles (`bots`, `npcs`, `players`, `npcSpawns`, `transports`, `shops`, `wilderness`), all default on. Off skips that class's *assembly*, not just its visibility — the toggles double as perf levers. `wilderness` draws depth contours with level-number pills. |
+| `transports` | Static transports on the active floor: each anchor object glows, hovering highlights its entry tiles and raises a clickable destination chip. |
+| `shops` | Static shop registry. Shops attach to their keeper NPCs (a ⚖ glyph on the nameplate); clicking reports `onSelectShop(id)`. |
+| `cannons` | Standing multicannons, drawn as amber owner nametags (`stage` 1 base … 4 complete). |
+| `victims` | Last-known player positions as red nametags, visible at **any** zoom (unlike the zoom-gated tags) — for spotting a target from a full overview. |
+| `follow` | Username the camera follows; the camera snaps (not glides) when it changes. |
+| `panTarget` | One-shot camera pan to a labelled tile; `nonce` re-triggers repeat clicks, and a floor change routes through `onFloorIndexChange`. |
+| `floorIndex` / `onFloorIndexChange` | Controlled floor in RSC's semantic numbering (0 ground, 1/2 upper storeys, 3 underground). `FLOOR_KEYS_BY_INDEX` / `floorKeyForIndex` / `floorIndexForKey` are exported for hosts seeding from a URL. |
+| `overlays` / `onOverlaysChange` | Controlled roofs/sight/tags toggles; when provided, the in-view toolbar hides and your sidebar renders them instead. |
+| `areaSelect` / `onAreaSelected` / `areaRect` | Area-select tool: a left drag sweeps a ground rectangle and reports the inclusive tile box; the committed rectangle has resize handles, and `areaRect` lets the host own it so the same selection shows in another view. |
+| `walkTool` | Clicks command the selected observer through `sendWalk`/`sendInteract` — left runs the top menu entry by stock client priority, right opens the full "Choose option" menu. |
+| `useItem` / `onUseItemDone` | Armed "Use *item* with …" mode: the next world click dispatches use-item on the object/NPC/wall/ground under the cursor, then disarms. |
+| `visible` | Pass false while another tab is showing: the component stays mounted (WebGL context and geometry survive for an instant switch-back) but the render loop parks. |
+| `sharedView` | Mutable camera box shared with a 2D map: the active view writes on pan, the newly revealed view reads once to re-centre. |
+
+Plus small knobs — `selectedBot`/`onSelectBot`, `focus`, `flyNonce`/`onFlyingChange`,
+`extraToggles`, `hideSight` — documented inline.
 
 ### 2. Control — `configureViewerHost`
 

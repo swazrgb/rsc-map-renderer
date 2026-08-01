@@ -27,6 +27,7 @@ export type {
     ObjectRespawn,
     NpcSpawnInfo,
     RoutePoint,
+    TrailPoint,
     InteractAction,
     SceneryPlacement,
     SceneryAtlasIndex,
