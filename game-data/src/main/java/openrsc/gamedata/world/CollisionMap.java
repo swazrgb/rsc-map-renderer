@@ -77,6 +77,22 @@ public final class CollisionMap {
       "torch", "rock", "treestump", "railing", "railings", "gate", "fence", "table", "smashed chair",
       "smashed table", "longtable", "wooden gate", "metal gate", "chair");
 
+  /**
+   * Landscape-archive wall ids that projectiles / line of sight pass over even though they block
+   * walking — fences and low rails baked into the map sectors (horizontal/vertical/diagonal wall
+   * values), distinct from the name-keyed {@link #PROJECTILE_CLIP_ALLOWED_NAMES} scenery objects.
+   * Verbatim copy of server {@code WorldLoader.ALLOWED_WALL_ID_TYPES}; the raw 1-based sector wall
+   * value is tested (the server passes {@code verticalWall}/{@code horizontalWall}/{@code
+   * diagonalWalls & 0xFF}, not the {@code -1} def index). Missing this made the cannon/ranged/trade
+   * LOS wall off fences the server shoots through (e.g. the ogre pen at ~662,533).
+   */
+  private static final Set<Integer> PROJECTILE_CLIP_ALLOWED_WALL_IDS =
+      Set.of(5, 6, 14, 42, 63, 128, 229, 230);
+
+  private static boolean isLandscapeWallProjectilePass(int rawWallId) {
+    return PROJECTILE_CLIP_ALLOWED_WALL_IDS.contains(rawWallId);
+  }
+
   // Landscape archive layout. X range mirrors plutonium world.go; the Y
   // range mirrors the SERVER's WorldLoader.loadWorld, which loops
   // `sy < 944` step 48 → sector rows 37..56 (20 rows) per floor. We used
@@ -798,34 +814,58 @@ public final class CollisionMap {
     // stamped unless they're a known toggle-anyone boundary.
     if (verticalWall > 0
         && doorDefs.unknown(verticalWall - 1) == 0
-        && doorDefs.doorType(verticalWall - 1) != 0
-        && !isLandscapeWallFree(overrides, doorDefs, verticalWall - 1, bx, by, 0)) {
-      or(bx, by, WALL_NORTH);
-      if (by - 1 >= 0) {
-        or(bx, by - 1, WALL_SOUTH);
+        && doorDefs.doorType(verticalWall - 1) != 0) {
+      if (!isLandscapeWallFree(overrides, doorDefs, verticalWall - 1, bx, by, 0)) {
+        or(bx, by, WALL_NORTH);
+        if (by - 1 >= 0) {
+          or(bx, by - 1, WALL_SOUTH);
+        }
+      }
+      // Server WorldLoader marks both this tile and its south neighbour projectile-pass.
+      if (isLandscapeWallProjectilePass(verticalWall)) {
+        setProjectileAllowed(bx, by);
+        setProjectileAllowed(bx, by - 1);
       }
     }
     if (horizontalWall > 0
         && doorDefs.unknown(horizontalWall - 1) == 0
-        && doorDefs.doorType(horizontalWall - 1) != 0
-        && !isLandscapeWallFree(overrides, doorDefs, horizontalWall - 1, bx, by, 1)) {
-      or(bx, by, WALL_EAST);
-      if (bx - 1 >= 0) {
-        or(bx - 1, by, WALL_WEST);
+        && doorDefs.doorType(horizontalWall - 1) != 0) {
+      if (!isLandscapeWallFree(overrides, doorDefs, horizontalWall - 1, bx, by, 1)) {
+        or(bx, by, WALL_EAST);
+        if (bx - 1 >= 0) {
+          or(bx - 1, by, WALL_WEST);
+        }
+      }
+      if (isLandscapeWallProjectilePass(horizontalWall)) {
+        setProjectileAllowed(bx, by);
+        setProjectileAllowed(bx - 1, by);
       }
     }
     int dw = diagonalWalls & 0xFFFF; // plutonium truncates to int16
     if (dw > 0 && dw < 12000
         && doorDefs.unknown(dw - 1) == 0
-        && doorDefs.doorType(dw - 1) != 0
-        && !isLandscapeWallFree(overrides, doorDefs, dw - 1, bx, by, 2)) {
-      or(bx, by, FULL_BLOCK_B);
+        && doorDefs.doorType(dw - 1) != 0) {
+      if (!isLandscapeWallFree(overrides, doorDefs, dw - 1, bx, by, 2)) {
+        or(bx, by, FULL_BLOCK_B);
+      }
+      if (isLandscapeWallProjectilePass(diagonalWalls & 0xFF)) {
+        setProjectileAllowed(bx, by);
+      }
     }
     if (dw > 12000 && dw < 24000
         && doorDefs.unknown(dw - 12001) == 0
-        && doorDefs.doorType(dw - 12001) != 0
-        && !isLandscapeWallFree(overrides, doorDefs, dw - 12001, bx, by, 3)) {
-      or(bx, by, FULL_BLOCK_A);
+        && doorDefs.doorType(dw - 12001) != 0) {
+      if (!isLandscapeWallFree(overrides, doorDefs, dw - 12001, bx, by, 3)) {
+        or(bx, by, FULL_BLOCK_A);
+      }
+      if (isLandscapeWallProjectilePass(diagonalWalls & 0xFF)) {
+        setProjectileAllowed(bx, by);
+      }
+    }
+    // Server WorldLoader:442 — ground overlays 2 and 11 (water / lava) are projectile-pass, so a
+    // ranged/cannon/trade line of sight crosses water and lava exactly as the server allows.
+    if (groundOverlay == 2 || groundOverlay == 11) {
+      setProjectileAllowed(bx, by);
     }
   }
 
@@ -1237,9 +1277,12 @@ public final class CollisionMap {
    * spots, trees, ladders, anvils, ranges, furnaces all sit on impassable scenery the player walks UP
    * TO, not ONTO.
    *
-   * <p><b>Not line-of-sight.</b> It checks only the source/target walls, NOT a diagonal step's
-   * corner-clip, so it is <em>not</em> a faithful {@code PathValidation.checkAdjacentDistance} and must
-   * not be used for LOS gating ({@link #checkPath} uses {@link #canStep} for that — see its note).
+   * <p><b>Not line-of-sight.</b> Beyond the source/target corner walls it also honours the server's
+   * {@code diagonalWallBlocksDiagonalMovement} rule (a diagonal wall on either orthogonal flank of a
+   * diagonal step blocks the engage), but it does NOT run the full diagonal corner-clip pass-through
+   * ({@link #diagonalPassThroughBlocked}, which also reacts to FULL_BLOCK_C scenery flanks). So it is
+   * <em>not</em> a faithful {@code PathValidation.checkAdjacentDistance} and must not be used for LOS
+   * gating ({@link #checkPath} uses {@link #canStep} for that — see its note).
    *
    * <p>Skipping the fully-blocked-target check is critical: gating engagement on
    * {@code canStep} forces a caller's engagement walk to pathfind to an impassable destination,
@@ -1274,6 +1317,19 @@ public final class CollisionMap {
       return (from & WALL_NORTH) == 0; // dy == -1
     }
     int to = flags(tx, ty, overlay);
+    // Server checkAdjacentDistance's diagonalWallBlocksDiagonalMovement (the bit -2 check):
+    // a DIAGONAL WALL (FULL_BLOCK_A/B) on either orthogonal flank tile — (tx, fy) or (fx, ty) —
+    // blocks the diagonal engage, even when the source and target tiles are themselves clear.
+    // This check is independent of the source/target corner walls below and runs for every server
+    // engage gate (melee, talk, object, ranged) regardless of ignoreProjectileAllowed/wantDiagCheck.
+    // FULL_BLOCK_C (plain solid scenery) is deliberately NOT included — the server's bit -2 ignores
+    // it, preserving the authentic "squeeze past scenery to attack" quirk. Omitting this was the
+    // canReach false-positive that pinned CombatTrainer at (164,306) spam-attacking a zombie on
+    // (165,305): the NE diagonal is flanked by a diagonal wall at (164,305) that the server honours
+    // but canEngage did not. (canStep already rejects it via diagonalPassThroughBlocked.)
+    if (((flags(tx, fy, overlay) | flags(fx, ty, overlay)) & (FULL_BLOCK_A | FULL_BLOCK_B)) != 0) {
+      return false;
+    }
     if (dx == 1 && dy == -1) {
       return (from & (WALL_WEST | WALL_NORTH)) == 0 && (to & (WALL_SOUTH | WALL_EAST)) == 0;
     }
