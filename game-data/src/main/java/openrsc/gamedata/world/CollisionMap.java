@@ -1286,8 +1286,7 @@ public final class CollisionMap {
    *
    * <p>Skipping the fully-blocked-target check is critical: gating engagement on
    * {@code canStep} forces a caller's engagement walk to pathfind to an impassable destination,
-   * which exhausts the 1M-node cap and burns the 50ms watchdog budget (see
-   * [[pathfinder_impassable_destination]]).
+   * which exhausts the 1M-node cap and burns the 50ms watchdog budget.
    */
   public boolean canEngage(int fx, int fy, int tx, int ty, WallOverlay overlay) {
     if (!inBounds(tx, ty)) {
@@ -1341,6 +1340,63 @@ public final class CollisionMap {
     }
     // dx == -1, dy == 1
     return (from & (WALL_EAST | WALL_SOUTH)) == 0 && (to & (WALL_NORTH | WALL_WEST)) == 0;
+  }
+
+  /**
+   * Faithful mirror of the server's SCENERY engagement gate — {@code Mob.canReach} plus the
+   * {@code finishedPath() && Mob.canReachDiagonal} fallback — against an object footprint rect
+   * {@code [minX..maxX]×[minY..maxY]}: standing inside the rect, or on a cardinally/diagonally
+   * adjacent tile whose specific WALL masks are clear. WALL MASKS ONLY: no full-block tests and no
+   * diagonal-flank rule — those belong to {@code PathValidation.checkAdjacentDistance} (movement,
+   * mirrored by {@link #canEngage}), which {@code atObject} never consults. The two gates genuinely
+   * differ: a landscape-blocked footprint tile (a swamp) is engageable diagonally on the server
+   * while {@code canEngage} refuses it (verified live on a swamp tile: entry (714,3419) op on the
+   * (715,3418) placement fires — clause "player NW of tile, its SOUTH|EAST walls clear").
+   * Engagement primitives fire from a standstill, so the server's finishedPath precondition on the
+   * diagonal clauses always holds for callers of this check.
+   */
+  public boolean canReachScenery(int px, int py, int minX, int maxX, int minY, int maxY,
+      WallOverlay overlay) {
+    if (px >= minX && px <= maxX && py >= minY && py <= maxY) {
+      return true; // standing on the footprint
+    }
+    // Mob.canReach: the three cardinal clauses (there is deliberately NO py+1 clause here — the
+    // server's known "no player-N-of-object" asymmetry; the diagonal fallback's first clause
+    // patches it below, exactly as the server does).
+    if (minX <= px - 1 && maxX >= px - 1 && minY <= py && maxY >= py
+        && (flags(px - 1, py, overlay) & WALL_WEST) == 0) {
+      return true;
+    }
+    if (px + 1 >= minX && px + 1 <= maxX && minY <= py && maxY >= py
+        && (flags(px + 1, py, overlay) & WALL_EAST) == 0) {
+      return true;
+    }
+    if (minX <= px && maxX >= px && py - 1 >= minY && maxY >= py - 1
+        && (flags(px, py - 1, overlay) & WALL_SOUTH) == 0) {
+      return true;
+    }
+    // Mob.canReachDiagonal, clause for clause.
+    if (minX <= px && px <= maxX && minY <= py + 1 && maxY >= py + 1
+        && (flags(px, py + 1, overlay) & WALL_NORTH) == 0) {
+      return true;
+    }
+    if (minX <= px - 1 && maxX >= px - 1 && minY <= py - 1 && maxY >= py - 1
+        && (flags(px - 1, py - 1, overlay) & (WALL_SOUTH | WALL_WEST)) == 0) {
+      return true;
+    }
+    if (px + 1 >= minX && px + 1 <= maxX && py - 1 >= minY && maxY >= py - 1
+        && (flags(px + 1, py - 1, overlay) & (WALL_SOUTH | WALL_EAST)) == 0) {
+      return true;
+    }
+    if (minX <= px - 1 && maxX >= px - 1 && minY <= py + 1 && maxY >= py + 1
+        && (flags(px - 1, py + 1, overlay) & (WALL_NORTH | WALL_WEST)) == 0) {
+      return true;
+    }
+    if (px + 1 >= minX && px + 1 <= maxX && py + 1 >= minY && maxY >= py + 1
+        && (flags(px + 1, py + 1, overlay) & (WALL_NORTH | WALL_EAST)) == 0) {
+      return true;
+    }
+    return false;
   }
 
   /**
