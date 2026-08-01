@@ -550,7 +550,11 @@ export function World3DView(props: {
     // recording, so the output is exactly this many pixels.
     const [captureRes, setCaptureRes] = useState(
         () => new URLSearchParams(location.search).get("size") ?? "");
-    const projSeen = useRef(new Set<string>());
+    /** Last serverTick whose projectiles we launched, per bot — the leading-edge
+     *  gate (a bot's frame lingers in the client's map until a newer one lands). */
+    const projTick = useRef(new Map<string, number>());
+    /** Flight-key counter: unique per launch, so no two sprites can alias. */
+    const projSeq = useRef(0);
     const projFlights = useRef<ProjectileFlight[]>([]);
     // Stock right-click "Choose option" menu (walk/act tool): entries carry
     // their dispatch closures; null = closed. verb draws white, target in its
@@ -878,9 +882,9 @@ export function World3DView(props: {
         }
         stateRef.current.respawnGhosts = rGhosts;
 
-        // Projectiles: each (serverTick, sprite, from, to) launches ONE
-        // flight — deduped across the bots that co-observed it — animated by
-        // the projectile layer for the stock 0.8s.
+        // Projectiles: each shot launches ONE flight — deduped across the bots
+        // that co-observed it — animated by the projectile layer for the stock
+        // 0.8s.
         {
             const ownIdx = new Map<number, string>();
             for (const b of props.observers ?? []) {
@@ -889,13 +893,33 @@ export function World3DView(props: {
             const byKey = new Map<string, Entity3D>();
             for (const e of out) byKey.set(e.key, e);
             const now = performance.now();
+            // Both sources emit every changed bot in ONE frame per tick (live
+            // BatchFlusher, playback sendChangedSlim), so the bots that saw the
+            // same shot always land in the same render — one pass-local set is
+            // the whole cross-observer dedupe, and nothing needs to persist.
+            const fired = new Set<string>();
             for (const b of props.observers ?? []) {
+                // Fire on the frame's LEADING EDGE. A bot's frame lingers in the
+                // client's map until a newer one replaces it (the wire re-sends
+                // only CHANGED bots), so without this its projectiles would
+                // re-launch on every render for as long as it sits there.
+                //
+                // This gate is why the dedupe above can be pass-local. It used
+                // to be a persistent set keyed on `serverTick:sprite:from:to` —
+                // but serverTick is a per-CONNECTION counter that restarts at 0,
+                // so playback replays the very numbers the live view already
+                // showed: every shot in a window you'd watched live read as a
+                // duplicate and no projectile was drawn at all. Measured on the
+                // real stream: 71 flights over a re-watched minute vs 1750 over
+                // an unwatched one, same tab.
+                if (b.serverTick == null) continue; // no tick ⇒ no leading edge
+                if (projTick.current.get(b.username) === b.serverTick) continue;
+                projTick.current.set(b.username, b.serverTick);
                 for (const p of b.projectiles ?? []) {
-                    const k = `${b.serverTick}:${p.sprite}:`
-                        + `${p.fromNpc ? "n" : "p"}${p.from}:`
+                    const k = `${p.sprite}:${p.fromNpc ? "n" : "p"}${p.from}:`
                         + `${p.toPlayer ? "p" : "n"}${p.to}`;
-                    if (projSeen.current.has(k)) continue;
-                    projSeen.current.add(k);
+                    if (fired.has(k)) continue;
+                    fired.add(k);
                     const fromKey = p.fromNpc ? `npc:${p.from}`
                         : ownIdx.has(p.from) ? `bot:${ownIdx.get(p.from)}`
                         : `pl:${p.from}`;
@@ -905,14 +929,13 @@ export function World3DView(props: {
                     const fe = byKey.get(fromKey);
                     const te = byKey.get(toKey);
                     if (!fe || !te) continue; // endpoint not on this floor
-                    projFlights.current.push({key: k, sprite: p.sprite,
-                        fromKey, toKey, start: now,
+                    projFlights.current.push({key: `f${projSeq.current++}`,
+                        sprite: p.sprite, fromKey, toKey, start: now,
                         fx: fe.x, fz: fe.z, tx: te.x, tz: te.z});
                 }
             }
             projFlights.current = projFlights.current.filter(
                 f => now - f.start < PROJECTILE_FLIGHT_MS + 200);
-            if (projSeen.current.size > 2000) projSeen.current.clear();
         }
     }
 
