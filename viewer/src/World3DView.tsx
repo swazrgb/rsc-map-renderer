@@ -42,6 +42,7 @@ import {PlayerSpriteLayer, PlayerSpriteState} from "./World3DPlayerSprites";
 import {GroundItemLayer, GroundItem3D, fetchItemAtlas} from "./World3DGroundItems";
 import {loadGameFont} from "./World3DChatFont";
 import {Ribbon, SightLayer} from "./World3DSight";
+import {WildernessLayer, wildernessStrideFor} from "./World3DWilderness";
 import {ProjectileLayer, ProjectileFlight, PROJECTILE_FLIGHT_MS} from "./World3DProjectiles";
 import type {SceneryPlacement} from "./api";
 import {
@@ -83,9 +84,16 @@ type FloorKey = (typeof FLOORS)[number]["key"];
 // SEMANTIC numbering instead: 0 ground, 1/2 upper storeys, 3 underground. Convert
 // numeric floors through THIS map, never the display array (that offset every
 // floor and desynced the 2D/3D views).
-const FLOOR_KEYS_BY_INDEX = ["ground", "floor1", "floor2", "underground"] as const;
-const floorKeyForIndex = (i: number): FloorKey =>
-    FLOOR_KEYS_BY_INDEX[Math.max(0, Math.min(3, i))];
+export const FLOOR_KEYS_BY_INDEX = ["ground", "floor1", "floor2", "underground"] as const;
+export const floorKeyForIndex = (i: number): FloorKey =>
+    FLOOR_KEYS_BY_INDEX[Math.max(0, Math.min(3, Math.trunc(i)))];
+/** Inverse of {@link floorKeyForIndex}; unknown keys fall back to ground. The
+ *  host parses `?floor=` with this so URL seeding lives in ONE place instead of
+ *  racing as a mount-time write from in here. */
+export const floorIndexForKey = (k: string | null | undefined): number => {
+    const i = FLOOR_KEYS_BY_INDEX.indexOf(k as FloorKey);
+    return i < 0 ? 0 : i;
+};
 
 // The stock client's "show roofs" hides MORE than roofs when you're under
 // one (mudclient.c draw loop): the current plane's roofs plus ALL
@@ -201,18 +209,26 @@ uniform bool textured;
 // Water scroll (client scene_scroll_texture: texture 17 shifts 1px/20ms
 // frame): the material's per-frame v offset; 0 for everything else.
 uniform float vScroll;
-// Pick pass: 0 = normal shading, 1 = emit packed placement id, 2 = emit packed
-// window-space depth. BOTH pick outputs happen AFTER the alpha discard, so a
-// transparent hole in a doorframe (or any textured cut-out) passes the pick
-// through to whatever is visible behind it — the id AND the depth agree with
-// the eye, so the object/entity tiebreak, rotate pivot and tile-under-cursor
-// all see through holes too.
+// Pick pass: 0 = normal shading, 1 = emit the packed placement id (attachment
+// 0) AND the packed window-space depth (attachment 1) in one go. Both happen
+// AFTER the alpha discard, so a transparent hole in a doorframe (or any
+// textured cut-out) passes the pick through to whatever is visible behind it —
+// the id AND the depth agree with the eye, so the object/entity tiebreak,
+// rotate pivot and tile-under-cursor all see through holes too.
 uniform int pickMode;
 in float vShade;
 in vec3 vBase;
 in vec2 vUv;
 in vec4 vPickId;
-out vec4 outColor;
+// Two outputs so ONE pick pass produces both answers. The id and the depth are
+// the same rasterisation of the same scene through the same 1px sub-frustum —
+// emitting them to two attachments of an MRT target halves the pick cost
+// (previously two full renderer.render() calls, each re-walking the scene).
+// Attachment 1 has no counterpart on the default framebuffer, so during the
+// normal on-screen pass its draw buffer is NONE and the write is discarded —
+// defined behaviour in GLES 3.0, not a happy accident.
+layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec4 outDepth;
 // Self-contained 24-bit pack of window depth (base-255 so each byte round-trips
 // an 8-bit UNORM target exactly); surfacePoint unpacks it in JS.
 vec4 packDepth() {
@@ -228,15 +244,13 @@ void main() {
     if (textured) {
         vec4 t = texture(map, vec2(vUv.x, vUv.y + vScroll));
         if (t.a < 0.5) discard;
-        if (pickMode == 1) { outColor = vPickId; return; }
-        if (pickMode == 2) { outColor = packDepth(); return; }
+        if (pickMode == 1) { outColor = vPickId; outDepth = packDepth(); return; }
         float bankIdx = mod(floor(s / 16.0), 4.0);
         float bank = bankIdx < 0.5 ? 1.0 : bankIdx < 1.5 ? 0.875 : bankIdx < 2.5 ? 0.75 : 0.625;
         float f = bank / pow(2.0, floor(s / 64.0));
         outColor = vec4(t.rgb * f, 1.0);
     } else {
-        if (pickMode == 1) { outColor = vPickId; return; }
-        if (pickMode == 2) { outColor = packDepth(); return; }
+        if (pickMode == 1) { outColor = vPickId; outDepth = packDepth(); return; }
         float r = 255.0 - s;
         outColor = vec4(vBase * (r * r / 65536.0), 1.0);
     }
@@ -383,18 +397,24 @@ export function World3DView(props: {
         nonce: number} | null;
     /** Area-select tool armed: a left drag sweeps a ground rectangle instead
      *  of panning; on release the swept tile box (floor-local z, inclusive)
-     *  fires onAreaSelected. The committed rectangle stays drawn until the
-     *  tool is re-armed (a fresh drag replaces it) — or, when the host
-     *  drives areaRectVisible, until that goes false. */
+     *  fires onAreaSelected. A committed rectangle also carries eight resize
+     *  handles, and dragging one fires onAreaSelected on every tile it crosses
+     *  so the host's results can track the drag. */
     areaSelect?: boolean;
     onAreaSelected?: (box: {x0: number; z0: number; x1: number; z1: number}) => void;
-    /** Host-controlled lifetime for the committed rectangle: pass false to
-     *  clear it (e.g. the selection results panel closed). Leave undefined
-     *  for the persist-until-rearmed default (standalone demo). */
-    areaRectVisible?: boolean;
+    /** Host-owned committed rectangle (floor-local tiles, inclusive), so the
+     *  same selection can be shown and resized in another view. Pass null to
+     *  clear it. Leave UNDEFINED to keep the box the viewer swept for itself
+     *  (the standalone demo); while a local drag is in flight the drag wins. */
+    areaRect?: {x0: number; z0: number; x1: number; z1: number} | null;
     /** Standing dwarf multicannons (live swarm state): drawn as amber owner
      *  nametags at their tile. stage is 1 base .. 4 complete. */
     cannons?: {owner: string; x: number; z: number; stage: number}[];
+    /** PK victims' last-known positions (live swarm state): drawn as red username
+     *  nametags at their tile, ALWAYS visible regardless of zoom — unlike the
+     *  zoom-gated cannon/respawn tags — so the squad can spot a target from a fully
+     *  zoomed-out overview. The host gates the layer toggle + scrub by passing []. */
+    victims?: {name: string; x: number; z: number}[];
     /** The deduped world state (entities across every observer, keyed by serverIndex) —
      *  when provided, entity assembly reads these pools instead of merging the observers'
      *  per-bot lists (the shell's live stream no longer carries those). The standalone
@@ -405,7 +425,10 @@ export function World3DView(props: {
      *  Turning a class off skips its ASSEMBLY, not just its visibility — the
      *  toggles double as perf levers on a busy swarm. */
     layers?: {bots?: boolean; npcs?: boolean; players?: boolean;
-        npcSpawns?: boolean; transports?: boolean; shops?: boolean};
+        npcSpawns?: boolean; transports?: boolean; shops?: boolean;
+        /** Wilderness depth contours: light-red level-boundary lines with the
+         *  level number pilled on them (default ON, like the other layers). */
+        wilderness?: boolean};
     /** Static transports on the ACTIVE floor, grouped per transport. The
      *  OWNING scenery object (anchor, floor-local) glows persistently;
      *  hovering it highlights the entry tiles and raises a clickable chip
@@ -451,31 +474,30 @@ export function World3DView(props: {
     hideSight?: boolean;
 }) {
     const hostRef = useRef<HTMLDivElement | null>(null);
-    const initialFloor = (): FloorKey => {
-        const f = new URLSearchParams(location.search).get("floor");
-        return FLOORS.some(x => x.key === f) ? (f as FloorKey) : "ground";
-    };
-    const [floorState, setFloorState] = useState<FloorKey>(initialFloor);
+    // The floor is a NUMBER everywhere it crosses a boundary or gets compared —
+    // `floorIndex`, `position.floor`, the 2D map's floor all use RSC's semantic
+    // index. FloorKey is a rendering detail (it selects cell planes + kind
+    // files), so it is derived here and nowhere else. Mixing the two used to
+    // mean follow-sync compared in key space while panTarget compared in index
+    // space, and each could think the other had it wrong.
+    //
+    // Standalone (no host): keep our own index, seeded from the URL. Embedded:
+    // the host owns it, including the `?floor=` seed — this component no longer
+    // writes the URL's floor back at mount, which was a second writer racing
+    // the host's own initial value.
+    const [localFloorIndex, setLocalFloorIndex] = useState<number>(
+        () => floorIndexForKey(new URLSearchParams(location.search).get("floor")));
     const controlled = props.overlays != null;
-    const floor: FloorKey = props.floorIndex != null
-        ? floorKeyForIndex(props.floorIndex) : floorState;
-    const setFloor = (k: FloorKey) => {
-        if (props.onFloorIndexChange) {
-            props.onFloorIndexChange(FLOOR_KEYS_BY_INDEX.indexOf(k));
-        } else {
-            setFloorState(k);
-        }
+    const floorIndex = props.floorIndex ?? localFloorIndex;
+    const floor: FloorKey = floorKeyForIndex(floorIndex);
+    /** Ask for a floor. Embedded, this is a REQUEST — the host's floor
+     *  controller may reject it (e.g. this view isn't the visible one), so
+     *  never assume it took; read `floorIndex` on the next render. */
+    const setFloorIndex = (i: number) => {
+        const next = Math.max(0, Math.min(3, Math.trunc(i)));
+        if (props.onFloorIndexChange) props.onFloorIndexChange(next);
+        else setLocalFloorIndex(next);
     };
-    // Controlled mount: the URL's floor wins once (deep links keep working).
-    useEffect(() => {
-        if (props.floorIndex != null) {
-            const k = initialFloor();
-            if (k !== floorKeyForIndex(props.floorIndex)) {
-                props.onFloorIndexChange?.(FLOOR_KEYS_BY_INDEX.indexOf(k));
-            }
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
     const [roofsState, setRoofsState] = useState(
         () => new URLSearchParams(location.search).get("roofs") !== "0");
     const [sightState, setSightState] = useState(
@@ -569,9 +591,7 @@ export function World3DView(props: {
         if (!props.follow) return;
         const b = (props.observers ?? []).find(x => x.username === props.follow);
         const f = b?.position?.floor;
-        if (f != null && FLOOR_KEYS_BY_INDEX[f] && FLOOR_KEYS_BY_INDEX[f] !== floor) {
-            setFloor(FLOOR_KEYS_BY_INDEX[f]);
-        }
+        if (f != null && f !== floorIndex) setFloorIndex(f);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [props.follow, props.observers]);
     // One-shot pan (search hit, chat jump, "locate"): switch floor if the
@@ -581,10 +601,9 @@ export function World3DView(props: {
         const p = props.panTarget;
         if (!p) return;
         const f = Math.max(0, Math.min(3, p.floor));
-        if (props.onFloorIndexChange && props.floorIndex != null
-            && props.floorIndex !== f) {
-            props.onFloorIndexChange(f);
-        }
+        // Works uncontrolled too now — it used to be gated on `floorIndex !=
+        // null`, so the standalone demo never switched floors on a pan.
+        if (f !== floorIndex) setFloorIndex(f);
         panToRef.current?.(p.x, p.z - f * 944);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [props.panTarget?.nonce]);
@@ -625,6 +644,11 @@ export function World3DView(props: {
     // Imperative camera pan installed by the scene effect (needs its closure's
     // target/applyCamera); consumed by the panTarget effect below.
     const panToRef = useRef<((x: number, zLocal: number) => void) | null>(null);
+    // The scene effect runs once and closes over stale props, so the in-scene
+    // writers (the transport chip) go through this instead of a captured
+    // setFloorIndex.
+    const setFloorIndexRef = useRef(setFloorIndex);
+    setFloorIndexRef.current = setFloorIndex;
     stateRef.current.floor = floor;
     stateRef.current.roofs = roofs;
     stateRef.current.sight = sight;
@@ -922,6 +946,18 @@ export function World3DView(props: {
         host.appendChild(renderer.domElement);
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x10101a);
+        // Every renderer.render() walks the WHOLE graph to refresh world
+        // matrices, and we render three times a frame (depth pick, id pick,
+        // screen) over a scene of ~6k objects — the whole plane is resident,
+        // not viewport-streamed — so that was three full traversals for one
+        // frame's worth of movement. Drive it manually
+        // instead: the loop calls scene.updateMatrixWorld() exactly once, after
+        // the last thing that moves anything (the windmill spin) and before the
+        // first render. Anything added mid-frame is a transform-free group
+        // holding world-space baked geometry, so identity is already correct
+        // for it; the windmill pivots are the one exception and they are
+        // updated before the call.
+        scene.matrixWorldAutoUpdate = false;
 
         const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -400000, 400000);
 
@@ -1044,25 +1080,45 @@ export function World3DView(props: {
             target.y = 0;
         };
 
-        // ---- GPU depth pick -------------------------------------------
-        // The rotation pivot must be the visible surface under the cursor
-        // (wall, roof, tree, elevated terrain) — a y=0 plane intersection
-        // lands far beyond what you clicked at low angles. Render the scene's
-        // depth through a 1px sub-frustum at the cursor and reconstruct the
-        // world point; ortho depth is linear so the math is exact.
-        const pickRT = new THREE.WebGLRenderTarget(1, 1);
-        const idRT = new THREE.WebGLRenderTarget(1, 1);
-        const pickBuf = new Uint8Array(4);
-        const idBuf = new Uint8Array(4);
-        const surfacePoint = (clientX: number, clientY: number): THREE.Vector3 | null => {
+        // ---- GPU pick (one pass, two answers) --------------------------
+        // Both pick consumers want the same rasterisation of the same scene
+        // through the same 1px sub-frustum at the cursor:
+        //   · the ID under the cursor  → the exact object/door drawn there,
+        //   · the DEPTH under it       → the visible surface point, which the
+        //     rotation pivot needs (a y=0 plane intersection lands far beyond
+        //     what you clicked at low angles; ortho depth is linear so the
+        //     reconstruction is exact).
+        // They used to be two separate renderer.render() calls, each re-walking
+        // the whole scene. Now it is ONE render into a 2-attachment target.
+        const pickRT = new THREE.WebGLRenderTarget(1, 1, {count: 2});
+        const idBuf = new Uint8Array(4);    // attachment 0 — packed placement id
+        const pickBuf = new Uint8Array(4);  // attachment 1 — packed window depth
+        // Scratch sub-frustum camera. camera.clone() allocated a fresh
+        // OrthographicCamera on every pick, twice per frame while the cursor moved.
+        const pickCam = new THREE.OrthographicCamera();
+        /** Screen point the buffers currently hold a result for, and the
+         *  view-plane offsets that went with it (the depth reconstruction needs
+         *  them, and they must be the ones the render used — not the ones a
+         *  later cursor position would give). */
+        let pickReady: {x: number; y: number; vx: number; vy: number} | null = null;
+        /** Same, for a render issued but not yet read back. */
+        let pickInFlight: {x: number; y: number; vx: number; vy: number} | null = null;
+
+        /** Rasterise the pick at a screen point. Does NOT read it back — that
+         *  is a synchronous gl.readPixels, i.e. a full pipeline flush, and
+         *  doing it right after the draw stalls the CPU until the GPU drains.
+         *  The frame loop issues this at the END of a frame and reads it at the
+         *  START of the next, by which point the result is simply sitting
+         *  there. Returns false if the canvas has no size yet. */
+        const renderPickAt = (clientX: number, clientY: number): boolean => {
             const r = renderer.domElement.getBoundingClientRect();
-            if (!r.width || !r.height) return null;
+            if (!r.width || !r.height) return false;
             const ndcX = ((clientX - r.left) / r.width) * 2 - 1;
             const ndcY = -(((clientY - r.top) / r.height) * 2 - 1);
             const vx = ndcX * camera.right; // view-plane offset (camera.right = halfW)
             const vy = ndcY * camera.top;
             const eps = (2 * camera.right) / r.width; // ~1px
-            const pc = camera.clone();
+            const pc = pickCam.copy(camera);
             pc.left = vx - eps;
             pc.right = vx + eps;
             pc.bottom = vy - eps;
@@ -1073,16 +1129,18 @@ export function World3DView(props: {
             const prevAlpha = renderer.getClearAlpha();
             const prevBackground = scene.background;
             scene.background = null; // keep the white clear = miss sentinel
-            // Same alpha-aware pass as idPick, but emitting packed DEPTH: the
-            // object materials discard their transparent texels (so a doorframe
-            // hole reveals the surface behind it), then pack gl_FragCoord.z.
+            // Object/terrain/door materials emit their pickId + packed depth
+            // (after their own alpha discard) instead of shaded colour;
+            // NoBlending so the packed bytes reach the buffers unblended.
             for (const m of materials.values()) {
-                m.uniforms.pickMode.value = 2;
+                m.uniforms.pickMode.value = 1;
                 m.blending = THREE.NoBlending;
             }
-            // Entity overlays (rings, sprite billboards) must not write pick
-            // depth: they'd become an invisible depth wall floating toward the
-            // camera and skew every picked ground point near an entity.
+            // Entity overlays (rings, sprite billboards) must not take part:
+            // they'd occlude the object pass, and they'd become an invisible
+            // depth wall floating toward the camera that skews every picked
+            // ground point near an entity. The billboard hit-test already owns
+            // entity precedence.
             const hidden: THREE.Object3D[] = [];
             for (const child of scene.children) {
                 if (child.userData.noPick && child.visible) {
@@ -1091,10 +1149,13 @@ export function World3DView(props: {
                 }
             }
             renderer.setRenderTarget(pickRT);
-            renderer.setClearColor(0xffffff, 1); // white = z≈1.02 → miss (sky)
+            // One clear colour has to serve both attachments, and white does:
+            // depth-wise it unpacks to z≈1.0039 → sky, and id-wise it lands
+            // alpha 255, which the id decoder already reads as "not an object"
+            // (that is terrain's value — terrain carries no pickId attribute).
+            renderer.setClearColor(0xffffff, 1);
             renderer.clear();
             renderer.render(scene, pc);
-            renderer.readRenderTargetPixels(pickRT, 0, 0, 1, 1, pickBuf);
             for (const child of hidden) child.visible = true;
             renderer.setRenderTarget(prevTarget);
             renderer.setClearColor(prevClear, prevAlpha);
@@ -1103,6 +1164,34 @@ export function World3DView(props: {
                 m.uniforms.pickMode.value = 0;
                 m.blending = THREE.NormalBlending;
             }
+            pickInFlight = {x: clientX, y: clientY, vx, vy};
+            return true;
+        };
+
+        /** Read back whatever renderPickAt last rasterised. Cheap when a frame
+         *  has elapsed since the draw; a stall if called straight after it. */
+        const consumePick = () => {
+            if (!pickInFlight) return;
+            renderer.readRenderTargetPixels(pickRT, 0, 0, 1, 1, idBuf, undefined, 0);
+            renderer.readRenderTargetPixels(pickRT, 0, 0, 1, 1, pickBuf, undefined, 1);
+            pickReady = pickInFlight;
+            pickInFlight = null;
+        };
+
+        /** Guarantee the buffers hold the result for this exact screen point.
+         *  A hover resolves at the point the loop pre-rendered, so this is a
+         *  no-op for it; a click resolves wherever the user clicked, so it
+         *  renders and reads inline (one stall per click, not per frame). */
+        const ensurePickAt = (clientX: number, clientY: number): boolean => {
+            if (pickReady && pickReady.x === clientX && pickReady.y === clientY) return true;
+            if (!renderPickAt(clientX, clientY)) return false;
+            consumePick();
+            return pickReady !== null;
+        };
+
+        const surfacePoint = (clientX: number, clientY: number): THREE.Vector3 | null => {
+            if (!ensurePickAt(clientX, clientY)) return null;
+            const {vx, vy} = pickReady!;
             // Unpack packDepth()'s base-255 24-bit depth (R most significant).
             const d = pickBuf[0] / 255
                 + pickBuf[1] / (255 * 255)
@@ -1309,6 +1398,13 @@ export function World3DView(props: {
             | {kind: "plate"; key: string}
             | {kind: "none"};
         let pendingHover: HoverReq | null = null;
+        /** Latest cursor position over the bare canvas, or null when the cursor
+         *  is off it / over chrome (nameplate, leave — neither needs GPU work). */
+        let canvasCursor: {x: number; y: number} | null = null;
+        /** A pointermove has given us a position we haven't picked yet. */
+        let hoverWanted = false;
+        /** A pick was issued for the hover and is waiting to be read back. */
+        let hoverPendingRead = false;
         let lastHoverText = "";
         // Sticky hover tile (hysteresis). The GPU depth-pick under the cursor
         // lands on whatever surface is there; on a wall that's the vertical
@@ -1370,8 +1466,80 @@ export function World3DView(props: {
             plateKey: string | null; shopId?: string | null;
             transport?: {name: string; dx: number; dz: number;
                 dfloor: number} | null;
-            noClick?: boolean};
+            noClick?: boolean; moved?: number};
         let drag: Drag | null = null;
+
+        /** World point of the bot the camera is following, or null when the
+         *  sidebar isn't following one (or it hasn't streamed in yet — then
+         *  the camera isn't pinned to anything and the free controls stand).
+         *  While this returns a point the camera belongs to that bot: panning
+         *  is off and rotation orbits it instead of the cursor.
+         *  y = 0 is the plane the follow ease parks `target` on, so orbiting
+         *  about it leaves the ease nothing to fight. */
+        const followPoint = (): THREE.Vector3 | null => {
+            const fol = propsRef.current.follow;
+            const mf = stateRef.current.manifest;
+            if (!fol || !mf) return null;
+            const b = entityLayer.current().find(c => c.key === `bot:${fol}`);
+            return b ? new THREE.Vector3(mf.botXTiles * 128 - (b.x * 128 + 64),
+                0, b.z * 128 + 64) : null;
+        };
+
+        // --- Pointer lock (game-style mouse capture) ----------------------
+        // A camera drag swallows the cursor and steers off raw movement deltas
+        // instead of absolute positions: rotating/panning never runs out of
+        // screen, and the cursor reappears where it was pressed. The lock is
+        // taken LAZILY — only once the pointer has travelled past the same 4px
+        // that separates a click from a drag — so a plain click (select, or
+        // right-click "Choose option") never flashes the cursor away.
+        const LOCK_PX = 4;
+        /** Pointer whose drag asked for the lock (null = we hold nothing). */
+        let lockOwner: number | null = null;
+        const isLocked = () => document.pointerLockElement === host;
+        const wantLock = (pointerId: number) => {
+            if (lockOwner != null || isLocked()) return;
+            if (typeof host.requestPointerLock !== "function") return;
+            lockOwner = pointerId;
+            // unadjustedMovement gives raw device deltas (no OS pointer
+            // acceleration); browsers without it reject, so retry plain. A
+            // denial (Chrome rate-limits re-locking after an Esc exit) just
+            // leaves the drag on the un-locked path — still fully usable.
+            const clear = () => { lockOwner = null; };
+            try {
+                const req: unknown = (host.requestPointerLock as
+                    (o?: {unadjustedMovement?: boolean}) => unknown)(
+                        {unadjustedMovement: true});
+                if (req instanceof Promise) {
+                    req.catch(() => {
+                        try {
+                            const again: unknown = host.requestPointerLock();
+                            if (again instanceof Promise) again.catch(clear);
+                        } catch { clear(); }
+                    });
+                }
+            } catch { clear(); }
+        };
+        /** Set while WE release the lock, so the change event below doesn't
+         *  mistake our own release for the browser yanking it. */
+        let selfExit = false;
+        const dropLock = () => {
+            lockOwner = null;
+            if (isLocked()) {
+                selfExit = true;
+                document.exitPointerLock();
+            }
+        };
+        const onLockChange = () => {
+            if (isLocked()) return;
+            lockOwner = null;
+            if (selfExit) { selfExit = false; return; }
+            // The browser dropped the lock mid-drag (Esc, focus loss): end the
+            // drag rather than keep steering with a cursor we can't see.
+            drag = null;
+        };
+        const onLockError = () => { lockOwner = null; };
+        document.addEventListener("pointerlockchange", onLockChange);
+        document.addEventListener("pointerlockerror", onLockError);
 
         // --- Multi-touch camera gestures ---------------------------------
         // Active touch points by pointerId. One finger keeps the single-finger
@@ -1433,7 +1601,8 @@ export function World3DView(props: {
             if (dYaw > Math.PI) dYaw -= 2 * Math.PI;
             else if (dYaw < -Math.PI) dYaw += 2 * Math.PI;
             const dPitch = (p.midY - gesture.midY) * 0.008;
-            rotateAboutPivot(gesture.pivot ?? target, -dYaw, dPitch);
+            rotateAboutPivot(followPoint() ?? gesture.pivot ?? target,
+                -dYaw, dPitch);
             gesture.dist = p.dist;
             gesture.midX = p.midX;
             gesture.midY = p.midY;
@@ -1468,6 +1637,23 @@ export function World3DView(props: {
             if (e.button !== 0 && e.button !== 1 && e.button !== 2) return;
             // A press begins a drag; don't let a queued hover resolve mid-drag.
             pendingHover = {kind: "none"};
+            // A press on a resize handle drags that edge instead of the camera.
+            // Pointer capture retargets later events to the host, so the handle
+            // is identified once, here, and remembered in areaGrip.
+            const gripEl = e.button === 0
+                ? (e.target as HTMLElement).closest?.("[data-grip]") as HTMLElement | null
+                : null;
+            if (gripEl && areaRect) {
+                const [kx, kz] = (gripEl.dataset.grip ?? "").split(":");
+                areaGrip = {
+                    kx: kx === "null" ? null : kx as "x0" | "x1",
+                    kz: kz === "null" ? null : kz as "z0" | "z1",
+                };
+                areaGripCursor = gripEl.style.cursor;
+                el.style.cursor = areaGripCursor;
+                host.setPointerCapture(e.pointerId);
+                return;
+            }
             // Area-select armed: LEFT drag sweeps a ground rectangle instead
             // of panning (shift+left keeps its rotate fallback).
             if (propsRef.current.areaSelect && e.button === 0 && !e.shiftKey) {
@@ -1495,9 +1681,11 @@ export function World3DView(props: {
                 "[data-entity-key]") as HTMLElement | null;
             drag = {mode, button: e.button, pointerId: e.pointerId,
                 lastX: e.clientX, lastY: e.clientY,
-                downX: e.clientX, downY: e.clientY,
+                downX: e.clientX, downY: e.clientY, moved: 0,
                 pivot: mode === "rotate"
-                    ? (surfacePoint(e.clientX, e.clientY) ?? groundPoint(e.clientX, e.clientY))
+                    ? (followPoint()
+                        ?? surfacePoint(e.clientX, e.clientY)
+                        ?? groundPoint(e.clientX, e.clientY))
                     : null,
                 plateKey: plate?.dataset.entityKey ?? null,
                 // Shop tags work like nameplates: pointer capture retargets
@@ -1512,6 +1700,11 @@ export function World3DView(props: {
             host.setPointerCapture(e.pointerId);
         });
         host.addEventListener("pointermove", e => {
+            if (areaGrip) {
+                const at = groundTile(e.clientX, e.clientY);
+                if (at) areaGrip = resizeArea(areaGrip, at);
+                return;
+            }
             if (areaDrag) {
                 const at = groundTile(e.clientX, e.clientY);
                 if (at && areaRect) {
@@ -1544,19 +1737,40 @@ export function World3DView(props: {
                         : {kind: "none"};
                 return;
             }
-            const dx = e.clientX - drag.lastX;
-            const dy = e.clientY - drag.lastY;
+            // Under pointer lock clientX/Y are frozen, so the camera reads the
+            // raw movement deltas; before the lock engages (and on every path
+            // that never locks) the client delta is the same number.
+            const locked = isLocked();
+            const dx = locked ? e.movementX : e.clientX - drag.lastX;
+            const dy = locked ? e.movementY : e.clientY - drag.lastY;
             drag.lastX = e.clientX;
             drag.lastY = e.clientY;
+            // Past the click threshold a ROTATE drag grabs the cursor (mouse
+            // only): rotation is relative, so it gains an endless mouse and
+            // loses nothing. Pan does NOT lock — dragging the ground works by
+            // keeping the world pinned under a cursor you can see.
+            drag.moved = (drag.moved ?? 0) + Math.hypot(dx, dy);
+            if (drag.mode === "rotate" && drag.moved >= LOCK_PX
+                && e.pointerType === "mouse") {
+                drag.noClick = true;
+                wantLock(drag.pointerId);
+            }
             if (drag.mode === "rotate") {
-                const pivot = drag.pivot ?? target;
+                // Re-read the follow point every move, not once at press: a
+                // followed bot WALKS during a long rotate drag, and the orbit
+                // has to stay centred on where it is now.
+                const pivot = followPoint() ?? drag.pivot ?? target;
                 // Drag DOWN = tilt toward top-down, drag UP = toward
                 // frontal (user preference, inverted from the grab metaphor).
                 rotateAboutPivot(pivot, -dx * 0.008, dy * 0.008);
-            } else {
+            } else if (!followPoint()) {
                 // Screen-plane pan: the world follows the cursor 1:1 at every
                 // pitch (in ortho this equals grab-the-ground at steep angles
                 // and stays exact at eye level, where ground rays degenerate).
+                // Disabled while following — the camera is the bot's, and a pan
+                // could only slide off it and be dragged straight back by the
+                // follow ease. (Clicks are untouched: only the camera move is
+                // skipped, so select/command still work under the drag.)
                 const wpp = viewHeightUnits / (renderer.domElement.clientHeight || 600);
                 const {right, up} = screenBasis();
                 target.addScaledVector(right, -dx * wpp)
@@ -1829,11 +2043,7 @@ export function World3DView(props: {
                 if (drag.transport) {
                     const t = drag.transport;
                     const f = Math.max(0, Math.min(3, t.dfloor));
-                    if (propsRef.current.onFloorIndexChange
-                        && propsRef.current.floorIndex != null
-                        && propsRef.current.floorIndex !== f) {
-                        propsRef.current.onFloorIndexChange(f);
-                    }
+                    setFloorIndexRef.current(f);
                     panToRef.current?.(t.dx, t.dz);
                     drag = null;
                     if (host.hasPointerCapture(e.pointerId)) host.releasePointerCapture(e.pointerId);
@@ -1903,6 +2113,17 @@ export function World3DView(props: {
         // re-seeds a click-suppressed pan so the remaining finger keeps panning
         // without a re-press.
         const onPointerUp = (e: PointerEvent) => {
+            // Release the mouse before any of the tap/click paths below: the
+            // cursor pops back to where the drag started.
+            if (lockOwner === e.pointerId || isLocked()) dropLock();
+            if (areaGrip) {
+                areaGrip = null;
+                el.style.cursor = "";
+                if (host.hasPointerCapture(e.pointerId)) {
+                    host.releasePointerCapture(e.pointerId);
+                }
+                return; // every tile of the drag was already emitted
+            }
             if (areaDrag) {
                 areaDrag = false;
                 if (host.hasPointerCapture(e.pointerId)) {
@@ -1955,6 +2176,9 @@ export function World3DView(props: {
         // gesture releases the lifted finger's capture (firing this) while the
         // re-seeded pan is bound to the OTHER, still-captured finger.
         host.addEventListener("lostpointercapture", e => {
+            // Engaging pointer lock can release the capture; under lock every
+            // mouse event targets the locked element anyway, so the drag lives.
+            if (lockOwner === e.pointerId || isLocked()) return;
             if (drag && drag.pointerId === e.pointerId) drag = null;
         });
 
@@ -1973,6 +2197,21 @@ export function World3DView(props: {
         // one-shot geometry (transport glows, trail/route/area ribbons) redrapes
         // on change, so nothing extruded early stays baked at sea level.
         let heightsRev = 0;
+        // When the terrain heights last moved, and when a heights-driven
+        // overlay rebuild was last allowed. Every draped overlay (transport
+        // outlines, route/trail/area/entry ribbons) invalidates on heightsRev,
+        // and EVERY terrain cell that lands bumps it — 747 of them on a cold
+        // load. Each rebuild is a full teardown: the transport outlines alone
+        // re-run EdgesGeometry over every transport in the world, which
+        // measured ~28% of load CPU producing results that were stale a
+        // millisecond later. So wait for the heights to stop moving before
+        // acting on them.
+        let heightsChangedAt = 0;
+        let heightsRebuildAt = 0;
+        /** Heights have settled (or gone stale long enough that we redrape
+         *  anyway, so a slow trickle of cells can't starve the overlays). */
+        const HEIGHTS_SETTLE_MS = 250;
+        const HEIGHTS_MAX_STALE_MS = 2000;
         const heightsByPlane: (Float32Array | null)[] = [null, null, null, null];
         const heightsFor = (plane: number): Float32Array => {
             let g = heightsByPlane[plane];
@@ -1982,8 +2221,10 @@ export function World3DView(props: {
             }
             return g;
         };
-        // Mirror of the active floor's plane (pump syncs it): heightAt reads
-        // the ACTIVE grid; assembly of hidden-floor cells uses the
+        // Which plane's cells are currently SHOWN. Owned by pump(), which
+        // advances it once a floor switch is actually processed, and used for
+        // per-cell visibility + anim gating. Draped overlays must NOT read this
+        // — see planeForDrape below. Assembly of hidden-floor cells uses the
         // plane-bound heightAtOf so their scenery sits on their own terrain.
         let activePlane = kindsFor(stateRef.current.floor).plane;
         const sinkInto = (grid: Float32Array, cx: number, cz: number, y: number) => {
@@ -2012,8 +2253,37 @@ export function World3DView(props: {
             return (h00 * (1 - fx) + h10 * fx) * (1 - fz)
                  + (h01 * (1 - fx) + h11 * fx) * fz;
         };
+        // Plane whose terrain the DRAPED overlays sit on (transport outlines,
+        // route/trail ribbons, sight ribbons, area rect, nametags, entity
+        // rings, ground picks).
+        //
+        // This deliberately does NOT read activePlane. activePlane is owned by
+        // pump() and only advances when the floor switch is actually processed
+        // — up to a 250ms cadence later, and always AFTER the per-frame rebuild
+        // block. Every one of those rebuilds triggers on `st.floor` changing,
+        // so draping through activePlane baked the OLD floor's heights into
+        // whatever got rebuilt in that window. Worse, it never healed: the
+        // rebuild's other triggers (heightsRev, the transports list) don't fire
+        // on a revisit to an already-loaded floor, whose height grid is
+        // retained — so the overlay stayed at the previous floor's height for
+        // as long as you stood there. That is the "transport outlines float one
+        // storey up after switching 2D→3D across a floor change" bug.
+        //
+        // Derived from the requested floor instead, memoised on the floor key
+        // so this stays allocation-free — heightAt is called per vertex per
+        // drape and four times per groundNormalAt.
+        let drapeFloor: FloorKey | null = null;
+        let drapePlane = activePlane;
+        const planeForDrape = (): number => {
+            const f = stateRef.current.floor;
+            if (f !== drapeFloor) {
+                drapeFloor = f;
+                drapePlane = kindsFor(f).plane;
+            }
+            return drapePlane;
+        };
         const heightAt = (x: number, z: number): number =>
-            heightAtGrid(heightsFor(activePlane), x, z);
+            heightAtGrid(heightsFor(planeForDrape()), x, z);
         const heightAtOf = (plane: number) => (x: number, z: number): number =>
             heightAtGrid(heightsFor(plane), x, z);
         /** Terrain surface normal in three.js world space (x mirrored). */
@@ -2033,6 +2303,11 @@ export function World3DView(props: {
         const entityLayer = new EntityLayer(scene, entityHost);
         let lastEntitiesRev = -1;
         const sightLayer = new SightLayer(scene);
+        // Wilderness depth contours (light-red level lines + number pills).
+        const wildernessLayer = new WildernessLayer(scene, entityHost);
+        let lastWildStride = 0;
+        let lastWildFloor: FloorKey | null = null;
+        let lastWildHeightsRev = -1;
         // Selected bot's planned route — the 3D twin of the map's polyline.
         const routeRibbon = new Ribbon(scene, 0x4da3ff, 0.6, 0.16);
         let lastRoute: RoutePoint[] | null | undefined;
@@ -2061,16 +2336,27 @@ export function World3DView(props: {
         let areaRect: {x0: number; z0: number; x1: number; z1: number} | null = null;
         let areaRectDirty = false;
         let lastAreaHeightsRev = -1;
-        let lastAreaArmed = false;
+        /** The committed box, corners ordered and the half-tile margin that
+         *  makes the outline hug the OUTER edge of the tiles it covers folded
+         *  in. `toWorld` addresses tile centres, so a perimeter traced through
+         *  x0..x1 would sit half a tile inside the selection on every side and
+         *  under-draw what the results list. */
+        const areaEdges = () => {
+            if (!areaRect) return null;
+            return {
+                x0: Math.min(areaRect.x0, areaRect.x1) - 0.5,
+                x1: Math.max(areaRect.x0, areaRect.x1) + 0.5,
+                z0: Math.min(areaRect.z0, areaRect.z1) - 0.5,
+                z1: Math.max(areaRect.z0, areaRect.z1) + 0.5,
+            };
+        };
         const rebuildAreaRect = (toWorld: (x: number, z: number) => THREE.Vector3) => {
-            if (!areaRect) {
+            const e = areaEdges();
+            if (!e) {
                 areaRibbon.extrude([], toWorld);
                 return;
             }
-            const x0 = Math.min(areaRect.x0, areaRect.x1);
-            const x1 = Math.max(areaRect.x0, areaRect.x1);
-            const z0 = Math.min(areaRect.z0, areaRect.z1);
-            const z1 = Math.max(areaRect.z0, areaRect.z1);
+            const {x0, x1, z0, z1} = e;
             const per = 2 * (x1 - x0 + z1 - z0) + 4;
             const stride = Math.max(1, Math.ceil(per / 512));
             const pts: {x: number; z: number}[] = [];
@@ -2081,6 +2367,118 @@ export function World3DView(props: {
             if (pts.length < 2) pts.push({x: x0, z: z0}, {x: x1, z: z1});
             areaRibbon.extrude([{pts, closed: true}], toWorld);
         };
+
+        // ---- Resize handles on the committed rectangle ----
+        // Screen-space DOM squares (like the transport chip) rather than scene
+        // meshes: they keep one pixel size at every camera distance, the browser
+        // hit-tests them for us, and they can carry a real CSS resize cursor.
+        /** Which tile-box edges a handle drags — null on the axis it leaves. */
+        type Grip = {kx: "x0" | "x1" | null; kz: "z0" | "z1" | null};
+        const GRIPS: Grip[] = [
+            {kx: "x0", kz: "z0"}, {kx: "x1", kz: "z0"},
+            {kx: "x0", kz: "z1"}, {kx: "x1", kz: "z1"},
+            {kx: "x0", kz: null}, {kx: "x1", kz: null},
+            {kx: null, kz: "z0"}, {kx: null, kz: "z1"},
+        ];
+        const gripKey = (g: Grip) => `${g.kx}:${g.kz}`;
+        const gripDivs = new Map<string, HTMLDivElement>();
+        /** Handle position in tile space, on the box edges it drags. */
+        const gripTile = (g: Grip, e: {x0: number; x1: number; z0: number; z1: number}) => ({
+            x: g.kx === "x0" ? e.x0 : g.kx === "x1" ? e.x1 : (e.x0 + e.x1) / 2,
+            z: g.kz === "z0" ? e.z0 : g.kz === "z1" ? e.z1 : (e.z0 + e.z1) / 2,
+        });
+        /** The resize cursor for a handle, from where it lands on screen
+         *  RELATIVE to the box centre. The camera rotates freely, so a fixed
+         *  per-corner cursor would point the wrong way half the time. */
+        const CURSORS = ["ew-resize", "nesw-resize", "ns-resize", "nwse-resize"];
+        const frameAreaGrips = (toWorld: (x: number, z: number) => THREE.Vector3) => {
+            const e = areaEdges();
+            const armed = propsRef.current.areaSelect === true;
+            // Hidden while sweeping a fresh box (the old handles would be stale)
+            // and while the tool is armed (a press starts a new sweep instead).
+            const show = e != null && !areaDrag && !armed;
+            if (!show) {
+                for (const d of gripDivs.values()) d.style.display = "none";
+                return;
+            }
+            camera.updateMatrixWorld();
+            const w = host.clientWidth || 800;
+            const h = host.clientHeight || 600;
+            const mid = toWorld((e.x0 + e.x1) / 2, (e.z0 + e.z1) / 2).project(camera);
+            const mx = ((mid.x + 1) / 2) * w;
+            const my = ((1 - mid.y) / 2) * h;
+            for (const g of GRIPS) {
+                const key = gripKey(g);
+                let div = gripDivs.get(key);
+                if (!div) {
+                    div = document.createElement("div");
+                    div.dataset.grip = key;
+                    div.style.cssText =
+                        "position:absolute;width:9px;height:9px;" +
+                        "transform:translate(-50%,-50%);border-radius:2px;" +
+                        "background:#4ec9ff;border:1px solid #0d1117;" +
+                        "pointer-events:auto;z-index:906000;";
+                    entityHost.appendChild(div);
+                    gripDivs.set(key, div);
+                }
+                const t = gripTile(g, e);
+                const v = toWorld(t.x, t.z).project(camera);
+                if (v.z > 1 || v.z < -1 || v.x < -1.05 || v.x > 1.05
+                    || v.y < -1.05 || v.y > 1.05) {
+                    div.style.display = "none";
+                    continue;
+                }
+                const px = ((v.x + 1) / 2) * w;
+                const py = ((1 - v.y) / 2) * h;
+                div.style.display = "";
+                div.style.left = `${px}px`;
+                div.style.top = `${py}px`;
+                // atan2 on the screen vector out of the centre; screen y grows
+                // down, so negate it to get the usual maths orientation.
+                const a = Math.atan2(my - py, px - mx);
+                const oct = ((Math.round(a / (Math.PI / 4)) % 4) + 4) % 4;
+                div.style.cursor = CURSORS[oct];
+            }
+        };
+        /** Move the edges a handle owns onto `to`. Dragging an edge past its
+         *  opposite flips the box, and the handle follows the edge it grabbed
+         *  so an overshooting drag keeps tracking the pointer. */
+        const resizeArea = (g: Grip, to: {x: number; z: number}): Grip => {
+            if (!areaRect) return g;
+            let {x0, x1, z0, z1} = areaRect;
+            let {kx, kz} = g;
+            if (kx === "x0") x0 = to.x; else if (kx === "x1") x1 = to.x;
+            if (kz === "z0") z0 = to.z; else if (kz === "z1") z1 = to.z;
+            if (x0 > x1) {
+                [x0, x1] = [x1, x0];
+                if (kx) kx = kx === "x0" ? "x1" : "x0";
+            }
+            if (z0 > z1) {
+                [z0, z1] = [z1, z0];
+                if (kz) kz = kz === "z0" ? "z1" : "z0";
+            }
+            const changed = x0 !== areaRect.x0 || x1 !== areaRect.x1
+                || z0 !== areaRect.z0 || z1 !== areaRect.z1;
+            if (changed) {
+                areaRect = {x0, x1, z0, z1};
+                areaRectDirty = true;
+                // Live, like the 2D grips: the host's row list and Rect track
+                // the drag rather than waiting for the release.
+                propsRef.current.onAreaSelected?.({x0, x1, z0, z1});
+            }
+            return {kx, kz};
+        };
+        /** The handle currently being dragged, or null, and the cursor it wore. */
+        let areaGrip: Grip | null = null;
+        let areaGripCursor = "";
+        /** Last box the host handed us, to tell a host change from our own. */
+        let lastHostRect: {x0: number; z0: number; x1: number; z1: number} | null = null;
+        const sameArea = (
+            a: {x0: number; z0: number; x1: number; z1: number} | null | undefined,
+            b: {x0: number; z0: number; x1: number; z1: number} | null | undefined,
+        ) => (!a || !b)
+            ? (a ?? null) === (b ?? null)
+            : a.x0 === b.x0 && a.x1 === b.x1 && a.z0 === b.z0 && a.z1 === b.z1;
         // Walked session trail — amber to match the 2D map's trail polyline
         // (vs the blue planned route).
         const trailRibbon = new Ribbon(scene, 0xe8a33d, 0.7, 0.14);
@@ -2604,6 +3002,56 @@ export function World3DView(props: {
             }
         };
 
+        // ---- PK victim tags: red username nameplate over each hunted victim ----
+        // Same pooled-DOM pattern as the cannon tags, but DELIBERATELY NOT zoom-gated:
+        // these stay visible at any zoom (the whole point is spotting a target from a
+        // full overview), so there's no `zoomTiles <= N` guard. Keyed by username so a
+        // moving victim's tag follows it rather than churning a new div per tile.
+        const victimTagPool = new Map<string, HTMLDivElement>();
+        const frameVictimTags = (plane: number,
+                                 toWorld: (x: number, z: number) => THREE.Vector3) => {
+            const victims = propsRef.current.victims ?? [];
+            const used = new Set<string>();
+            if (victims.length > 0) {
+                camera.updateMatrixWorld();
+                const w = host.clientWidth || 800;
+                const h = host.clientHeight || 600;
+                for (const vic of victims) {
+                    if (Math.floor(vic.z / 944) !== plane) continue;
+                    const k = vic.name;
+                    const v = toWorld(vic.x, vic.z % 944).project(camera);
+                    // Cull off-screen AND behind-camera (|z|>1) — a point behind the
+                    // lens projects with flipped x/y and would teleport the tag.
+                    if (v.z > 1 || v.z < -1 || v.x < -1.05 || v.x > 1.05
+                        || v.y < -1.05 || v.y > 1.05) continue;
+                    used.add(k);
+                    let div = victimTagPool.get(k);
+                    if (!div) {
+                        div = document.createElement("div");
+                        div.style.cssText =
+                            "position:absolute;transform:translate(-50%,-100%);" +
+                            "font:10px monospace;color:#ff6b6b;" +
+                            "background:rgba(40,8,8,.6);padding:0 4px;" +
+                            "border:1px solid rgba(255,107,107,.45);" +
+                            "border-radius:4px;pointer-events:none;" +
+                            "white-space:nowrap;z-index:880001;";
+                        entityHost.appendChild(div);
+                        victimTagPool.set(k, div);
+                    }
+                    const text = `☠ ${vic.name}`;
+                    if (div.textContent !== text) div.textContent = text;
+                    div.style.left = `${((v.x + 1) / 2) * w}px`;
+                    div.style.top = `${((1 - v.y) / 2) * h - 26}px`;
+                }
+            }
+            for (const [k, div] of victimTagPool) {
+                if (!used.has(k)) {
+                    div.remove();
+                    victimTagPool.delete(k);
+                }
+            }
+        };
+
         // Transports: the OWNING scenery object glows persistently (dim cyan,
         // additive — the same technique as the hover glow); hovering it
         // highlights the transport's entry tiles (terrain-height quads) and
@@ -2806,51 +3254,8 @@ export function World3DView(props: {
         // opaque object.
         const idPick = (clientX: number, clientY: number): Target => {
             if (!objLib) return null;
-            const r = renderer.domElement.getBoundingClientRect();
-            if (!r.width || !r.height) return null;
-            const ndcX = ((clientX - r.left) / r.width) * 2 - 1;
-            const ndcY = -(((clientY - r.top) / r.height) * 2 - 1);
-            const vx = ndcX * camera.right;
-            const vy = ndcY * camera.top;
-            const eps = (2 * camera.right) / r.width; // ~1px
-            const pc = camera.clone();
-            pc.left = vx - eps; pc.right = vx + eps;
-            pc.bottom = vy - eps; pc.top = vy + eps;
-            pc.updateProjectionMatrix();
-            const prevTarget = renderer.getRenderTarget();
-            const prevClear = renderer.getClearColor(new THREE.Color());
-            const prevAlpha = renderer.getClearAlpha();
-            const prevBackground = scene.background;
-            scene.background = null;
-            // Object/terrain/door materials emit their pickId (after their own
-            // alpha discard) instead of shaded colour; NoBlending so the packed
-            // id bytes reach the buffer unblended.
-            for (const m of materials.values()) {
-                m.uniforms.pickMode.value = 1;
-                m.blending = THREE.NoBlending;
-            }
-            // Sprites/overlays (noPick) must not occlude the object pass — the
-            // billboard hit-test already owns entity precedence.
-            const hidden: THREE.Object3D[] = [];
-            for (const child of scene.children) {
-                if (child.userData.noPick && child.visible) {
-                    child.visible = false;
-                    hidden.push(child);
-                }
-            }
-            renderer.setRenderTarget(idRT);
-            renderer.setClearColor(0x000000, 0); // alpha 0 = sky/miss
-            renderer.clear();
-            renderer.render(scene, pc);
-            renderer.readRenderTargetPixels(idRT, 0, 0, 1, 1, idBuf);
-            for (const child of hidden) child.visible = true;
-            renderer.setRenderTarget(prevTarget);
-            renderer.setClearColor(prevClear, prevAlpha);
-            scene.background = prevBackground;
-            for (const m of materials.values()) {
-                m.uniforms.pickMode.value = 0;
-                m.blending = THREE.NormalBlending;
-            }
+            // Decodes attachment 0 of the shared pick pass — see renderPickAt.
+            if (!ensurePickAt(clientX, clientY)) return null;
             const a = idBuf[3];
             // Real hit alpha is the marker nibble (8..15); 0 = sky, 255 =
             // terrain (GL default attrib), both "not an object".
@@ -3132,9 +3537,12 @@ export function World3DView(props: {
                     setTileHighlights([]);
                 }
             }
-            el.style.cursor =
-                (tgt?.type === "entity" || tgt?.type === "object"
-                 || tgt?.type === "wall") ? "pointer" : "";
+            // A handle drag owns the cursor for its duration: pointer capture
+            // puts the pointer over the canvas rather than the handle, so the
+            // handle's own CSS cursor stops applying the moment you press it.
+            el.style.cursor = areaGrip ? areaGripCursor
+                : (tgt?.type === "entity" || tgt?.type === "object"
+                   || tgt?.type === "wall") ? "pointer" : "";
         };
 
         const materials = new Map<number, THREE.RawShaderMaterial>();
@@ -3289,6 +3697,7 @@ export function World3DView(props: {
                         scene.add(group);
                         if (kind === "terrain") {
                             heightsRev++;
+                            heightsChangedAt = performance.now();
                             // Heights for this cell are in — scenery can sit
                             // on real ground now.
                             const ck = cellKeyOf(cell.plane, cell.botX0, cell.botZ0);
@@ -3564,51 +3973,81 @@ export function World3DView(props: {
                     sightLayer.update(
                         st.entities.filter(e => e.kind === "bot"), toWorld);
                 }
+                // Heights-driven redrapes wait for the terrain to settle;
+                // every other trigger (a new route, a new transports list, a
+                // floor switch) still fires immediately.
+                const heightsQuiet = (t - heightsChangedAt) >= HEIGHTS_SETTLE_MS
+                    || (t - heightsRebuildAt) >= HEIGHTS_MAX_STALE_MS;
+                if (heightsQuiet) heightsRebuildAt = t;
                 if (st.route !== lastRoute || st.floor !== lastRouteFloor
-                    || heightsRev !== lastRouteHeightsRev) {
+                    || (heightsQuiet && heightsRev !== lastRouteHeightsRev)) {
                     lastRoute = st.route;
                     lastRouteFloor = st.floor;
                     lastRouteHeightsRev = heightsRev;
                     rebuildRoute(kindsFor(st.floor).plane, toWorld);
                 }
                 if (st.trail !== lastTrail || st.floor !== lastTrailFloor
-                    || heightsRev !== lastTrailHeightsRev) {
+                    || (heightsQuiet && heightsRev !== lastTrailHeightsRev)) {
                     lastTrail = st.trail;
                     lastTrailFloor = st.floor;
                     lastTrailHeightsRev = heightsRev;
                     rebuildTrail(kindsFor(st.floor).plane, toWorld);
                 }
-                // Area-select rectangle: re-arming the tool clears the old
-                // committed box; the drag handlers mark it dirty per move.
-                const areaArmed = propsRef.current.areaSelect === true;
-                if (areaArmed && !lastAreaArmed && areaRect) {
-                    areaRect = null;
-                    areaRectDirty = true;
+                // Area-select rectangle. When the host owns the box (areaRect
+                // defined) it is the source of truth — but only on CHANGE, so
+                // a local sweep/resize isn't stomped by the previous value in
+                // the frames before the host's state round-trips back.
+                const hostRect = propsRef.current.areaRect;
+                if (hostRect !== undefined && !sameArea(hostRect, lastHostRect)) {
+                    lastHostRect = hostRect ? {...hostRect} : null;
+                    if (!areaDrag && !areaGrip) {
+                        areaRect = hostRect ? {...hostRect} : null;
+                        areaRectDirty = true;
+                    }
                 }
-                lastAreaArmed = areaArmed;
-                // Host says the selection is gone (results panel closed):
-                // drop the committed box. Armed drags are exempt (the box is
-                // being swept right now); undefined keeps the demo default.
-                if (propsRef.current.areaRectVisible === false && !areaArmed && areaRect) {
-                    areaRect = null;
-                    areaRectDirty = true;
-                }
-                if (areaRectDirty || heightsRev !== lastAreaHeightsRev) {
+                if (areaRectDirty || (heightsQuiet && heightsRev !== lastAreaHeightsRev)) {
                     areaRectDirty = false;
                     lastAreaHeightsRev = heightsRev;
                     rebuildAreaRect(toWorld);
                 }
+                frameAreaGrips(toWorld);
                 frameRespawnTags(kindsFor(st.floor).plane, st.tags,
                     viewHeightUnits / 128, toWorld);
                 frameCannonTags(kindsFor(st.floor).plane,
                     viewHeightUnits / 128, toWorld);
+                frameVictimTags(kindsFor(st.floor).plane, toWorld);
+                {
+                    const shown = propsRef.current.layers?.wilderness !== false;
+                    wildernessLayer.visible = shown;
+                    // Contour stride follows the zoom; geometry only rebuilds
+                    // when the stride actually flips (or the floor / settled
+                    // heights change), not per zoom frame.
+                    const stride = wildernessStrideFor(
+                        (host.clientHeight || 600) / (viewHeightUnits / 128));
+                    if (shown && (stride !== lastWildStride
+                        || st.floor !== lastWildFloor
+                        || (heightsQuiet && heightsRev !== lastWildHeightsRev))) {
+                        lastWildStride = stride;
+                        lastWildFloor = st.floor;
+                        lastWildHeightsRev = heightsRev;
+                        wildernessLayer.rebuild(stride, toWorld);
+                    }
+                    wildernessLayer.frameLabels(shown, camera,
+                        host.clientWidth || 800, host.clientHeight || 600, toWorld);
+                }
                 {
                     const shown = propsRef.current.layers?.transports !== false;
+                    // sceneryByTile.size grows with every cell that lands, for
+                    // exactly the same reason heightsRev does — so it goes
+                    // behind the same settle gate. Left ungated it re-ran the
+                    // whole EdgesGeometry sweep on each of 747 cell arrivals
+                    // regardless of the heights check.
                     if (propsRef.current.transports !== lastTransports
                         || shown !== lastTransportsShown
                         || st.floor !== lastTransportsFloor
-                        || heightsRev !== lastTransportsHeightsRev
-                        || sceneryByTile.size !== lastTransportsSceneryCount) {
+                        || (heightsQuiet
+                            && (heightsRev !== lastTransportsHeightsRev
+                                || sceneryByTile.size !== lastTransportsSceneryCount))) {
                         lastTransports = propsRef.current.transports;
                         lastTransportsShown = shown;
                         lastTransportsFloor = st.floor;
@@ -3620,7 +4059,7 @@ export function World3DView(props: {
                 }
                 frameTransportChip(toWorld);
                 if (hoverTransport !== lastEntryHover
-                    || heightsRev !== lastEntryHeightsRev) {
+                    || (heightsQuiet && heightsRev !== lastEntryHeightsRev)) {
                     lastEntryHover = hoverTransport;
                     lastEntryHeightsRev = heightsRev;
                     rebuildEntryOutline(toWorld);
@@ -3636,7 +4075,11 @@ export function World3DView(props: {
                 // bot's (lerped) position unless the user is dragging or a
                 // flyby is running.
                 const fol = propsRef.current.follow;
-                if (fol && !drag && !flightRef.current) {
+                // Drags no longer suspend the ease: pan can't move the camera
+                // while following, and rotate orbits the bot itself — so the
+                // tracking must keep running THROUGH a rotate drag, or a bot
+                // that walks mid-drag slides out of the centre it's pinned to.
+                if (fol && !flightRef.current) {
                     if (fol !== followTarget) {
                         followTarget = fol;
                         followPrevT = 0; // new bot: snap, don't ease across the map
@@ -3743,18 +4186,49 @@ export function World3DView(props: {
                 lastStream = t;
                 pump();
             }
-            // Drain the coalesced hover: one GPU depth-pick per frame at most,
-            // using the freshest cursor position (camera is settled after any
-            // follow/pan above). This is what makes hover feel instant without
-            // firing a pick per pointermove event.
+            // One world-matrix refresh for the whole frame (see
+            // scene.matrixWorldAutoUpdate above). Must sit after everything
+            // that moves an object — the windmill spin and the streamed-cell
+            // drain — and before the picks, which render the scene too.
+            scene.updateMatrixWorld();
+            // Collect the pick this loop rasterised at the END of the previous
+            // frame. A whole frame of GPU work has gone by, so the readback
+            // finds the result already there instead of blocking the CPU until
+            // the pipeline drains — which is what reading straight after the
+            // draw did, twice a frame, the entire time the cursor was moving.
+            consumePick();
+            // A pick issued last frame has landed: resolve the hover at the
+            // point it was TAKEN at, not the freshest cursor position. The
+            // buffers describe that point, and pairing them with newer coords
+            // would mix a stale id/depth with a fresh billboard hit-test. The
+            // cost is one frame of hover latency.
+            if (hoverPendingRead && pickReady) {
+                hoverPendingRead = false;
+                resolveHover(pickReady.x, pickReady.y);
+            }
+            // Drain the coalesced hover request. Still at most one pick per
+            // frame, and — as before — none at all while the cursor sits still:
+            // only a pointermove sets hoverWanted.
             if (pendingHover) {
                 const h = pendingHover;
                 pendingHover = null;
-                if (h.kind === "canvas") resolveHover(h.x, h.y);
-                else if (h.kind === "plate") hoverPlate(h.key);
-                else commitHover(null);
+                if (h.kind === "canvas") {
+                    canvasCursor = {x: h.x, y: h.y};
+                    hoverWanted = true;
+                } else {
+                    canvasCursor = null;
+                    hoverWanted = false;
+                    if (h.kind === "plate") hoverPlate(h.key);
+                    else commitHover(null);
+                }
             }
             renderer.render(scene, camera);
+            // Issue the pick AFTER the on-screen render, so the GPU has the
+            // whole inter-frame gap to finish it before consumePick() reads it.
+            if (hoverWanted && canvasCursor) {
+                hoverWanted = false;
+                if (renderPickAt(canvasCursor.x, canvasCursor.y)) hoverPendingRead = true;
+            }
         };
 
         // Deterministic recorder (see the ?capture note by the renderer). Drives
@@ -3819,6 +4293,10 @@ export function World3DView(props: {
 
         return () => {
             disposed = true;
+            // Never unmount holding the user's cursor.
+            document.removeEventListener("pointerlockchange", onLockChange);
+            document.removeEventListener("pointerlockerror", onLockError);
+            if (document.pointerLockElement === host) document.exitPointerLock();
             adoptUrlRef.current = null;
             startCaptureRef.current = null;
             for (const key of [...sceneryMeshes.keys(), ...animMeshes.keys(),
@@ -3827,6 +4305,7 @@ export function World3DView(props: {
             }
             for (const key of [...doorMeshes.keys()]) disposeDoorCell(key);
             sightLayer.dispose(scene);
+            wildernessLayer.dispose();
             routeRibbon.dispose(scene);
             trailRibbon.dispose(scene);
             areaRibbon.dispose(scene);
@@ -3842,6 +4321,8 @@ export function World3DView(props: {
             transportOutlineMat.dispose();
             entryRibbon.dispose(scene);
             transportChip?.remove();
+            for (const d of gripDivs.values()) d.remove();
+            gripDivs.clear();
             npcSprites.dispose(scene);
             playerSprites.dispose();
             groundItems.dispose(scene);
@@ -3861,6 +4342,7 @@ export function World3DView(props: {
                 t?.dispose();
                 m.dispose();
             }
+            pickRT.dispose();
             renderer.dispose();
             host.removeChild(renderer.domElement);
         };
@@ -3884,7 +4366,8 @@ export function World3DView(props: {
                 {!controlled && FLOORS.map(f => (
                     <button key={f.key}
                             className={floor === f.key ? "active" : ""}
-                            onClick={() => setFloor(f.key)}>
+                            onClick={() => setFloorIndex(
+                                FLOOR_KEYS_BY_INDEX.indexOf(f.key))}>
                         {f.label}
                     </button>
                 ))}

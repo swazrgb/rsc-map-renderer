@@ -36,7 +36,23 @@ const SURF = 512;
 const T_FIXED = 0xff, T_HAIR = 0xfe, T_TOP = 0xfd, T_BOTTOM = 0xfc, T_SKIN = 0xfb;
 
 let atlasPromise: Promise<{idx: AtlasIndex; data: Uint8ClampedArray; aw: number}> | null = null;
-const stripCache = new Map<string, {json: string; png: string}>();
+/** One composited appearance strip: the atlas canvas plus the frame index that
+ *  locates each facing/walk frame in it. Cached per token — a returning
+ *  appearance re-uses this instead of re-compositing. */
+export interface StripBitmap {
+    canvas: HTMLCanvasElement;
+    index: {
+        scale: number; width: number; height: number;
+        frames: {o: number; f: number; x: number; y: number;
+            w: number; h: number; ax: number; ay: number}[];
+    };
+}
+
+const stripCache = new Map<string, StripBitmap>();
+/** Composited strips kept around. Comfortably above any realistic set of
+ *  simultaneously-visible appearances; the cap only exists so the canvases
+ *  can't grow without bound over a long session. */
+const STRIP_CACHE_CAP = 256;
 
 /** Load the atlas index + pixels once (straight alpha preserved for the tags). */
 function loadAtlas(): Promise<{idx: AtlasIndex; data: Uint8ClampedArray; aw: number}> {
@@ -84,7 +100,7 @@ function skinApply(skin: number, shade: number): number {
 }
 
 /** Compose the 8 facings + combat A/B × 3 walk frames for a token. */
-export async function compositePlayerStrip(token: string): Promise<{json: string; png: string}> {
+export async function compositePlayerStrip(token: string): Promise<StripBitmap> {
     const cached = stripCache.get(token);
     if (cached) return cached;
     const {idx, data, aw} = await loadAtlas();
@@ -197,17 +213,30 @@ export async function compositePlayerStrip(token: string): Promise<{json: string
         jf.push({o: f.o, f: f.f, x: bx, y: by, w: f.w, h: f.h, ax: f.ax, ay: f.ay});
     }
 
-    const cv = document.createElement("canvas");
-    cv.width = stripW;
-    cv.height = stripH;
-    cv.getContext("2d")!.putImageData(new ImageData(out, stripW, stripH), 0, 0);
-    const pngBlob: Blob = await new Promise(res => cv.toBlob(b => res(b!), "image/png"));
-    const pngUrl = URL.createObjectURL(pngBlob);
-    const jsonUrl = URL.createObjectURL(new Blob(
-        [JSON.stringify({scale: idx.scale, width: stripW, height: stripH, frames: jf})],
-        {type: "application/json"}));
+    // Hand back the pixels directly. This used to PNG-encode the canvas
+    // (cv.toBlob), wrap it and the frame index in two blob: URLs, and have the
+    // caller fetch() the JSON back and run the PNG through TextureLoader — an
+    // encode and a decode of data we already had in memory. cv.toBlob alone
+    // measured ~10% of cold-load CPU, and on a cold start every player in view
+    // pays it at once. A canvas goes straight into a THREE.CanvasTexture.
+    const canvas = document.createElement("canvas");
+    canvas.width = stripW;
+    canvas.height = stripH;
+    canvas.getContext("2d")!.putImageData(new ImageData(out, stripW, stripH), 0, 0);
 
-    const result = {json: jsonUrl, png: pngUrl};
+    const result: StripBitmap = {
+        canvas,
+        index: {scale: idx.scale, width: stripW, height: stripH, frames: jf},
+    };
+    // Bound the cache. It was unbounded (one blob URL pair per token, for the
+    // life of the page); canvases are bigger, so cap it and evict oldest-first
+    // — Map iterates in insertion order. A re-composite is the same cost as the
+    // first one and only hits a token nobody has worn in a long while.
     stripCache.set(token, result);
+    while (stripCache.size > STRIP_CACHE_CAP) {
+        const oldest = stripCache.keys().next();
+        if (oldest.done) break;
+        stripCache.delete(oldest.value);
+    }
     return result;
 }

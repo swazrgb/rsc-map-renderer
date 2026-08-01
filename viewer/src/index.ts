@@ -12,6 +12,10 @@
  * asset tree the host serves.
  */
 export {World3DView} from "./World3DView";
+// Floor vocabulary. The viewer renders by FloorKey but every value that crosses
+// this boundary is the RSC semantic index (0 ground · 1,2 upper · 3
+// underground); the host needs the mapping only to seed from `?floor=`.
+export {FLOOR_KEYS_BY_INDEX, floorKeyForIndex, floorIndexForKey} from "./World3DView";
 export {configureViewerHost, formatAppearance, parseAppearance} from "./api";
 export type {ViewerHost} from "./api";
 export type {
