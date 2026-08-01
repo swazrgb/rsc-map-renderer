@@ -78,7 +78,7 @@ public final class ServerDataImpl implements ServerData {
     return e == null ? null
         : new Item(e.id(), e.name(), e.description(), e.basePrice(),
             e.isStackable() != 0, e.isWearable() != 0,
-            e.requiredLevel(), e.requiredSkillID(), e.wearSlot());
+            e.requiredLevel(), e.requiredSkillID(), e.wearSlot(), e.wearableID());
   }
 
   @Override

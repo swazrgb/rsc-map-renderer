@@ -22,9 +22,17 @@ public interface ServerData {
    */
   Item item(int itemId);
 
+  /**
+   * {@code wearableId} is the server's {@code wearableID} — the equipment TYPE this item occupies,
+   * and the key into {@link ServerData#affectedTypes} (the types wielding it unequips). Distinct
+   * from {@code wearSlot} (the server's {@code wieldPosition}, an appearance slot): a bow's wearSlot
+   * is 3, the same as a shield's, yet its type covers both the weapon and the shield type — which is
+   * what makes it two-handed. That conflict table, never the slot, is the "can these two be worn
+   * together?" test.
+   */
   record Item(int id, String name, String description, int basePrice,
               boolean stackable, boolean wearable,
-              int requiredLevel, int requiredSkillId, int wearSlot) {
+              int requiredLevel, int requiredSkillId, int wearSlot, int wearableId) {
 
     /**
      * Whether this item is a melee weapon — wield position 4 (the weapon slot) and not a
