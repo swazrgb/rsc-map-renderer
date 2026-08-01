@@ -12,12 +12,11 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import javax.imageio.ImageIO;
-import openrsc.gamedata.NpcLocs;
 import orsc.graphics.two.HeadlessSurface;
 
 /**
- * Bakes the NPC sprite atlas for the 3D viewer: for every NPC id that spawns
- * in the world, the 8 camera-relative facing ORDERS × 3 walk frames, composed
+ * Bakes the NPC sprite atlas for the 3D viewer: for every NPC def the client
+ * knows, the 8 camera-relative facing ORDERS × 3 walk frames, composed
  * exactly like the client's {@code drawNPC} (12 layers in per-facing order,
  * per-layer colour remap from the def, horizontal flips for facings 5/6/7 —
  * baked in, because flipped facings also change the layer ORDER, so they are
@@ -43,7 +42,10 @@ public final class NpcSpriteAtlasBaker {
 
   /** 6144 wide keeps the atlas ≤ 8192 on BOTH axes (WebGL texture cap on
    * older GPUs/swiftshader) now that combat frames pushed 4096-wide past
-   * 9000px tall — an oversize atlas gets silently downscaled by three.js. */
+   * 9000px tall — an oversize atlas gets silently downscaled by three.js.
+   * Headroom is thinner since the bake covers every def (835 npcs ⇒ ~7450px
+   * tall): more frames or a bigger SCALE needs a width bump or a dedup pass,
+   * not a taller shelf stack. */
   private static final int ATLAS_WIDTH = 6144;
   private static final int PADDING = 1;
   private static final int ORIGIN_X = 160;
@@ -70,11 +72,15 @@ public final class NpcSpriteAtlasBaker {
 
   public static void export(File outDir, java.util.function.Consumer<String> log)
       throws Exception {
-    var conf = openrsc.gamedata.ServerConf.resolve();
-    List<NpcLocs.Spawn> spawns = NpcLocs.load(conf.locs().resolve("NpcLocs.json"));
+    // EVERY def id, not just the ones with a static NpcLocs spawn. Quest and
+    // event npcs (Glough, Black Demon, Bouncer, the kolodion forms, the
+    // Nazastarool phases…) are spawned by server scripts and never appear in
+    // the spawn table, so a spawn-derived id set baked no frames for them and
+    // the viewer silently skipped their quads (NpcSpriteLayer.frame: no meta
+    // ⇒ no sprite, nameplate only). 66 defs were missing that way.
     Set<Integer> ids = new LinkedHashSet<>();
-    for (NpcLocs.Spawn sp : spawns) {
-      ids.add(sp.id());
+    for (int id = 0; id < EntityHandler.npcCount(); id++) {
+      ids.add(id);
     }
 
     HeadlessSurface surface = new HeadlessSurface(512, 512, 4501);

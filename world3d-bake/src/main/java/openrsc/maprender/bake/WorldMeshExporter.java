@@ -68,8 +68,11 @@ public final class WorldMeshExporter {
    * v13: per-layer player-sprite atlas (player-layers/) baked into the tree —
    *      the viewer composites appearances client-side; the old on-demand
    *      server strip service is gone.
+   * v14: npc atlas covers EVERY def, not just ids with a static NpcLocs spawn
+   *      — script-spawned quest npcs (Glough, Black Demon, Bouncer…) had no
+   *      frames and rendered sprite-less.
    */
-  public static final int FORMAT_VERSION = 13;
+  public static final int FORMAT_VERSION = 14;
 
   /**
    * Kinds 0-3 exist for every plane (that plane's own session, base heights —
