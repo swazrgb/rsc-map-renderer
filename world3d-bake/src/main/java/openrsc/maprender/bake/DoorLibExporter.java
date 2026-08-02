@@ -78,9 +78,8 @@ public final class DoorLibExporter {
 
   public static void main(String[] args) throws Exception {
     // Standalone (dev-harness rebakes): needs the client defs + server locs.
-    orsc.Config.F_CACHE_DIR = args.length > 1 ? args[1] : "../../openrsc/Client_Base/Cache";
-    orsc.Config.S_WANT_CUSTOM_SPRITES = false;
-    EntityHandler.load(false);
+    openrsc.bot.render.WorldRenderer.configureCache(
+        args.length > 1 ? args[1] : "../../openrsc/Client_Base/Cache");
     var conf = openrsc.gamedata.ServerConf.resolve();
     List<BoundaryLocs.Loc> boundaries =
         BoundaryLocs.load(conf.locs().resolve("BoundaryLocs.json"));

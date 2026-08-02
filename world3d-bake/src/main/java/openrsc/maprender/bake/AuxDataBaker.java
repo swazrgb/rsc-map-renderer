@@ -42,12 +42,7 @@ public final class AuxDataBaker {
       WorldProfile world) throws Exception {
     // The scenery atlas renders sprites, which needs the client defs loaded
     // (idempotent when the world-mesh bake already loaded them this JVM).
-    orsc.Config.F_CACHE_DIR = clientCacheDir;
-    try {
-      EntityHandler.load(false);
-    } catch (RuntimeException alreadyLoaded) {
-      // defs already loaded
-    }
+    openrsc.bot.render.WorldRenderer.configureCache(clientCacheDir);
 
     var conf = ServerConf.resolve();
 

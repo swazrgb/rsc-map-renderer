@@ -62,20 +62,74 @@ public final class WorldRenderer {
   private static boolean defsLoaded;
 
   /**
+   * Point the client at a cache directory and load its compiled-in defs, exactly once per JVM.
+   *
+   * <p>{@code S_WANT_CUSTOM_SPRITES} is derived from whether {@code video/Custom_Sprites.osar} is
+   * present, NOT from the world's {@code custom_sprites} setting, and this MUST happen before
+   * {@link EntityHandler#load}. Two reasons, and the second is a correctness trap:
+   *
+   * <ol>
+   *   <li><b>HD art is wanted on every world</b>, authentic included — the custom pack replaces all
+   *       55 shared textures with higher-resolution versions (128x128 / 64x64 vs 16x18) and adds 12
+   *       more. This is a deliberate departure from what a stock Uranium client shows.</li>
+   *   <li><b>The flag also gates the animation table.</b> Ids 229..565 of
+   *       {@code EntityHandler.loadAnimationDefinitions()} sit behind it, but the server loads
+   *       {@code NpcDefsCustom.json} unconditionally on EVERY world
+   *       ({@code external/EntityHandler.load}), so every world has npc defs referencing ids up to
+   *       538. Worse, {@code EntityHandler.getAnimationDef} answers an out-of-range id with
+   *       {@code animations.get(0)} — {@code head1} — instead of null, so a truncated table renders
+   *       silently WRONG rather than absent: every body/armour layer of an affected npc draws a
+   *       HEAD. That is how Ultimate Ironman became a stack of tiny heads, and how authentic Bob
+   *       silently lost his {@code woodcuttingcape} (anim 518). 15 npc defs are affected, 4 of them
+   *       in every slot.</li>
+   * </ol>
+   *
+   * <p>So a per-world flag would not make an authentic bake authentic — it would only re-break it.
+   * Selecting authentic ART is a separate, currently-unimplementable concern: there is no authentic
+   * sprite path for the npc/item/player atlases at all (those bakers throw without the {@code
+   * .osar}). See {@code WorldProfile.customSprites()}.
+   *
+   * <p>Callers that load defs without building a renderer (the atlas bakers) must come through here
+   * too, or whichever runs first pins the wrong table for the whole JVM.
+   *
+   * @param cacheDir directory containing {@code video/Authentic_Landscape.orsc},
+   *     {@code video/Authentic_Sprites.orsc} and {@code video/Custom_Sprites.osar}
+   */
+  public static synchronized void configureCache(String cacheDir) {
+    Config.F_CACHE_DIR = cacheDir;
+    boolean customPack =
+        new File(cacheDir, "video" + File.separator + "Custom_Sprites.osar").exists();
+    if (!customPack) {
+      // Not fatal here (a terrain-only bake still works), but never let it be silent: the atlas
+      // bakers will fail outright later, and anything that does run uses the truncated animation
+      // table described above.
+      System.err.println("[WorldRenderer] WARNING: no video/Custom_Sprites.osar under " + cacheDir
+          + " — falling back to authentic sprites. The animation table truncates to 229 entries, so"
+          + " npcs referencing higher ids (Ironman, Bunny, Duck, Gaia, ...) will render as heads,"
+          + " and the npc/item/player atlas bakes will fail.");
+    }
+    Config.S_WANT_CUSTOM_SPRITES = customPack;
+    Config.S_WANT_CUSTOM_LANDSCAPE = false;
+
+    // EntityHandler holds all tile/elevation/door/object defs as compiled-in
+    // tables (no cache file); load once per JVM. Tolerate a load that happened
+    // outside this seam — EntityHandler throws rather than no-ops on a re-load.
+    if (!defsLoaded) {
+      try {
+        EntityHandler.load(false);
+      } catch (RuntimeException alreadyLoaded) {
+        // defs already loaded by another entry point
+      }
+      defsLoaded = true;
+    }
+  }
+
+  /**
    * @param cacheDir directory containing {@code video/Authentic_Landscape.orsc}
    *     and {@code video/Authentic_Sprites.orsc}
    */
   public WorldRenderer(String cacheDir, int width, int height) {
-    Config.F_CACHE_DIR = cacheDir;
-    Config.S_WANT_CUSTOM_SPRITES = false;
-    Config.S_WANT_CUSTOM_LANDSCAPE = false;
-
-    // EntityHandler holds all tile/elevation/door/object defs as compiled-in
-    // tables (no cache file); load once per JVM.
-    if (!defsLoaded) {
-      EntityHandler.load(false);
-      defsLoaded = true;
-    }
+    configureCache(cacheDir);
 
     // spriteCount 4501 mirrors the stock client's sprite-archive sizing.
     this.surface = new HeadlessSurface(width, height, 4501);

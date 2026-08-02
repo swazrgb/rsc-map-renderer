@@ -316,9 +316,8 @@ public final class NpcSpriteAtlasBaker {
 
   public static void main(String[] args) throws Exception {
     // Standalone: needs EntityHandler loaded + cache dir configured.
-    orsc.Config.F_CACHE_DIR = args.length > 1 ? args[1] : "../../openrsc/Client_Base/Cache";
-    orsc.Config.S_WANT_CUSTOM_SPRITES = false;
-    com.openrsc.client.entityhandling.EntityHandler.load(false);
+    openrsc.bot.render.WorldRenderer.configureCache(
+        args.length > 1 ? args[1] : "../../openrsc/Client_Base/Cache");
     export(new File(args.length > 0 ? args[0] : "/tmp/npc-atlas"), System.out::println);
   }
 

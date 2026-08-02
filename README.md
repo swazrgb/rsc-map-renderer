@@ -52,14 +52,6 @@ carries everything that world changes — landscape, scenery/NPC placements, col
 | landscape | JAG `maps64` | `Custom_Landscape.orsc` |
 | locs | base + Discontinued | + Runecraft, Harvesting, CustomQuest, Expansion, ModRoom, Auction, Ironman, … |
 
-Sprites are the one thing the world does **not** pick. Every world is baked with the HD custom
-sprite pack (`Custom_Sprites.osar`), so an authentic bake is deliberately not pixel-identical to what
-a stock Uranium client draws. That is partly taste and partly necessity: the same switch also gates
-the second half of the client's animation table (ids 229–565), and since the server loads
-`NpcDefsCustom.json` on *every* world, turning it off leaves npc defs pointing at animations that no
-longer exist — which the client resolves to `head1` rather than nothing, rendering those npcs as
-stacks of heads. See `WorldRenderer.configureCache`.
-
 ```bash
 scripts/build-site.sh site                                      # Uranium
 VITE_BASE=/cabbage/ scripts/build-site.sh site/cabbage rsccabbage   # Cabbage, served at /cabbage/

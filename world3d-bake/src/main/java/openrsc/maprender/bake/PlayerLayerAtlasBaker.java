@@ -118,13 +118,7 @@ public final class PlayerLayerAtlasBaker {
 
   public static void export(String clientCacheDir, Path outDir, java.util.function.Consumer<String> log)
       throws IOException {
-    orsc.Config.F_CACHE_DIR = clientCacheDir;
-    orsc.Config.S_WANT_CUSTOM_SPRITES = false;
-    try {
-      EntityHandler.load(false);
-    } catch (RuntimeException ignored) {
-      // already loaded
-    }
+    openrsc.bot.render.WorldRenderer.configureCache(clientCacheDir);
     HeadlessSurface s = new HeadlessSurface(SURF, SURF, 4501);
     if (!s.fillSpriteTree()) {
       throw new IOException("Custom_Sprites.osar missing");
