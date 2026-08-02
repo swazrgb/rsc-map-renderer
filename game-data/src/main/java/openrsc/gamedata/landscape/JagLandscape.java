@@ -1,9 +1,11 @@
-package openrsc.gamedata.jag;
+package openrsc.gamedata.landscape;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
+import openrsc.gamedata.jag.JagArchive;
+import openrsc.gamedata.jag.JagFile;
 
 /**
  * Loads the classic RSC landscape from {@code maps{rev}.jag/.mem} (+ optional
@@ -16,18 +18,23 @@ import java.util.Arrays;
  * <p>Decode logic is a literal port of {@code WorldLoader.loadJAGSector}: per
  * sector it reads {@code m{h}{sx}{sy}.dat}/{@code .jm}/{@code .hei}/{@code .loc} entries (member
  * archives override free when {@code MEMBER_WORLD}), runs the revision-specific RLE decode, and
- * yields raw per-tile values. The caller (CollisionMap) stamps these exactly as it does for the
- * {@code .orsc} format.
+ * yields raw per-tile values in the shared {@link RawSector} form, which the caller stamps exactly
+ * as it does for the {@code .orsc} format.
  *
- * <p>Coordinate convention matches the server and the bot's {@code .orsc}
- * loader: {@code sectionX = (worldX/48) }… the section name uses the same {@code sx,sy} indices,
- * and tiles are addressed {@code index = lx*48 + ly}.
+ * <p>Coordinate convention matches the server and the {@code .orsc} loader:
+ * {@code sectionX = (worldX/48) }… the section name uses the same {@code sx,sy} indices, and tiles
+ * are addressed {@code index = lx*48 + ly}.
+ *
+ * <p>Reach it through {@link LandscapeSource#fromJag(Path, int, boolean)} unless you specifically
+ * need the null-on-absent {@link #open} contract.
  */
-public final class JagLandscape implements AutoCloseable {
+public final class JagLandscape implements LandscapeSource {
 
-  private static final int REGION_SIZE = 48;
-  private static final int SIZE = REGION_SIZE * REGION_SIZE; // 2304
+  private static final int REGION_SIZE = RawSector.REGION_SIZE;
+  private static final int SIZE = RawSector.SIZE; // 2304
 
+  private final Path mapsDir;
+  private final int rev;
   private final JagArchive mapsJag;
   private final JagArchive mapsMem;
   private final JagArchive landJag;
@@ -35,8 +42,10 @@ public final class JagLandscape implements AutoCloseable {
   private final boolean memberWorld;
   private final boolean altFormat;
 
-  private JagLandscape(JagArchive mapsJag, JagArchive mapsMem, JagArchive landJag,
+  private JagLandscape(Path mapsDir, JagArchive mapsJag, JagArchive mapsMem, JagArchive landJag,
       JagArchive landMem, boolean memberWorld, int basedMapData) {
+    this.mapsDir = mapsDir;
+    this.rev = basedMapData;
     this.mapsJag = mapsJag;
     this.mapsMem = mapsMem;
     this.landJag = landJag;
@@ -45,25 +54,11 @@ public final class JagLandscape implements AutoCloseable {
     this.altFormat = basedMapData >= 28 && basedMapData <= 62;
   }
 
-  /**
-   * Raw per-tile sector data, index {@code lx*48 + ly}. Mirrors the fields the server's
-   * {@code Tile} / the bot's {@code .orsc} 10-byte record expose for collision + rendering.
-   */
-  public static final class RawSector {
-
-    public final byte[] groundElevation = new byte[SIZE];
-    public final byte[] groundTexture = new byte[SIZE];
-    public final byte[] groundOverlay = new byte[SIZE];
-    public final byte[] roofTexture = new byte[SIZE];
-    public final byte[] horizontalWall = new byte[SIZE];
-    public final byte[] verticalWall = new byte[SIZE];
-    public final int[] diagonalWalls = new int[SIZE];
-  }
-
   /** True when the sector exists in the archives (same condition that makes
    * {@link #sector} return non-null, without paying for the full decode).
    * Members-only areas live solely in the .mem overlay — checking only the
    * free archive silently drops half the world. */
+  @Override
   public boolean exists(int height, int sectionX, int sectionY) {
     String name = sectorName(height, sectionX, sectionY);
     if (mapsJag.unpack(name + ".jm") != null || mapsJag.unpack(name + ".dat") != null) {
@@ -74,8 +69,11 @@ public final class JagLandscape implements AutoCloseable {
   }
 
   /**
-   * Open the landscape for a given map-data revision. Returns {@code null} if the primary
-   * {@code maps{rev}.jag} is absent (caller falls back to .orsc).
+   * Open the landscape for a given map-data revision, or {@code null} if the primary
+   * {@code maps{rev}.jag} is absent or unreadable.
+   *
+   * <p>Prefer {@link LandscapeSource#fromJag(Path, int, boolean)}, which turns that {@code null}
+   * into a diagnosable failure — an absent archive must never quietly become a different landscape.
    *
    * @param mapsDir     directory holding {@code maps{rev}.jag} etc.
    * @param rev         {@code based_map_data} (Uranium = 64)
@@ -94,7 +92,12 @@ public final class JagLandscape implements AutoCloseable {
     JagArchive mapsMem = JagArchive.open(mapsDir.resolve("maps" + rev + ".mem"), bzip2);
     JagArchive landJag = JagArchive.open(mapsDir.resolve("land" + rev + ".jag"), bzip2);
     JagArchive landMem = JagArchive.open(mapsDir.resolve("land" + rev + ".mem"), bzip2);
-    return new JagLandscape(mapsJag, mapsMem, landJag, landMem, memberWorld, rev);
+    return new JagLandscape(mapsDir, mapsJag, mapsMem, landJag, landMem, memberWorld, rev);
+  }
+
+  @Override
+  public String describe() {
+    return "JAG maps" + rev + (memberWorld && mapsMem != null ? "+.mem" : "") + " under " + mapsDir;
   }
 
   private static String sectorName(int height, int sectionX, int sectionY) {
@@ -105,6 +108,7 @@ public final class JagLandscape implements AutoCloseable {
    * Decode one sector, or {@code null} when neither a free nor member tile record exists for it
    * (the server leaves such regions FULL_BLOCK).
    */
+  @Override
   public RawSector sector(int height, int sectionX, int sectionY) {
     String name = sectorName(height, sectionX, sectionY);
 
@@ -352,8 +356,8 @@ public final class JagLandscape implements AutoCloseable {
     }
   }
 
+  /** No-op: {@link JagArchive} holds only an in-memory {@code byte[]}, no file handle. */
   @Override
   public void close() {
-    // JagArchive holds only an in-memory byte[]; nothing to release.
   }
 }

@@ -10,7 +10,8 @@ import java.util.List;
 import openrsc.gamedata.BoundaryLocs;
 import openrsc.gamedata.SceneryLocs;
 import openrsc.gamedata.ServerConf;
-import openrsc.gamedata.jag.JagLandscape;
+import openrsc.gamedata.WorldProfile;
+import openrsc.gamedata.landscape.LandscapeSource;
 import openrsc.bot.render.WorldRenderer;
 import orsc.graphics.three.MeshExporter;
 import orsc.graphics.three.RSModel;
@@ -109,27 +110,46 @@ public final class WorldMeshExporter {
 
   public static void export(String cacheDir, File outDir, java.util.function.Consumer<String> log)
       throws Exception {
+    export(cacheDir, outDir, log, WorldProfile.resolve(ServerConf.resolve()));
+  }
+
+  /** As {@link #export(String, File, java.util.function.Consumer)} for an explicit world. */
+  public static void export(String cacheDir, File outDir,
+      java.util.function.Consumer<String> log, WorldProfile world) throws Exception {
     outDir.mkdirs();
 
     var conf = ServerConf.resolve();
-    List<SceneryLocs.Loc> scenery = SceneryLocs.load(conf.locs().resolve("SceneryLocs.json"));
-    List<BoundaryLocs.Loc> boundaries =
-        BoundaryLocs.load(conf.locs().resolve("BoundaryLocs.json"));
-
-    // Terrain from the JAG map archives — the source the SERVER paths
-    // against — not the .orsc repack (which carries cosmetic filled-in
-    // sections the server knows nothing about). Rev 64 = Uranium
-    // based_map_data; matches GameEnvironment's collision loading.
-    JagLandscape jag = JagLandscape.open(conf.data().resolve("maps"), 64, true);
-    if (jag == null) {
-      throw new IllegalStateException("maps64.jag not found under " + conf.data().resolve("maps"));
+    log.accept("world: " + world);
+    // Scenery/boundary placements are per-world: Cabbage adds Runecraft/Harvesting/CustomQuest
+    // locs on top of the base files. WorldProfile mirrors WorldPopulator's file set and order.
+    List<SceneryLocs.Loc> scenery = new ArrayList<>();
+    for (var p : world.sceneryLocs(conf)) {
+      scenery.addAll(SceneryLocs.load(p));
+    }
+    List<BoundaryLocs.Loc> boundaries = new ArrayList<>();
+    for (var p : world.boundaryLocs(conf)) {
+      boundaries.addAll(BoundaryLocs.load(p));
     }
 
+    // Terrain comes from the world's own landscape: the JAG map archives for an authentic world
+    // (the source the SERVER paths against — not the .orsc repack, which carries cosmetic
+    // filled-in sections the server knows nothing about), or Custom_Landscape.orsc for Cabbage /
+    // Coleslaw. An explicit -Dopenrsc.landscape=<path> overrides both; see LandscapeSource.resolve.
+    try (LandscapeSource landscape = LandscapeSource.resolve(conf, world)) {
+      log.accept("terrain source: " + landscape.describe());
+      export(cacheDir, outDir, log, landscape, scenery, boundaries);
+    }
+  }
+
+  /** The bake proper, once the landscape to read terrain from has been settled. */
+  private static void export(String cacheDir, File outDir,
+      java.util.function.Consumer<String> log, LandscapeSource landscape,
+      List<SceneryLocs.Loc> scenery, List<BoundaryLocs.Loc> boundaries) throws Exception {
     WorldRenderer r = new WorldRenderer(cacheDir, 512, 512);
     // Static boundary (door/gate) edges are STRIPPED from the baked walls —
     // the viewer assembles them client-side from boundaries.json so a bot
     // observing a different boundary state (opened door) can swap that edge.
-    JagSectorProvider provider = new JagSectorProvider(jag);
+    LandscapeSectorProvider provider = new LandscapeSectorProvider(landscape);
     provider.stripBoundaries(boundaries);
     r.setSectorProvider(provider);
     // Animation frame models (firea2, torcha3…) are referenced by NAME at
@@ -170,7 +190,7 @@ public final class WorldMeshExporter {
     for (int plane = 0; plane <= 3; plane++) {
       for (int a = SEC_X_MIN; a <= SEC_X_MAX + 1; a++) {
         for (int b = SEC_Y_MIN; b <= SEC_Y_MAX + 1; b++) {
-          if (!cellHasSectors(jag, plane, a, b)) {
+          if (!cellHasSectors(landscape, plane, a, b)) {
             continue;
           }
           try {
@@ -281,10 +301,10 @@ public final class WorldMeshExporter {
   }
 
   /** True when at least one of the cell's four sectors exists at this plane. */
-  private static boolean cellHasSectors(JagLandscape jag, int plane, int a, int b) {
+  private static boolean cellHasSectors(LandscapeSource landscape, int plane, int a, int b) {
     for (int dx = -1; dx <= 0; dx++) {
       for (int dy = -1; dy <= 0; dy++) {
-        if (jag.exists(plane, a + dx, b + dy)) {
+        if (landscape.exists(plane, a + dx, b + dy)) {
           return true;
         }
       }

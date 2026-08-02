@@ -11,11 +11,14 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import openrsc.gamedata.defs.DoorOverrides;
+import openrsc.gamedata.landscape.LandscapeSource;
 import openrsc.gamedata.NpcDefs;
 import openrsc.gamedata.runtime.GameEnvironment;
 import openrsc.gamedata.world.CollisionMap;
 import openrsc.gamedata.NpcLocs;
 import openrsc.gamedata.ServerConf;
+import openrsc.gamedata.WorldProfile;
 import tools.jackson.databind.ObjectMapper;
 
 /**
@@ -81,7 +84,12 @@ public final class DemoEntityBaker {
     Files.createDirectories(out);
 
     ServerConf conf = ServerConf.resolve();
-    GameEnvironment env = GameEnvironment.loadDefault(conf);
+    // Defaults to the server-authentic JAG archives; -Dopenrsc.landscape picks another landscape.
+    WorldProfile world = WorldProfile.resolve(conf);
+    GameEnvironment env;
+    try (LandscapeSource landscape = LandscapeSource.resolve(conf, world)) {
+      env = GameEnvironment.load(conf, world, landscape, DoorOverrides.NONE);
+    }
     CollisionMap cm = env.collisionMap();
     List<NpcLocs.Spawn> spawns = env.npcLocs();
     NpcDefs defs = env.npcDefs();

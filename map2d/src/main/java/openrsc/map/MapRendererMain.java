@@ -4,8 +4,11 @@ import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import openrsc.gamedata.defs.DoorOverrides;
+import openrsc.gamedata.landscape.LandscapeSource;
 import openrsc.gamedata.runtime.GameEnvironment;
 import openrsc.gamedata.ServerConf;
+import openrsc.gamedata.WorldProfile;
 import openrsc.gamedata.world.CollisionMap;
 import openrsc.map.render.MapGeoJsonExporter;
 import openrsc.map.render.MapPreview;
@@ -77,7 +80,14 @@ public final class MapRendererMain {
 
     ServerConf conf = ServerConf.resolve();
     LOG.info("Loading game data from {}", conf.root());
-    GameEnvironment env = GameEnvironment.loadDefault(conf);
+    // Defaults to the server-authentic JAG archives; -Dopenrsc.landscape renders a different
+    // landscape (a custom .orsc, an older map revision) instead.
+    WorldProfile world = WorldProfile.resolve(conf);
+    LOG.info("Rendering world {}", world);
+    GameEnvironment env;
+    try (LandscapeSource landscape = LandscapeSource.resolve(conf, world)) {
+      env = GameEnvironment.load(conf, world, landscape, DoorOverrides.NONE);
+    }
 
     // -Dmap.scale=N bakes every layer at N× the native px/tile (default 1 = the current output).
     int mult = Math.max(1, Integer.getInteger("map.scale", 1));

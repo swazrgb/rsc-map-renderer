@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import openrsc.gamedata.ServerConf;
+import openrsc.gamedata.WorldProfile;
 
 /**
  * CLI: bake the complete static {@code /api/world3d/*} asset tree the WebGL
@@ -35,6 +36,18 @@ import openrsc.gamedata.ServerConf;
  * <p>The server game-data tree (locs + JAG maps) is located by {@link ServerConf}:
  * pass {@code -Dopenrsc.serverConfDir=/path/to/openrsc/server/conf/server}, set
  * {@code OPENRSC_SERVER_CONF}, or run from inside the {@code openrsc} checkout.
+ *
+ * <p>Terrain is baked from that tree's JAG map archives
+ * ({@code data/maps/maps}{@value openrsc.gamedata.landscape.LandscapeSource#AUTHENTIC_MAP_REV}{@code
+ * .jag}) — the dataset the server itself paths against. To bake a different landscape, point
+ * {@code -Dopenrsc.landscape} at it (see
+ * {@link openrsc.gamedata.landscape.LandscapeSource#resolve}):
+ *
+ * <pre>
+ *   -Dopenrsc.landscape=/path/to/Custom_Landscape.orsc     # an .orsc repack
+ *   -Dopenrsc.landscape=/path/to/data/maps/maps63.jag      # another JAG revision
+ *   -Dopenrsc.landscape=/path/to/data/maps -Dopenrsc.mapRev=31
+ * </pre>
  */
 public final class Bake {
 
@@ -54,6 +67,10 @@ public final class Bake {
       System.exit(2);
       return;
     }
+    // Which world to bake — -Dopenrsc.world=rsccabbage names a server conf; default authentic.
+    WorldProfile world = WorldProfile.resolve(ServerConf.resolve());
+    System.out.println("baking world: " + world);
+
     Path api = siteRoot.resolve("api").resolve("world3d");
     Files.createDirectories(api);
 
@@ -61,11 +78,11 @@ public final class Bake {
     //    npc/item/font atlases, splats, projectiles, and the per-layer player-
     //    sprite atlas the viewer composites appearances from) — flat layout,
     //    exactly as the live WorldMeshController expects it.
-    WorldMeshExporter.export(cacheDir, api.toFile(), System.out::println);
+    WorldMeshExporter.export(cacheDir, api.toFile(), System.out::println, world);
 
     // 2. Auxiliary JSON the viewer fetches outside /api/world3d/ (scenery
     //    placements + atlas, npc spawns, wearables).
-    AuxDataBaker.export(cacheDir, siteRoot, System.out::println);
+    AuxDataBaker.export(cacheDir, siteRoot, System.out::println, world);
 
     // 3. Rework the flat bake into the exact URL layout the viewer fetches
     //    (the live controller does this translation via routing; a static host

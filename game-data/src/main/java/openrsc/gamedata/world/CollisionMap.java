@@ -1,15 +1,9 @@
 package openrsc.gamedata.world;
 
-import java.io.DataInputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
 import openrsc.gamedata.geometry.Area;
 import openrsc.gamedata.geometry.Point;
 import openrsc.gamedata.BoundaryLocs;
@@ -18,15 +12,16 @@ import openrsc.gamedata.defs.ObjectDefs;
 import openrsc.gamedata.SceneryLocs;
 import openrsc.gamedata.defs.DoorOverrides;
 import openrsc.gamedata.defs.TileDefs;
-import openrsc.gamedata.jag.JagLandscape;
-import openrsc.gamedata.jag.JagLandscape.RawSector;
+import openrsc.gamedata.landscape.LandscapeSource;
+import openrsc.gamedata.landscape.RawSector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Static ground-floor walkability bitmap, derived once at startup from the RSC landscape archive
- * ({@code Authentic_Landscape.orsc}) plus the door and tile def tables. Mirrors plutonium
- * {@code world.go} but limited to floor 0 (the ground plane scripts will path on).
+ * Static ground-floor walkability bitmap, derived once at startup from a RSC landscape
+ * ({@link LandscapeSource} — JAG map archives or an {@code .orsc} repack) plus the door and tile
+ * def tables. Mirrors plutonium {@code world.go} but limited to floor 0 (the ground plane scripts
+ * will path on).
  *
  * <p>Each tile holds an 8-bit flag mask:
  * <pre>
@@ -186,9 +181,8 @@ public final class CollisionMap {
    *  only, the renderer/raw-grid view. The bot injects a SpecialDoor-backed impl. */
   private DoorOverrides overrides = DoorOverrides.NONE;
 
-  public static CollisionMap load(Path landscapeZip, DoorDefs doorDefs, TileDefs tileDefs)
-      throws IOException {
-    return load(landscapeZip, doorDefs, tileDefs, null, null, null);
+  public static CollisionMap load(LandscapeSource landscape, DoorDefs doorDefs, TileDefs tileDefs) {
+    return load(landscape, doorDefs, tileDefs, null, null, null);
   }
 
   /**
@@ -196,64 +190,25 @@ public final class CollisionMap {
    * for any optional argument to skip that pass (e.g. tests that only need the static landscape
    * grid).
    */
-  public static CollisionMap load(Path landscapeZip, DoorDefs doorDefs, TileDefs tileDefs,
+  public static CollisionMap load(LandscapeSource landscape, DoorDefs doorDefs, TileDefs tileDefs,
       List<SceneryLocs.Loc> scenery, ObjectDefs objectDefs,
-      List<BoundaryLocs.Loc> boundaries) throws IOException {
-    return load(landscapeZip, doorDefs, tileDefs, scenery, objectDefs, boundaries,
+      List<BoundaryLocs.Loc> boundaries) {
+    return load(landscape, doorDefs, tileDefs, scenery, objectDefs, boundaries,
         DoorOverrides.NONE);
-  }
-
-  /** As {@link #load(Path, DoorDefs, TileDefs, List, ObjectDefs, List)} but with a door-override
-   *  seam (the bot passes a SpecialDoor-backed impl; renderers pass {@link DoorOverrides#NONE}). */
-  public static CollisionMap load(Path landscapeZip, DoorDefs doorDefs, TileDefs tileDefs,
-      List<SceneryLocs.Loc> scenery, ObjectDefs objectDefs,
-      List<BoundaryLocs.Loc> boundaries, DoorOverrides overrides) throws IOException {
-    CollisionMap m = new CollisionMap();
-    m.overrides = overrides;
-    try (ZipFile zip = new ZipFile(landscapeZip.toFile())) {
-      for (int floor = 0; floor < FLOOR_COUNT; floor++) {
-        int missing = 0;
-        for (int rx = LOAD_REGION_X_FROM; rx <= LOAD_REGION_X_TO; rx++) {
-          for (int ry = LOAD_REGION_Y_FROM; ry <= LOAD_REGION_Y_TO; ry++) {
-            String name = "h" + floor + "x" + rx + "y" + ry;
-            ZipEntry e = zip.getEntry(name);
-            if (e == null) {
-              missing++;
-              continue;
-            }
-            try (InputStream in = zip.getInputStream(e)) {
-              m.loadSection(in, rx, ry, floor, doorDefs, tileDefs);
-            }
-          }
-        }
-        if (missing > 0) {
-          LOG.debug("landscape floor {}: {} missing sections (expected on sparse upper floors)",
-              floor, missing);
-        }
-      }
-    }
-    m.finishLoad(scenery, objectDefs, boundaries, doorDefs);
-    return m;
   }
 
   /**
-   * Load collision from the classic RSC map archives ({@code maps{rev}.jag/.mem}), the source the
-   * OpenRSC server actually paths against when {@code based_map_data >= 28}. Same region iteration,
-   * floor offsets and per-tile stamping as {@link #load}; only the per-sector decode differs (JAG
-   * container vs {@code .orsc} ZIP). Use this for authentic servers (Uranium); keep {@link #load}
-   * for custom-server {@code .orsc} landscapes.
+   * As {@link #load(LandscapeSource, DoorDefs, TileDefs, List, ObjectDefs, List)} but with a
+   * door-override seam (the bot passes a SpecialDoor-backed impl; renderers pass
+   * {@link DoorOverrides#NONE}).
+   *
+   * <p>The landscape container is the caller's choice and does not reach this far: JAG archives and
+   * the {@code .orsc} repack both decode to {@link openrsc.gamedata.landscape.RawSector}, so region
+   * iteration, floor offsets and per-tile stamping are identical either way. Which dataset you pass
+   * matters a great deal though — only the JAG archives match a stock server's collision (see
+   * {@link LandscapeSource}). The source is <em>not</em> closed here; the caller owns it.
    */
-  public static CollisionMap loadFromJag(JagLandscape landscape,
-      DoorDefs doorDefs, TileDefs tileDefs,
-      List<SceneryLocs.Loc> scenery, ObjectDefs objectDefs,
-      List<BoundaryLocs.Loc> boundaries) {
-    return loadFromJag(landscape, doorDefs, tileDefs, scenery, objectDefs, boundaries,
-        DoorOverrides.NONE);
-  }
-
-  /** As {@link #loadFromJag(JagLandscape, DoorDefs, TileDefs, List, ObjectDefs, List)} but with a
-   *  door-override seam. */
-  public static CollisionMap loadFromJag(JagLandscape landscape,
+  public static CollisionMap load(LandscapeSource landscape,
       DoorDefs doorDefs, TileDefs tileDefs,
       List<SceneryLocs.Loc> scenery, ObjectDefs objectDefs,
       List<BoundaryLocs.Loc> boundaries, DoorOverrides overrides) {
@@ -286,7 +241,7 @@ public final class CollisionMap {
         }
       }
       if (missing > 0) {
-        LOG.debug("jag landscape floor {}: {} missing sections (expected on sparse upper floors)",
+        LOG.debug("landscape floor {}: {} missing sections (expected on sparse upper floors)",
             floor, missing);
       }
     }
@@ -754,41 +709,11 @@ public final class CollisionMap {
     return inBounds(x, y) && projectileAllowed[y * WIDTH + x];
   }
 
-  private void loadSection(InputStream is, int regionX, int regionY, int floor,
-      DoorDefs doorDefs, TileDefs tileDefs) throws IOException {
-    DataInputStream in = new DataInputStream(is);
-    // The archive stores rows-by-cols at (x, y) within the region; absolute
-    // tile = ((rx - START_RX) * 48 + x, (ry - START_RY) * 48 + y + floor*944).
-    int baseX = (regionX - LOAD_REGION_X_FROM) * REGION_SIZE;
-    int baseY = (regionY - LOAD_REGION_Y_FROM) * REGION_SIZE + floor * FLOOR_HEIGHT;
-    for (int x = 0; x < REGION_SIZE; x++) {
-      for (int y = 0; y < REGION_SIZE; y++) {
-        in.readByte(); // groundElevation
-        int texture = in.readByte() & 0xFF;
-        int groundOverlay = in.readByte() & 0xFF;
-        int roofTex = in.readByte() & 0xFF;
-        int horizontalWall = in.readByte() & 0xFF;
-        int verticalWall = in.readByte() & 0xFF;
-        int diagonalWalls = in.readInt();
-
-        int bx = baseX + x;
-        int by = baseY + y;
-        if (bx < 0 || bx >= WIDTH || by < 0 || by >= HEIGHT) {
-          continue;
-        }
-
-        stampTile(bx, by, texture, groundOverlay, roofTex,
-            horizontalWall, verticalWall, diagonalWalls, doorDefs, tileDefs);
-      }
-    }
-  }
-
   /**
    * Stamp one tile's raw landscape record (texture / overlay / roof / walls) into {@link #flags} +
-   * the render arrays. Shared by the {@code .orsc} loader ({@link #loadSection}) and the JAG loader
-   * ({@link #loadFromJag}); both decode the same fields, only the container differs. Mirrors the
-   * server's {@code WorldLoader.loadSection} per-tile body, with the bot's generic-free-door
-   * exception ({@link #isLandscapeWallFree}) so A* doesn't treat openable doors as walls.
+   * the render arrays. Mirrors the server's {@code WorldLoader.loadSection} per-tile body, with the
+   * bot's generic-free-door exception ({@link #isLandscapeWallFree}) so A* doesn't treat openable
+   * doors as walls.
    */
   private void stampTile(int bx, int by, int texture, int groundOverlay, int roofTex,
       int horizontalWall, int verticalWall, int diagonalWalls,

@@ -64,6 +64,15 @@ public record ServerConf(Path root) {
     return root.getParent().getParent().resolve("src/com/openrsc/server");
   }
 
+  /**
+   * The server directory holding this {@code conf/} tree — where the per-world {@code .conf} files
+   * live ({@code uranium.conf}, {@code rsccabbage.conf}, …). See
+   * {@link WorldProfile#fromConf(ServerConf, String)}.
+   */
+  public Path serverDir() {
+    return root.getParent().getParent();
+  }
+
   public static ServerConf resolve() {
     String prop = System.getProperty("openrsc.serverConfDir");
     if (prop != null && !prop.isBlank()) {

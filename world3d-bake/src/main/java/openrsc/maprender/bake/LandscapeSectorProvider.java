@@ -2,28 +2,32 @@ package openrsc.maprender.bake;
 
 import com.openrsc.client.model.Sector;
 import com.openrsc.client.model.Tile;
-import openrsc.gamedata.jag.JagLandscape;
+import openrsc.gamedata.landscape.LandscapeSource;
+import openrsc.gamedata.landscape.RawSector;
 import orsc.graphics.three.SectorProvider;
 
 /**
- * Feeds the renderer's {@link orsc.graphics.three.World} from the JAG map
- * archives — the source the SERVER actually paths against (based_map_data 64)
- * — instead of the {@code Authentic_Landscape.orsc} repack. The .orsc carries
- * cosmetic filled-in sections (e.g. upper-floor sectors maps64 omits) that
- * the server knows nothing about; rendering from the JAG makes the 3D view
- * show exactly the world the server (and the bot's collision model) sees.
+ * Feeds the renderer's {@link orsc.graphics.three.World} from a {@link LandscapeSource} instead of
+ * letting it open the {@code Authentic_Landscape.orsc} in the client cache itself.
  *
- * <p>Index conventions agree end to end: RawSector arrays and client
+ * <p>The bake defaults to the JAG map archives — the source the SERVER actually paths against
+ * (based_map_data 64) — rather than that {@code .orsc} repack, which carries cosmetic filled-in
+ * sections (e.g. upper-floor sectors maps64 omits) the server knows nothing about; rendering from
+ * the JAG makes the 3D view show exactly the world the server (and the bot's collision model) sees.
+ * Going through the interface is what lets {@code -Dopenrsc.landscape} point the bake at any other
+ * landscape — a custom server's {@code .orsc}, an older map revision — without a second provider.
+ *
+ * <p>Index conventions agree end to end: {@link RawSector} arrays and client
  * {@link Sector#getTile(int, int)} both use {@code lx*48 + lz}.
  */
-public final class JagSectorProvider implements SectorProvider {
+public final class LandscapeSectorProvider implements SectorProvider {
 
-  private final JagLandscape jag;
+  private final LandscapeSource landscape;
   /** (height, sectionX, sectionY) -> tile edges to strip, packed lx*48*8 + lz*8 + dir. */
   private final java.util.Map<Long, java.util.List<Integer>> strip = new java.util.HashMap<>();
 
-  public JagSectorProvider(JagLandscape jag) {
-    this.jag = jag;
+  public LandscapeSectorProvider(LandscapeSource landscape) {
+    this.landscape = landscape;
   }
 
   /**
@@ -50,7 +54,8 @@ public final class JagSectorProvider implements SectorProvider {
 
   @Override
   public Sector getSection(int height, int sectionX, int sectionY) {
-    JagLandscape.RawSector raw = jag.sector(height, sectionX, sectionY);
+    // Safe to mutate below: a LandscapeSource hands back a fresh RawSector per call.
+    RawSector raw = landscape.sector(height, sectionX, sectionY);
     if (raw == null) {
       return null;
     }

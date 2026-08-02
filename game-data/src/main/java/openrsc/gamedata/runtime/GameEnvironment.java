@@ -11,13 +11,14 @@ import openrsc.gamedata.NpcDefs;
 import openrsc.gamedata.NpcLocs;
 import openrsc.gamedata.SceneryLocs;
 import openrsc.gamedata.ServerConf;
+import openrsc.gamedata.WorldProfile;
 import openrsc.gamedata.api.ServerData;
 import openrsc.gamedata.defs.DoorDefs;
 import openrsc.gamedata.defs.DoorOverrides;
 import openrsc.gamedata.defs.ObjectDefs;
 import openrsc.gamedata.defs.TileDefs;
 import openrsc.gamedata.defs.extras.ExtraDefs;
-import openrsc.gamedata.jag.JagLandscape;
+import openrsc.gamedata.landscape.LandscapeSource;
 import openrsc.gamedata.world.CollisionMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,12 +39,6 @@ import org.slf4j.LoggerFactory;
 public final class GameEnvironment {
 
   private static final Logger LOG = LoggerFactory.getLogger(GameEnvironment.class);
-
-  /**
-   * {@code based_map_data} revision the authentic (Uranium) server uses. Selects
-   * {@code maps{rev}.jag/.mem} + {@code land{rev}.jag/.mem}.
-   */
-  private static final int AUTHENTIC_MAP_REV = 64;
 
   private final ItemDefs itemDefs;
   private final DoorDefs doorDefs;
@@ -150,35 +145,68 @@ public final class GameEnvironment {
   }
 
   /**
-   * Load every def + the collision map from the server conf tree, using the server's own
-   * {@code Authentic_Landscape.orsc} as the fallback landscape and generic door handling (no
-   * overrides). See {@link #loadDefault(ServerConf, Path, DoorOverrides)}.
+   * Load every def + the collision map, sourcing the landscape from the server's own JAG map
+   * archives ({@code <conf>/data/maps/maps}{@value LandscapeSource#AUTHENTIC_MAP_REV}{@code .jag})
+   * — the dataset a stock (Uranium) server itself paths against, so collision built this way
+   * matches the server's. Fails loudly if those archives are absent; it will never quietly fall
+   * back to a different landscape.
    */
-  public static GameEnvironment loadDefault(ServerConf conf) throws IOException {
-    return loadDefault(conf, DoorOverrides.NONE);
-  }
-
-  /** As {@link #loadDefault(ServerConf)} but with a door-override seam (the bot passes a
-   *  SpecialDoor-backed impl; renderers pass {@link DoorOverrides#NONE}). */
-  public static GameEnvironment loadDefault(ServerConf conf, DoorOverrides overrides)
+  public static GameEnvironment loadFromJag(ServerConf conf, DoorOverrides overrides)
       throws IOException {
-    return loadDefault(conf, conf.data().resolve("Authentic_Landscape.orsc"), overrides);
+    return load(conf, WorldProfile.authentic(), overrides);
   }
 
   /**
-   * Load every def + the collision map directly from the server checkout's {@code conf/server} tree
-   * — the authoritative source (no local copies).
+   * Load the world named by a {@link WorldProfile} — its landscape, its locs file set, its defs.
+   * This is the entry point for anything that must work on more than the authentic world:
    *
-   * @param conf          resolved server conf tree (see {@link ServerConf}).
-   * @param landscapeFile landscape ZIP used only when the JAG map archives are absent — the hook
-   *                      for custom-server landscapes.
-   * @param overrides     door-override seam threaded into the collision map (see
-   *                      {@link DoorOverrides}).
+   * <pre>{@code
+   * GameEnvironment cabbage = GameEnvironment.load(
+   *     conf, WorldProfile.fromConf(conf, "rsccabbage"), DoorOverrides.NONE);
+   * }</pre>
    */
-  public static GameEnvironment loadDefault(ServerConf conf, Path landscapeFile,
+  public static GameEnvironment load(ServerConf conf, WorldProfile world, DoorOverrides overrides)
+      throws IOException {
+    try (LandscapeSource landscape = world.openLandscape(conf)) {
+      return load(conf, world, landscape, overrides);
+    }
+  }
+
+  /**
+   * Load every def + the collision map, sourcing the landscape from an {@code .orsc} ZIP — the
+   * custom-server hook. Note the {@code .orsc} repack is a distinct dataset from the JAG archives
+   * (it carries sectors {@code maps64} does not), so collision built from it will diverge from a
+   * stock server's; see {@link LandscapeSource}.
+   */
+  public static GameEnvironment loadFromOrsc(ServerConf conf, Path orscFile,
       DoorOverrides overrides) throws IOException {
+    try (LandscapeSource landscape = LandscapeSource.fromOrsc(orscFile)) {
+      return load(conf, WorldProfile.authentic(), landscape, overrides);
+    }
+  }
+
+  /**
+   * Load every def directly from the server checkout's {@code conf/server} tree — the authoritative
+   * source (no local copies) — for the world a {@link WorldProfile} names, and the collision map
+   * from the landscape you hand in.
+   *
+   * <p>Use {@link #load(ServerConf, WorldProfile, DoorOverrides)} unless you already hold an open
+   * source (e.g. a bake that also renders terrain from it, or one resolved via
+   * {@link LandscapeSource#resolve(ServerConf)}). The landscape is not closed here — the caller
+   * owns it — and it is <em>not</em> checked against the profile, so passing a landscape the
+   * profile would not have chosen is allowed and is exactly how the bake honours
+   * {@code -Dopenrsc.landscape}.
+   *
+   * @param conf      resolved server conf tree (see {@link ServerConf}).
+   * @param world     which world's locs/defs to load (see {@link WorldProfile}).
+   * @param landscape where landscape tiles come from (see {@link LandscapeSource}).
+   * @param overrides door-override seam threaded into the collision map (see
+   *                  {@link DoorOverrides}).
+   */
+  public static GameEnvironment load(ServerConf conf, WorldProfile world,
+      LandscapeSource landscape, DoorOverrides overrides) throws IOException {
     long t0 = System.nanoTime();
-    LOG.info("Loading game data from server conf tree {}", conf.root());
+    LOG.info("Loading game data from server conf tree {} for world {}", conf.root(), world);
 
     ItemDefs itemDefs = ItemDefs.load(conf.defs().resolve("ItemDefs.json"),
         conf.defs().resolve("ItemDefsCustom.json"));
@@ -188,16 +216,17 @@ public final class GameEnvironment {
     TileDefs tileDefs = TileDefs.loadXml(conf.defs().resolve("TileDef.xml"));
     ObjectDefs objectDefs = ObjectDefs.loadXml(conf.defs().resolve("GameObjectDef.xml"));
 
-    var sceneryLocs = new ArrayList<>(SceneryLocs.load(conf.locs().resolve("SceneryLocs.json")));
-    // Uranium loads SceneryLocsDiscontinued.json when WANT_FIXED_BROKEN_MECHANICS=true
-    // (WorldPopulator.loadCustomLocs:209-212). Adds back a few entries removed from base
-    // SceneryLocs.json that the server still uses for collision.
-    Path discPath = conf.locs().resolve("SceneryLocsDiscontinued.json");
-    if (Files.exists(discPath)) {
-      sceneryLocs.addAll(SceneryLocs.load(discPath));
+    // Locs come as an ordered file SET chosen by the world's flags — the base file plus whatever
+    // its features add (Discontinued on Uranium; Runecraft/Harvesting/CustomQuest/… on Cabbage).
+    // Later files append to earlier ones, exactly as WorldPopulator does.
+    var sceneryLocs = new ArrayList<SceneryLocs.Loc>();
+    for (Path p : world.sceneryLocs(conf)) {
+      sceneryLocs.addAll(SceneryLocs.load(p));
     }
-
-    var boundaryLocs = BoundaryLocs.load(conf.locs().resolve("BoundaryLocs.json"));
+    var boundaryLocs = new ArrayList<BoundaryLocs.Loc>();
+    for (Path p : world.boundaryLocs(conf)) {
+      boundaryLocs.addAll(BoundaryLocs.load(p));
+    }
 
     // NpcDefs + NpcDefsCustom appended, no Patch18 — see NpcDefs javadoc. Drives the walker's
     // blocked-tile mask under the server's npc_blocking=2 rule.
@@ -205,10 +234,13 @@ public final class GameEnvironment {
         conf.defs().resolve("NpcDefsCustom.json"));
     LOG.info("Loaded {} npc defs", npcDefs.size());
 
-    // Authentic NPC spawns + roam rectangles. based_map_data >= 28 (Uranium = 64) ⇒ the server
-    // loads base NpcLocs.json; on a members world the F2P filters are skipped, so the whole file
-    // spawns. Surfaced via ServerData.npcSpawns().
-    var npcLocs = NpcLocs.load(conf.locs().resolve("NpcLocs.json"));
+    // NPC spawns + roam rectangles, then the world's post-load spawn fixups (seasonal-event
+    // removals / the bunny relocation). Surfaced via ServerData.npcSpawns().
+    var loadedNpcLocs = new ArrayList<NpcLocs.Spawn>();
+    for (Path p : world.npcLocs(conf)) {
+      loadedNpcLocs.addAll(NpcLocs.load(p));
+    }
+    var npcLocs = world.applyNpcFixups(loadedNpcLocs);
     LOG.info("Loaded {} npc spawns", npcLocs.size());
 
     Path telePointsXml = conf.extras().resolve("ObjectTelePoints.xml");
@@ -216,32 +248,9 @@ public final class GameEnvironment {
     var extraDefs = ExtraDefs.load(conf);
     LOG.info("Loaded skill extras: {}", extraDefs.summary());
 
-    // Collision source precedence mirrors the server's WorldLoader: when the classic JAG map
-    // archives (maps{rev}.jag/.mem) are present they are authoritative (the server paths against
-    // them when based_map_data >= 28; Uranium = 64). The .orsc repack is the fallback — and the
-    // hook for custom-server landscapes.
-    Path mapsDir = conf.data().resolve("maps");
-    JagLandscape jag = null;
-    try {
-      jag = JagLandscape.open(mapsDir, AUTHENTIC_MAP_REV, true);
-    } catch (IOException e) {
-      LOG.warn("Failed to open JAG landscape under {} — falling back to .orsc: {}", mapsDir,
-          e.toString());
-    }
-    CollisionMap collisionMap;
-    if (jag != null) {
-      LOG.info("Loading collision from JAG maps{} under {} (server-authentic source)",
-          AUTHENTIC_MAP_REV, mapsDir);
-      try (var landscape = jag) {
-        collisionMap = CollisionMap.loadFromJag(landscape, doorDefs, tileDefs,
-            sceneryLocs, objectDefs, boundaryLocs, overrides);
-      }
-    } else {
-      LOG.info("Loading collision from .orsc landscape {} (JAG maps absent — custom/fallback)",
-          landscapeFile);
-      collisionMap = CollisionMap.load(landscapeFile, doorDefs, tileDefs,
-          sceneryLocs, objectDefs, boundaryLocs, overrides);
-    }
+    LOG.info("Loading collision from {}", landscape.describe());
+    CollisionMap collisionMap = CollisionMap.load(landscape, doorDefs, tileDefs,
+        sceneryLocs, objectDefs, boundaryLocs, overrides);
     LOG.info("Loaded collision map ({}x{}) — {} scenery, {} boundary locs in {}ms",
         collisionMap.width(), collisionMap.height(),
         sceneryLocs.size(), boundaryLocs.size(),

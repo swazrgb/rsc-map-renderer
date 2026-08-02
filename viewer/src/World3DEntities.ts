@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type {GameFont} from "./World3DChatFont";
+import {asset} from "./api";
 
 /**
  * Live-entity layer for the 3D world view (piece 1: rings + nameplates).
@@ -465,7 +466,7 @@ export class EntityLayer {
                             "display:inline-block;vertical-align:-2px;"
                             + `margin-right:3px;width:${f.w * k}px;`
                             + `height:${f.h * k}px;`
-                            + "background-image:url(/api/world3d/item-atlas.png);"
+                            + `background-image:url(${asset("/api/world3d/item-atlas.png")});`
                             + `background-position:${-f.x * k}px ${-f.y * k}px;`
                             + `background-size:${f.atlasW * k}px ${f.atlasH * k}px;`
                             + "image-rendering:pixelated;";
@@ -595,8 +596,8 @@ export class EntityLayer {
                         "font:bold 12px sans-serif;color:#fff;text-align:center;" +
                         "line-height:25px;pointer-events:none;";
                     sd.style.backgroundImage = t.kind === "npc"
-                        ? "url(/api/world3d/splat-blue.png)"
-                        : "url(/api/world3d/splat-red.png)";
+                        ? `url(${asset("/api/world3d/splat-blue.png")})`
+                        : `url(${asset("/api/world3d/splat-red.png")})`;
                     this.plateHost.appendChild(sd);
                     this.splatDivs.set(t.key, sd);
                 }

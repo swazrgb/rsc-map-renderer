@@ -17,8 +17,29 @@ the `openrsc` checkout therefore needs no configuration. To point elsewhere:
 - `-Dopenrsc.serverConfDir=/path/to/openrsc/server/conf/server`, or
 - the `OPENRSC_SERVER_CONF` environment variable.
 
-Collision is loaded from the authentic JAG map archives (`data/maps/maps64.jag` + `.mem`) when
-present, falling back to `data/Authentic_Landscape.orsc`.
+Terrain and collision default to the authentic Uranium world: the JAG map archives
+(`data/maps/maps64.jag` + `.mem`), the dataset the server itself paths against, with the base locs.
+
+`-Dopenrsc.world=<conf name>` renders a different world instead, naming one of the server's own
+`.conf` files — `rsccabbage` / `rsccoleslaw` bring `Custom_Landscape.orsc` plus the
+Runecrafting/Harvesting/CustomQuest locs:
+
+```bash
+JAVA_OPTS=-Dopenrsc.world=rsccabbage scripts/render-map.sh map-out
+```
+
+To point at a landscape file directly (overriding whatever the world would use), use
+`-Dopenrsc.landscape`; the container is inferred from the path:
+
+| Value | Landscape |
+| --- | --- |
+| *(unset)* | `<conf>/data/maps/maps64.jag` + `.mem` |
+| `/path/Custom_Landscape.orsc` | that `.orsc` ZIP |
+| `/path/data/maps/maps63.jag` | JAG revision 63 (sibling `.mem` / `land63.*` picked up automatically) |
+| `/path/data/maps` | JAG archives in that directory, revision 64 unless `-Dopenrsc.mapRev` says otherwise |
+
+The two datasets are not interchangeable — the `.orsc` repack carries sectors `maps64` does not — so
+there is no fallback between them: a landscape that cannot be opened is a hard error.
 
 ## Build & run
 

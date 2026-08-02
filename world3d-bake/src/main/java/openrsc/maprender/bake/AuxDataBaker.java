@@ -14,6 +14,7 @@ import openrsc.gamedata.NpcDefs;
 import openrsc.gamedata.NpcLocs;
 import openrsc.gamedata.SceneryLocs;
 import openrsc.gamedata.ServerConf;
+import openrsc.gamedata.WorldProfile;
 
 /**
  * Bakes the static JSON the viewer fetches from endpoints OUTSIDE
@@ -33,6 +34,12 @@ public final class AuxDataBaker {
 
   public static void export(String clientCacheDir, Path siteRoot, Consumer<String> log)
       throws Exception {
+    export(clientCacheDir, siteRoot, log, WorldProfile.resolve(ServerConf.resolve()));
+  }
+
+  /** As {@link #export(String, Path, Consumer)} for an explicit world. */
+  public static void export(String clientCacheDir, Path siteRoot, Consumer<String> log,
+      WorldProfile world) throws Exception {
     // The scenery atlas renders sprites, which needs the client defs loaded
     // (idempotent when the world-mesh bake already loaded them this JVM).
     orsc.Config.F_CACHE_DIR = clientCacheDir;
@@ -44,14 +51,18 @@ public final class AuxDataBaker {
 
     var conf = ServerConf.resolve();
 
-    // Scenery: base + discontinued, exactly as GameEnvironment/SceneryController.
-    List<SceneryLocs.Loc> scenery =
-        new ArrayList<>(SceneryLocs.load(conf.locs().resolve("SceneryLocs.json")));
-    Path disc = conf.locs().resolve("SceneryLocsDiscontinued.json");
-    if (Files.exists(disc)) {
-      scenery.addAll(SceneryLocs.load(disc));
+    // Scenery + npc spawns are per-world (WorldProfile mirrors WorldPopulator's file set, order
+    // and post-load spawn fixups), so a Cabbage bake carries its Runecraft/Harvesting/CustomQuest
+    // content and an authentic bake does not.
+    List<SceneryLocs.Loc> scenery = new ArrayList<>();
+    for (Path p : world.sceneryLocs(conf)) {
+      scenery.addAll(SceneryLocs.load(p));
     }
-    List<NpcLocs.Spawn> spawns = NpcLocs.load(conf.locs().resolve("NpcLocs.json"));
+    List<NpcLocs.Spawn> loadedSpawns = new ArrayList<>();
+    for (Path p : world.npcLocs(conf)) {
+      loadedSpawns.addAll(NpcLocs.load(p));
+    }
+    List<NpcLocs.Spawn> spawns = world.applyNpcFixups(loadedSpawns);
     NpcDefs npcDefs = NpcDefs.load(conf.defs().resolve("NpcDefs.json"),
         conf.defs().resolve("NpcDefsCustom.json"));
     ItemDefs itemDefs = ItemDefs.load(conf.defs().resolve("ItemDefs.json"),

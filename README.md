@@ -12,7 +12,7 @@ Software to generate a 2D & 3D render of the world of RuneScape Classic.
 
 | Module | What it is |
 | --- | --- |
-| **`game-data/`** | Shared loaders for the OpenRSC data tree — `ServerConf` (locates `conf/server`), the `SceneryLocs`/`BoundaryLocs`/`NpcLocs` parsers, and the classic `.jag`/`.mem` landscape readers. |
+| **`game-data/`** | Shared loaders for the OpenRSC data tree — `ServerConf` (locates `conf/server`), the `SceneryLocs`/`BoundaryLocs`/`NpcLocs` parsers, and `LandscapeSource`, which reads a landscape from either the classic `.jag`/`.mem` archives or an `.orsc` repack behind one interface. |
 | **`client-render/`** | Headless port of the OpenRSC client software renderer: rasterizes terrain + scenery models + walls from the `.orsc` cache into a plain `int[]` buffer. |
 | **`world3d-bake/`** | Bakes the complete static `/api/world3d/*` + `/api/map/*` asset tree the 3D viewer consumes — world-mesh cells, engine textures, the object/door libraries, npc/item/font/scenery sprite atlases, and the per-layer player-sprite atlas the viewer composites appearances from. |
 | **`viewer/`** | The standalone WebGL 3D world viewer (React + three.js). Renders the baked terrain + scenery mesh and billboarded NPC/player sprites. Entity data is injected via props — empty in the open-source demo. |
@@ -40,6 +40,67 @@ scripts/build-site.sh site      # server tree + client cache auto-resolve from t
 # serve it with anything:
 (cd site && python3 -m http.server 8080)   # → http://localhost:8080
 ```
+
+### Choosing the world
+
+One OpenRSC checkout ships the data for several *worlds*, selected by the server's own `.conf`
+files. `-Dopenrsc.world=<conf name>` (default: the authentic Uranium world) picks one, and it
+carries everything that world changes — landscape, scenery/NPC placements, collision:
+
+| | Uranium (`uranium.conf`) | Cabbage / Coleslaw (`rsccabbage.conf`) |
+| --- | --- | --- |
+| landscape | JAG `maps64` | `Custom_Landscape.orsc` |
+| locs | base + Discontinued | + Runecraft, Harvesting, CustomQuest, Expansion, ModRoom, Auction, Ironman, … |
+
+Sprites are the one thing the world does **not** pick. Every world is baked with the HD custom
+sprite pack (`Custom_Sprites.osar`), so an authentic bake is deliberately not pixel-identical to what
+a stock Uranium client draws. That is partly taste and partly necessity: the same switch also gates
+the second half of the client's animation table (ids 229–565), and since the server loads
+`NpcDefsCustom.json` on *every* world, turning it off leaves npc defs pointing at animations that no
+longer exist — which the client resolves to `head1` rather than nothing, rendering those npcs as
+stacks of heads. See `WorldRenderer.configureCache`.
+
+```bash
+scripts/build-site.sh site                                      # Uranium
+VITE_BASE=/cabbage/ scripts/build-site.sh site/cabbage rsccabbage   # Cabbage, served at /cabbage/
+JAVA_OPTS=-Dopenrsc.world=rsccabbage scripts/render-map.sh map-out  # 2D layers only
+```
+
+`scripts/deploy.sh` bakes every published world and pushes them together — Uranium at the Pages
+root, each extra world in its own subdirectory. Add one by appending to `EXTRA_WORLDS` there.
+
+From Java the same thing is a `WorldProfile`, read from the server's file or built by hand:
+
+```java
+GameEnvironment cabbage = GameEnvironment.load(
+    conf, WorldProfile.fromConf(conf, "rsccabbage"), DoorOverrides.NONE);
+
+WorldProfile mine = WorldProfile.builder("my-world")
+    .locationData(2)
+    .enable(Feature.CUSTOM_LANDSCAPE, Feature.RUNECRAFT)
+    .build();
+```
+
+### Choosing the landscape directly
+
+A world picks its own landscape, but `-Dopenrsc.landscape` overrides that — for baking an arbitrary
+landscape file without a world behind it. The container is inferred from the path:
+
+| Value | Landscape |
+| --- | --- |
+| *(unset)* | whatever the selected world uses |
+| `/path/Custom_Landscape.orsc` | that `.orsc` ZIP |
+| `/path/data/maps/maps63.jag` | JAG revision 63 (sibling `.mem` / `land63.*` picked up automatically) |
+| `/path/data/maps` | JAG archives in that directory, revision 64 unless `-Dopenrsc.mapRev` says otherwise |
+
+```bash
+JAVA_OPTS=-Dopenrsc.landscape=/path/Custom_Landscape.orsc scripts/build-site.sh site
+JAVA_OPTS=-Dopenrsc.landscape=/path/data/maps/maps63.jag  scripts/render-map.sh map-out
+```
+
+The `.orsc` repack is a genuinely different dataset from the JAG archives (it carries sectors
+`maps64` does not, notably filled-in upper floors), so there is no fallback between the two: a
+landscape that cannot be opened is a hard error rather than a silent switch to the other one.
 
 ### How it works
 
