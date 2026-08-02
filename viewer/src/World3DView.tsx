@@ -1518,16 +1518,33 @@ export function World3DView(props: {
         const LOCK_PX = 4;
         /** Pointer whose drag asked for the lock (null = we hold nothing). */
         let lockOwner: number | null = null;
+        /** How far the lock handshake has got. Taking the lock TELEPORTS the
+         *  cursor — Firefox centres it in the locked element — and reports
+         *  that teleport as ordinary pointer motion: as the first locked
+         *  movementX/Y, or as a client-position leap if the move lands before
+         *  pointerLockElement is set. Chrome zeroes it; Firefox does not, so
+         *  a rotate drag snapped the camera by the whole press-point-to-centre
+         *  distance. NOTHING in the event separates that sample from a real
+         *  move — press near the centre and the teleport is only a few px —
+         *  so the delta can't be screened by size. Instead the drag stops
+         *  steering for the length of the handshake (from the request until
+         *  one sample has been seen under the lock) and re-seeds its baseline
+         *  from those samples, which costs the frame or two the handshake
+         *  takes and is exact wherever the press landed. */
+        let lockPhase: "idle" | "pending" | "engaged" = "idle";
         const isLocked = () => document.pointerLockElement === host;
         const wantLock = (pointerId: number) => {
             if (lockOwner != null || isLocked()) return;
             if (typeof host.requestPointerLock !== "function") return;
             lockOwner = pointerId;
+            lockPhase = "pending";
             // unadjustedMovement gives raw device deltas (no OS pointer
             // acceleration); browsers without it reject, so retry plain. A
             // denial (Chrome rate-limits re-locking after an Esc exit) just
             // leaves the drag on the un-locked path — still fully usable.
-            const clear = () => { lockOwner = null; };
+            // Clearing ends the handshake too: no lock means no teleport, and
+            // a stuck "pending" would freeze the rest of the drag.
+            const clear = () => { lockOwner = null; lockPhase = "idle"; };
             try {
                 const req: unknown = (host.requestPointerLock as
                     (o?: {unadjustedMovement?: boolean}) => unknown)(
@@ -1547,20 +1564,31 @@ export function World3DView(props: {
         let selfExit = false;
         const dropLock = () => {
             lockOwner = null;
+            lockPhase = "idle";
             if (isLocked()) {
                 selfExit = true;
                 document.exitPointerLock();
             }
         };
         const onLockChange = () => {
-            if (isLocked()) return;
+            if (isLocked()) {
+                // The teleport rides in on one of the moves from here; the
+                // move handler eats it and closes the handshake.
+                lockPhase = "engaged";
+                // A flick can outrun the handshake and end the drag before the
+                // lock lands. Nothing would then release it, and a locked
+                // cursor with no drag is an invisible pointer.
+                if (!drag) dropLock();
+                return;
+            }
             lockOwner = null;
+            lockPhase = "idle";
             if (selfExit) { selfExit = false; return; }
             // The browser dropped the lock mid-drag (Esc, focus loss): end the
             // drag rather than keep steering with a cursor we can't see.
             drag = null;
         };
-        const onLockError = () => { lockOwner = null; };
+        const onLockError = () => { lockOwner = null; lockPhase = "idle"; };
         document.addEventListener("pointerlockchange", onLockChange);
         document.addEventListener("pointerlockerror", onLockError);
 
@@ -1764,10 +1792,19 @@ export function World3DView(props: {
             // raw movement deltas; before the lock engages (and on every path
             // that never locks) the client delta is the same number.
             const locked = isLocked();
-            const dx = locked ? e.movementX : e.clientX - drag.lastX;
-            const dy = locked ? e.movementY : e.clientY - drag.lastY;
+            let dx = locked ? e.movementX : e.clientX - drag.lastX;
+            let dy = locked ? e.movementY : e.clientY - drag.lastY;
             drag.lastX = e.clientX;
             drag.lastY = e.clientY;
+            // Mid-handshake (see lockPhase): this sample may be the cursor
+            // teleport rather than a move, and the two are indistinguishable,
+            // so it only re-seeds the baseline above. The lock is live from
+            // "engaged", so one such sample is enough to have swallowed it.
+            if (lockPhase !== "idle") {
+                if (lockPhase === "engaged") lockPhase = "idle";
+                dx = 0;
+                dy = 0;
+            }
             // Past the click threshold a ROTATE drag grabs the cursor (mouse
             // only): rotation is relative, so it gains an endless mouse and
             // loses nothing. Pan does NOT lock — dragging the ground works by
