@@ -310,7 +310,9 @@ export class PlayerSpriteLayer {
             let i = 0;
             for (const p of group) {
                 if (i >= strip.cap) break;
-                let dir = this.lastDir.get(p.key) ?? 4;
+                // Never walked and no server facing: the spawn default, which
+                // is Mob.mobSprite = 0 (north) — same rule as the npc layer.
+                let dir = this.lastDir.get(p.key) ?? 0;
                 if (p.moving && (p.dx !== 0 || p.dz !== 0)) {
                     const ang = Math.atan2(p.dx, -p.dz);
                     dir = Math.round(((ang + 2 * Math.PI) % (2 * Math.PI)) / (Math.PI / 4)) & 7;

@@ -324,7 +324,16 @@ export class NpcSpriteLayer {
             const byOrder = atlas.frames.get(n.npcId);
             if (!meta || !byOrder) continue;
             // Facing from movement; RSC dirs: 0=N(−z), 2=W(−x), 4=S, 6=E.
-            let dir = this.lastDir.get(n.key) ?? 4;
+            // An npc that has never walked and carries no server facing stands
+            // where the server spawned it: Mob.mobSprite starts at 0 (north in
+            // Formulae.getDirection's encoding) and only ever changes when
+            // something walks or faces it. So 0 — not 4, which pointed every
+            // such npc a half-turn from where the real client draws it. Live
+            // hosts always send dir (GameStateUpdater writes getSprite() into
+            // the 4 bits of the npc-appears block, so it is known from first
+            // sight); this governs hosts that don't, i.e. spawn-table playback
+            // like the demo, where the 69 zero-roam-box spawns never move.
+            let dir = this.lastDir.get(n.key) ?? 0;
             if (n.moving && (n.dx !== 0 || n.dz !== 0)) {
                 // Client ground truth (game_character_move): +x→2, −x→6,
                 // +y→4, −y→0 ⇒ dir = atan2(+dx, −dz) in 45° steps.
