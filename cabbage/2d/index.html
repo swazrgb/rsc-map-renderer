@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RuneScape Classic — 2D world map</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0b0e13; color: #d9e0ea;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { padding: 22px clamp(16px, 4vw, 40px); border-bottom: 1px solid #232a35;
+    display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: baseline; }
+  h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: .2px; }
+  h1 .sub { color: #8a95a4; font-weight: 400; }
+  header a.src { margin-left: auto; color: #8a95a4; text-decoration: none; font-size: 13px; }
+  header a.src:hover { color: #d9e0ea; }
+  main { padding: clamp(16px, 4vw, 40px); }
+  .grid { display: grid; gap: 22px; max-width: 1200px;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+  .card { background: #141922; border: 1px solid #232a35; border-radius: 12px; overflow: hidden; }
+  .previews { display: flex; gap: 2px; background: #eef1f4; }
+  .previews a { position: relative; flex: 1; display: block; line-height: 0; }
+  .previews img { display: block; width: 100%; height: auto; }
+  .previews span { position: absolute; left: 6px; top: 6px; font-size: 11px; line-height: 1.6;
+    padding: 0 8px; border-radius: 999px; background: rgba(11, 14, 19, .72); color: #d9e0ea; }
+  .meta { padding: 12px 14px; }
+  .meta h2 { margin: 0 0 8px; font-size: 15px; font-weight: 600; }
+  .layers { display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px; }
+  .layers a { color: #8a95a4; text-decoration: none; padding: 2px 9px;
+    border: 1px solid #2a323e; border-radius: 999px; }
+  .layers a:hover { color: #d9e0ea; border-color: #4ec9ff; }
+  footer { padding: 22px clamp(16px, 4vw, 40px); color: #6b7480; font-size: 12px;
+    border-top: 1px solid #232a35; }
+  footer a { color: #8a95a4; }
+</style>
+</head>
+<body>
+<header>
+  <h1>RuneScape Classic <span class="sub">— 2D world map</span></h1>
+  <a class="src" href="https://github.com/swazrgb/rsc-map-renderer">github.com/swazrgb/rsc-map-renderer</a>
+</header>
+<main>
+  <div class="grid" id="grid"></div>
+</main>
+<footer>
+  Baked by <a href="https://github.com/swazrgb/rsc-map-renderer">rsc-map-renderer</a>. Each floor
+  previews both treatments — dim (the in-game minimap look) and light — with the raw layers linked
+  below; click a thumbnail for the full-resolution map.
+</footer>
+<script>
+  const FLOORS = [
+    { f: 0, name: "Floor 0 — ground" },
+    { f: 1, name: "Floor 1 — upper storey" },
+    { f: 2, name: "Floor 2 — upper storey" },
+    { f: 3, name: "Floor 3 — underground" },
+  ];
+  const LAYERS = ["light", "dim", "walls", "blocked"];
+  const grid = document.getElementById("grid");
+  for (const { f, name } of FLOORS) {
+    const links = LAYERS.map((l) => `<a href="floor-${f}.${l}.png">${l}</a>`).join("")
+      + `<a href="floor-${f}.geojson">geojson</a>`;
+    const card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML = `
+      <div class="previews">
+        <a href="floor-${f}.dim.preview.png" title="dim — full resolution">
+          <img src="floor-${f}.dim.thumb.png" alt="${name} (dim)" loading="lazy"><span>dim</span>
+        </a>
+        <a href="floor-${f}.light.preview.png" title="light — full resolution">
+          <img src="floor-${f}.light.thumb.png" alt="${name} (light)" loading="lazy"><span>light</span>
+        </a>
+      </div>
+      <div class="meta">
+        <h2>${name}</h2>
+        <div class="layers">${links}</div>
+      </div>`;
+    grid.appendChild(card);
+  }
+</script>
+</body>
+</html>
