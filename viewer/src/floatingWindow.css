@@ -1,0 +1,161 @@
+/* No specificity, so a window's own class sets its size limits whichever sheet loads last. */
+:where(.fw) {
+    position: fixed;
+    /* So a stored size is the size drawn, border included. */
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    min-width: 180px;
+    max-width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
+    background: rgba(13, 17, 23, 0.97);
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+    font:
+        11px/1.45 ui-monospace,
+        SFMono-Regular,
+        Menlo,
+        monospace;
+    color: #c9d1d9;
+    overflow: hidden;
+    transition:
+        box-shadow 120ms,
+        border-color 120ms;
+}
+
+.fw.fw-active {
+    border-color: #444c56;
+    box-shadow:
+        0 8px 28px rgba(0, 0, 0, 0.6),
+        0 0 0 1px rgba(88, 166, 255, 0.18);
+}
+
+.fw:focus {
+    outline: none;
+}
+
+.fw.fw-collapsed {
+    max-height: none;
+}
+
+.fw-head {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    height: 24px;
+    padding: 0 3px 0 8px;
+    background: #161b22;
+    border-bottom: 1px solid #30363d;
+    cursor: grab;
+    user-select: none;
+    /* The pointer handlers own the drag. */
+    touch-action: none;
+}
+
+.fw.fw-gesture .fw-head {
+    cursor: grabbing;
+}
+
+.fw-collapsed .fw-head {
+    border-bottom: none;
+}
+
+.fw-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 9px;
+    font-weight: 600;
+    color: #8b949e;
+}
+
+.fw-active .fw-title {
+    color: #e6edf3;
+}
+
+/* Two classes, so a host's global `button` rule cannot restyle them. */
+.fw .fw-btn {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 18px;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: 4px;
+    color: #8b949e;
+    font:
+        13px/1 ui-monospace,
+        SFMono-Regular,
+        Menlo,
+        monospace;
+    cursor: pointer;
+}
+
+.fw .fw-btn:hover {
+    background: #30363d;
+    color: #e6edf3;
+}
+
+.fw .fw-btn.active {
+    color: #58a6ff;
+}
+
+.fw .fw-close {
+    font-size: 15px;
+}
+
+.fw .fw-close:hover {
+    background: #da3633;
+    color: #fff;
+}
+
+.fw .fw-btn:focus-visible {
+    outline: 1px solid #58a6ff;
+    outline-offset: -1px;
+}
+
+.fw-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.fw-body[hidden] {
+    display: none;
+}
+
+.fw-grip {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    width: 14px;
+    height: 14px;
+    cursor: nwse-resize;
+    touch-action: none;
+    background: linear-gradient(
+        135deg,
+        transparent 0 55%,
+        #484f58 55% 62%,
+        transparent 62% 72%,
+        #484f58 72% 79%,
+        transparent 79% 89%,
+        #484f58 89% 96%,
+        transparent 96%
+    );
+    opacity: 0.7;
+}
+
+.fw-grip:hover,
+.fw.fw-gesture .fw-grip {
+    opacity: 1;
+}

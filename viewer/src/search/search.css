@@ -1,0 +1,209 @@
+.wsearch {
+    position: absolute;
+    top: 50px;
+    left: 8px;
+    width: 300px;
+    max-width: calc(100vw - 16px);
+    font:
+        11px/1.45 ui-monospace,
+        SFMono-Regular,
+        Menlo,
+        monospace;
+    color: #c9d1d9;
+}
+
+.wsearch-field {
+    position: relative;
+}
+
+.wsearch-field input {
+    box-sizing: border-box;
+    width: 100%;
+    padding: 5px 46px 5px 8px;
+    font: inherit;
+    font-size: 12px;
+    color: inherit;
+    background: rgba(13, 17, 23, 0.92);
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    outline: none;
+}
+
+.wsearch-field input:focus {
+    border-color: #ffc857;
+}
+
+.wsearch-exact {
+    position: absolute;
+    top: 50%;
+    right: 24px;
+    transform: translateY(-50%);
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    font:
+        600 12px/16px ui-monospace,
+        monospace;
+    color: #8b949e;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.wsearch-exact:hover {
+    color: #c9d1d9;
+    border-color: #30363d;
+}
+
+.wsearch-exact.on {
+    color: #1a1405;
+    background: #ffd76a;
+    border-color: #ffd76a;
+}
+
+.wsearch-clear {
+    position: absolute;
+    top: 50%;
+    right: 4px;
+    transform: translateY(-50%);
+    padding: 0 4px;
+    font-size: 14px;
+    line-height: 1;
+    color: #8b949e;
+    background: none;
+    border: none;
+    cursor: pointer;
+}
+
+.wsearch-clear:hover {
+    color: #c9d1d9;
+}
+
+.wsearch-results {
+    display: flex;
+    flex-direction: column;
+    margin-top: 4px;
+    max-height: calc(100vh - 110px);
+    overflow: hidden;
+    background: rgba(13, 17, 23, 0.97);
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+}
+
+.wsearch-summary {
+    padding: 3px 8px;
+    color: #8b949e;
+}
+
+.wsearch-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+.wsearch-loading {
+    font-style: italic;
+}
+
+/* Every line is LINE_PX (SearchBox) tall, so the list can draw only the lines in view. */
+.wsearch-group,
+.wsearch-row {
+    position: absolute;
+    left: 0;
+    right: 0;
+    box-sizing: border-box;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 8px;
+    overflow: hidden;
+    cursor: pointer;
+}
+
+.wsearch-group {
+    border-top: 1px solid #21262d;
+    background: #161b22;
+}
+
+.wsearch-row {
+    padding-left: 22px;
+}
+
+/* A row more than an area's gap from the one above it. */
+.wsearch-row.area {
+    border-top: 1px dashed #30363d;
+}
+
+.wsearch-group.pointed,
+.wsearch-row.pointed {
+    background: rgba(255, 200, 87, 0.16);
+}
+
+.wsearch-caret {
+    width: 8px;
+    color: #8b949e;
+}
+
+.wsearch-kind {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.wsearch-kind.npc {
+    color: #ffd76a;
+}
+
+.wsearch-kind.transport {
+    color: #7ee3ff;
+}
+
+.wsearch-kind.object {
+    color: #9ee493;
+}
+
+.wsearch-kind.boundary {
+    color: #d7a8ff;
+}
+
+.wsearch-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+}
+
+.wsearch-id {
+    font-weight: normal;
+    color: #8b949e;
+}
+
+.wsearch-count {
+    color: #8b949e;
+}
+
+.wsearch-detail {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #8b949e;
+}
+
+.wsearch-at {
+    white-space: nowrap;
+}
+
+.wsearch-floor {
+    padding: 0 3px;
+    font-size: 9px;
+    color: #0d1117;
+    background: #8b949e;
+    border-radius: 3px;
+}

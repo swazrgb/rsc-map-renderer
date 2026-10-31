@@ -9,33 +9,19 @@ public class Subspace {
     private List<Entry> entryList = new ArrayList<>();
 
     @Override
-    public String toString() { return getName(); }
+    public String toString() {
+        return getName();
+    }
 
     public Subspace(String name) {
         this.name = name;
     }
 
-    public void setName(String name) { this.name = name; }
-    public String getName() { return this.name; }
-
-    public List<Entry> getEntryList() { return entryList; }
-
-    public int getEntryCount() { return this.entryList.size(); }
-
-    public int getSpriteCount() {
-        int spriteCount = 0;
-        for (Entry entry : entryList) {
-            if (entry.getFrames().length == 1)
-                ++spriteCount;
-        }
-        return spriteCount;
+    public String getName() {
+        return this.name;
     }
-    public int getAnimationCount() {
-        int animationCount = 0;
-        for (Entry entry : entryList) {
-            if (entry.getFrames().length > 1)
-                ++animationCount;
-        }
-        return animationCount;
+
+    public List<Entry> getEntryList() {
+        return entryList;
     }
 }

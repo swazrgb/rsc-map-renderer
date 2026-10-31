@@ -1,0 +1,6 @@
+{
+  "printWidth": 120,
+  "tabWidth": 4,
+  "bracketSpacing": false,
+  "overrides": [{"files": "*.json", "options": {"tabWidth": 2}}]
+}

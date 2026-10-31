@@ -1,0 +1,819 @@
+/* :where() keeps these as weak as a global `button` rule, so the panel's own classes still win. */
+:where(.planner) select,
+:where(.planner) button {
+    font: inherit;
+    background: #161b22;
+    color: inherit;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    padding: 4px 8px;
+    cursor: pointer;
+}
+
+:where(.planner) button:hover {
+    background: #21262d;
+}
+
+:where(.planner) button.active {
+    background: #1f6f3e;
+    border-color: #2ea043;
+    color: #c9f9c9;
+}
+
+.planner .path-label {
+    display: inline-block;
+    width: 36px;
+    padding: 1px 4px;
+    border-radius: 2px;
+    font-size: 10px;
+    font-weight: 600;
+    text-align: center;
+    color: #0d1117;
+}
+
+.planner .path-label-start {
+    background: #58ff8a;
+}
+
+.planner .path-label-end {
+    background: #f85149;
+    color: #fff;
+}
+
+:is(.planner, .loadout-table) .probe-item-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #c9d1d9;
+}
+
+.planner-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+    padding: 6px 8px;
+    border: 1px solid #1f6feb;
+    border-radius: 4px;
+    background: rgba(31, 111, 235, 0.12);
+    color: #9ecbff;
+}
+
+.planner-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    min-height: 160px;
+    color: #9ecbff;
+    text-align: center;
+}
+
+.planner-loading-stage {
+    color: #8b949e;
+}
+
+.planner-loading .planner-spinner {
+    width: 22px;
+    height: 22px;
+    border-width: 3px;
+}
+
+.planner-status.err {
+    border-color: #f85149;
+    background: rgba(248, 81, 73, 0.12);
+    color: #ffc9c9;
+}
+
+.planner-spinner {
+    flex: none;
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba(158, 203, 255, 0.3);
+    border-top-color: #9ecbff;
+    border-radius: 50%;
+    animation: planner-spin 0.8s linear infinite;
+}
+
+@keyframes planner-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.planner .hop-req {
+    color: #8b949e;
+    font-size: 10px;
+}
+
+.planner {
+    width: 420px;
+    min-width: 380px;
+    max-height: 82vh;
+}
+
+.planner-drop {
+    display: inline-block;
+    width: 14px;
+    margin-right: 2px;
+    text-align: center;
+    background: none;
+    border: none;
+    color: #8b949e;
+    line-height: 1;
+    padding: 0;
+    cursor: pointer;
+}
+
+span.planner-drop {
+    cursor: default;
+}
+
+.planner-drop:hover {
+    color: #ffa198;
+    background: none;
+}
+
+.planner-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    /* Room for the scrollbar whether or not it shows, so opening a section never shifts the controls. */
+    scrollbar-gutter: stable;
+    padding: 6px 14px 6px 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+/* No spinners: the amounts are typed. */
+:is(.planner, .loadout-table) input[type="number"] {
+    appearance: textfield;
+    -moz-appearance: textfield;
+}
+
+:is(.planner, .loadout-table) input[type="number"]::-webkit-inner-spin-button,
+:is(.planner, .loadout-table) input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+:is(.planner, .loadout-table) input[type="number"],
+:is(.planner, .loadout-table) input[type="search"],
+:is(.planner, .loadout-table) input[type="text"] {
+    font: inherit;
+    background: #0d1117;
+    color: #c9d1d9;
+    border: 1px solid #30363d;
+    border-radius: 3px;
+    padding: 1px 5px;
+    min-width: 0;
+    box-sizing: border-box;
+}
+
+:is(.planner, .loadout-table) input:focus {
+    outline: none;
+    border-color: #4ec9ff;
+}
+
+.planner select {
+    padding: 1px 4px;
+}
+
+.planner-copy {
+    width: 100%;
+}
+
+/* A drag must not sweep a text selection across the rows it passes. */
+.planner-slider {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+}
+
+.planner-slider-control {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    height: 14px;
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+}
+
+.planner-slider-track {
+    position: relative;
+    width: 100%;
+    height: 6px;
+    border-radius: 3px;
+    background: #1c2128;
+}
+
+.planner-slider-live {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background: #30363d;
+}
+
+.planner-slider-tick {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    margin-left: -1px;
+    background: #8b949e;
+}
+
+.planner-slider-indicator {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    border-radius: 3px;
+    background: rgba(78, 201, 255, 0.35);
+}
+
+.planner-slider-thumb {
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    background: #4ec9ff;
+    cursor: pointer;
+}
+
+.planner-slider-thumb:focus-visible {
+    outline: 2px solid #9fe0ff;
+    outline-offset: 1px;
+}
+
+.planner-section {
+    border-top: 1px solid #21262d;
+    padding-top: 2px;
+}
+
+.planner-section > summary {
+    cursor: pointer;
+    color: #8b949e;
+    text-transform: uppercase;
+    font-size: 9px;
+    letter-spacing: 0.04em;
+    margin-bottom: 2px;
+}
+
+.planner-row {
+    display: grid;
+    grid-template-columns: 78px 1fr 18px 11px;
+    align-items: center;
+    gap: 5px;
+}
+
+.planner-row > span:first-child {
+    color: #8b949e;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.planner-val {
+    text-align: right;
+}
+
+.planner button.planner-val {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+}
+
+.planner button.planner-val:hover {
+    color: #e6edf3;
+    background: none;
+}
+
+.planner-val-pad {
+    display: inline-block;
+}
+
+.planner-ends {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: 3px 5px;
+}
+
+.planner-ends > .planner-end {
+    grid-column: 1;
+}
+
+.planner-end {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    padding: 0 2px;
+    cursor: pointer;
+}
+
+.planner-end .path-label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    width: 38px;
+    height: 14px;
+    padding: 0;
+    line-height: 1;
+}
+
+.planner-end-armed {
+    border-color: #4ec9ff;
+}
+
+.planner-end-tile {
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.planner-end-tile {
+    height: 18px;
+    line-height: 18px;
+}
+
+.planner .planner-end input.planner-end-tile,
+.planner .planner-end input.planner-end-tile:focus {
+    border: 0;
+    padding: 0;
+    margin: 0;
+    border-radius: 0;
+}
+
+.planner-ends-actions {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    display: grid;
+    grid-template-columns: auto auto;
+    align-items: center;
+    gap: 3px;
+}
+
+.planner-ends-actions button {
+    padding: 1px 6px;
+}
+
+.planner-act-pick {
+    grid-area: 1 / 1;
+}
+.planner-act-reachable {
+    grid-area: 1 / 2;
+}
+.planner-follow {
+    grid-area: 2 / 1;
+}
+.planner-act-replan {
+    grid-area: 2 / 2;
+}
+
+.planner-follow {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    white-space: nowrap;
+    color: #8b949e;
+}
+
+.planner-follow input {
+    margin: 0;
+}
+
+.planner-item-head,
+.planner-item-row {
+    display: grid;
+    grid-template-columns: 1fr 50px 50px 50px 40px;
+    gap: 4px;
+    align-items: center;
+}
+
+.planner-item-head {
+    color: #8b949e;
+    font-size: 9px;
+    text-transform: uppercase;
+}
+
+.planner-item-head > span:not(:first-child) {
+    text-align: center;
+}
+
+.planner-item-row .planner-equip {
+    justify-self: center;
+    margin: 0;
+}
+
+.planner-item-row input[type="number"] {
+    width: 100%;
+    text-align: right;
+}
+
+.planner-item-row em {
+    color: #8b949e;
+    font-style: normal;
+}
+
+.planner-search input {
+    width: 100%;
+}
+
+.planner-matches-positioner {
+    z-index: 3000;
+    outline: 0;
+}
+
+.planner-matches {
+    box-sizing: border-box;
+    width: var(--anchor-width);
+    max-height: min(260px, var(--available-height));
+    padding: 2px 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    background: rgba(13, 17, 23, 0.98);
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.55);
+    font:
+        11px/1.45 ui-monospace,
+        SFMono-Regular,
+        Menlo,
+        monospace;
+}
+
+.planner-match,
+.planner-matches-empty {
+    padding: 2px 4px;
+    color: #c9d1d9;
+    outline: 0;
+}
+
+.planner-match {
+    cursor: pointer;
+    user-select: none;
+}
+
+.planner-match[data-highlighted] {
+    background: #161b22;
+}
+
+.planner-matches-empty {
+    color: #8b949e;
+}
+
+.planner-matches em {
+    color: #8b949e;
+    font-style: normal;
+    float: right;
+}
+
+.planner-quest {
+    display: grid;
+    grid-template-columns: 1fr 86px 66px;
+    gap: 4px;
+    align-items: center;
+}
+
+.planner-quest-val {
+    text-align: right;
+    font-size: 9px;
+    color: #8b949e;
+    white-space: nowrap;
+    background: none;
+    border: none;
+    padding: 0;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.planner-quest-val:hover {
+    color: #e6edf3;
+    background: none;
+}
+
+.planner-quest > span:first-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.planner-cache {
+    display: grid;
+    grid-template-columns: 1fr auto 14px;
+    gap: 4px;
+    align-items: center;
+}
+
+.planner-cache > span:first-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.planner-seg {
+    display: inline-flex;
+    width: 124px;
+}
+
+:where(.planner) .planner-seg button {
+    padding: 0 5px;
+    font-size: 10px;
+    border-radius: 0;
+    flex: 1;
+}
+
+:where(.planner) .planner-seg button:first-child {
+    flex: 0 0 54px;
+}
+
+.planner .planner-seg input[type="number"] {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    border-radius: 0 4px 4px 0;
+    border-left: none;
+}
+
+:where(.planner) .planner-seg button:first-child {
+    border-radius: 4px 0 0 4px;
+}
+
+:where(.planner) .planner-seg button:last-child {
+    border-radius: 0 4px 4px 0;
+}
+
+:where(.planner) .planner-seg button + button {
+    border-left: none;
+}
+
+.planner-checks {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.planner-check {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    color: #8b949e;
+}
+
+.planner-pack {
+    display: grid;
+    grid-template-columns: repeat(6, 30px);
+    gap: 2px;
+}
+
+.planner-pack-slot {
+    position: relative;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #0d1117;
+    border: 1px solid #21262d;
+}
+
+.planner-pack-slot.worn {
+    border-color: #58a6ff;
+}
+
+.planner-pack-n {
+    position: absolute;
+    top: 0;
+    left: 1px;
+    font: 9px monospace;
+    color: #f0c674;
+    text-shadow: 0 1px 2px #000;
+}
+
+.planner-pack-empty {
+    color: #8b949e;
+}
+
+.planner-result {
+    border: 1px solid #30363d;
+    background: #0d1117;
+    padding: 4px 6px;
+}
+
+.planner-busy {
+    opacity: 0.55;
+}
+
+.planner-result.err {
+    color: #ffa198;
+    border-color: #6e2c29;
+}
+
+.planner-blockers {
+    margin: 4px 0 0;
+    padding-left: 14px;
+    color: #ffa198;
+}
+
+.planner-blocker-hops {
+    margin-top: 4px;
+    color: #8b949e;
+}
+
+.planner-fix-head {
+    color: #8b949e;
+    margin-top: 4px;
+}
+
+/* Tinted rather than outlined, so a blamed row's amounts do not shift by a border's width. */
+.planner-item-blocked {
+    background: #3d1d1b;
+    box-shadow: -4px 0 0 0 #6e2c29;
+}
+
+.planner-cost {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    color: #8b949e;
+}
+
+.planner-cost strong {
+    color: #3fb950;
+}
+
+.planner-steps {
+    list-style: none;
+    margin: 3px 0 0;
+    padding: 0 8px 0 0;
+    max-height: 160px;
+    overflow-y: auto;
+}
+
+.planner-step {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    border-left: 2px solid #30363d;
+    padding: 0 2px 0 5px;
+    margin-bottom: 1px;
+}
+
+.planner-step > span:not(.planner-step-pack) {
+    flex: 1;
+    min-width: 0;
+}
+
+.planner-step-pack {
+    margin-left: auto;
+    flex: none;
+    display: flex;
+    align-items: center;
+}
+
+.planner-step:hover {
+    background: #161b22;
+}
+
+.planner-step-hop {
+    border-left-color: #4ec9ff;
+}
+
+.planner-step-bank {
+    border-left-color: #d29922;
+}
+
+.planner-step em,
+.planner-wears {
+    color: #8b949e;
+    font-style: normal;
+}
+
+.planner-diff {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.planner-take {
+    color: #3fb950;
+}
+
+.planner-give {
+    color: #d29922;
+}
+
+.planner-timings {
+    color: #8b949e;
+    margin-top: 2px;
+}
+
+.planner-info {
+    background: none;
+    border: none;
+    padding: 0;
+    color: #4ec9ff;
+    cursor: help;
+    font: inherit;
+    line-height: 1;
+}
+
+.planner-info:hover {
+    background: none;
+    color: #9fe0ff;
+}
+
+.planner-tip {
+    z-index: 3000;
+    max-width: 280px;
+    max-height: 260px;
+    overflow-y: auto;
+    background: rgba(13, 17, 23, 0.98);
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.55);
+    padding: 4px 6px;
+    font:
+        11px/1.4 ui-monospace,
+        SFMono-Regular,
+        Menlo,
+        monospace;
+    color: #c9d1d9;
+}
+
+.planner-tip ul {
+    margin: 2px 0 0;
+    padding-left: 14px;
+    color: #8b949e;
+}
+
+.planner-tip:focus {
+    outline: none;
+}
+
+.planner-tip.wide {
+    max-width: 420px;
+    max-height: 420px;
+}
+
+.planner-tip-note {
+    color: #8b949e;
+    font-style: italic;
+}
+
+.planner-link {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: #58a6ff;
+    cursor: pointer;
+    text-align: left;
+}
+
+.planner-link:hover {
+    text-decoration: underline;
+}
+
+.planner-breakdown details + details {
+    margin-top: 2px;
+}
+
+.planner-breakdown summary {
+    cursor: pointer;
+    color: #c9d1d9;
+}
+
+.planner-breakdown ul {
+    max-height: 220px;
+    overflow-y: auto;
+}
+
+.planner-breakdown li.ok {
+    color: #7ee787;
+}
+
+.planner-breakdown li.no {
+    color: #ff7b72;
+}
+
+.planner-breakdown em {
+    color: #8b949e;
+    font-style: normal;
+}

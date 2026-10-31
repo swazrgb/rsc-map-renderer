@@ -19,15 +19,15 @@ package orsc;
  */
 public final class mudclient {
 
-  public static final int spriteMedia = 2000;
-  public static final int spriteUtil = 2100;
-  public static final int spriteItem = 2150;
-  public static final int spriteProjectile = 3160;
+    public static final int spriteMedia = 2000;
+    public static final int spriteUtil = 2100;
+    public static final int spriteItem = 2150;
+    public static final int spriteProjectile = 3160;
 
-  /** Headless render is always software-3D; never gated off. */
-  public static boolean isRender3DEnabled() {
-    return true;
-  }
+    /** Headless render is always software-3D; never gated off. */
+    public static boolean isRender3DEnabled() {
+        return true;
+    }
 
-  private mudclient() {}
+    private mudclient() {}
 }

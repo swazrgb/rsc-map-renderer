@@ -1,34 +1,36 @@
 #!/usr/bin/env bash
-# Publish a built ./site directory to this repo's `gh-pages` branch, which
-# GitHub Pages then serves. Run build-site.sh first — and if this is a *project*
-# Pages site (served at https://<user>.github.io/<repo>/), build it with the
-# matching base so the viewer's /api/* fetches resolve under the subpath:
-#
-#   VITE_BASE=/<repo>/ scripts/build-site.sh /path/to/Client_Base/Cache site
-#   scripts/deploy-pages.sh site
-#
-# For a user/org Pages site or a custom domain (served at the root), the default
-# base ("/") is correct — no VITE_BASE needed.
-#
-#   scripts/deploy-pages.sh [siteDir] [gitRemote]
+# Publishes a built site directory (default ./site) to the gh-pages branch of target: a git URL or
+# path, or a remote of this checkout. Default: $PAGES_REPO, else the remote `pages`, added when
+# missing. Never origin by default: where this directory sits inside another repository, origin is
+# that one, and the push below is forced.
 set -euo pipefail
 
 SITE="${1:-site}"
-REMOTE="${2:-origin}"
+TARGET="${2:-${PAGES_REPO:-pages}}"
+PAGES_URL=https://github.com/swazrgb/rsc-map-renderer.git
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 [ -f "$SITE/index.html" ] || {
   echo "no $SITE/index.html — run scripts/build-site.sh first" >&2
   exit 1
 }
-URL="$(git -C "$ROOT" remote get-url "$REMOTE")"
+if [[ "$TARGET" == *://* || "$TARGET" == *@*:* || -e "$TARGET" ]]; then
+  URL="$TARGET"
+else
+  # Kept out of `git fetch --all`, which would pull the baked gh-pages into this repository.
+  if [ "$TARGET" = pages ] && ! git -C "$ROOT" remote get-url pages >/dev/null 2>&1; then
+    echo "==> adding remote pages: $PAGES_URL"
+    git -C "$ROOT" remote add pages "$PAGES_URL"
+    git -C "$ROOT" config remote.pages.skipFetchAll true
+  fi
+  URL="$(git -C "$ROOT" remote get-url "$TARGET")"
+fi
+echo "==> publishing $SITE to gh-pages of $URL"
 
-# GitHub Pages runs Jekyll by default (which skips some files); .nojekyll serves
-# the baked tree verbatim.
+# Pages runs Jekyll by default, which skips some files.
 touch "$SITE/.nojekyll"
 
-# Build the branch in a throwaway repo and force-push it, so the (large) baked
-# assets live only on gh-pages, never bloating main's history.
+# A throwaway repository, force-pushed, so the large baked assets never enter any branch's history.
 WORK="$(mktemp -d)"
 cp -a "$SITE"/. "$WORK"/
 git -C "$WORK" init -q

@@ -8,356 +8,342 @@ import openrsc.gamedata.jag.JagArchive;
 import openrsc.gamedata.jag.JagFile;
 
 /**
- * Loads the classic RSC landscape from {@code maps{rev}.jag/.mem} (+ optional
- * {@code land{rev}.jag/.mem} for terrain colour/height) and decodes individual sectors. This is the
- * data source the OpenRSC server actually paths against when {@code based_map_data >= 28} (Uranium
- * = 64); the bot must read the same bytes or its collision model diverges from the server's (see
- * the F1 void stall: the {@code .orsc} repack carries upper-floor sectors {@code maps64} does not,
- * so the bot saw void as walkable while the server blocked it).
+ * The JAG map archives of one map revision, decoded sector by sector as the server's
+ * {@code WorldLoader.loadJAGSector} decodes them: a sector's {@code .jm}, {@code .dat},
+ * {@code .hei} and {@code .loc} entries, with a members' {@code .mem} entry replacing the free
+ * one when {@code memberWorld} is set.
  *
- * <p>Decode logic is a literal port of {@code WorldLoader.loadJAGSector}: per
- * sector it reads {@code m{h}{sx}{sy}.dat}/{@code .jm}/{@code .hei}/{@code .loc} entries (member
- * archives override free when {@code MEMBER_WORLD}), runs the revision-specific RLE decode, and
- * yields raw per-tile values in the shared {@link RawSector} form, which the caller stamps exactly
- * as it does for the {@code .orsc} format.
- *
- * <p>Coordinate convention matches the server and the {@code .orsc} loader:
- * {@code sectionX = (worldX/48) }… the section name uses the same {@code sx,sy} indices, and tiles
- * are addressed {@code index = lx*48 + ly}.
- *
- * <p>Reach it through {@link LandscapeSource#fromJag(Path, int, boolean)} unless you specifically
- * need the null-on-absent {@link #open} contract.
+ * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/io/WorldLoader.java#L50">WorldLoader.loadJAGSector</a>
  */
 public final class JagLandscape implements LandscapeSource {
 
-  private static final int REGION_SIZE = RawSector.REGION_SIZE;
-  private static final int SIZE = RawSector.SIZE; // 2304
+    private static final int SIZE = RawSector.SIZE;
 
-  private final Path mapsDir;
-  private final int rev;
-  private final JagArchive mapsJag;
-  private final JagArchive mapsMem;
-  private final JagArchive landJag;
-  private final JagArchive landMem;
-  private final boolean memberWorld;
-  private final boolean altFormat;
+    private final Path mapsDir;
+    private final int rev;
+    private final JagArchive mapsJag;
+    private final JagArchive mapsMem;
+    private final JagArchive landJag;
+    private final JagArchive landMem;
+    private final boolean memberWorld;
+    private final boolean altFormat;
 
-  private JagLandscape(Path mapsDir, JagArchive mapsJag, JagArchive mapsMem, JagArchive landJag,
-      JagArchive landMem, boolean memberWorld, int basedMapData) {
-    this.mapsDir = mapsDir;
-    this.rev = basedMapData;
-    this.mapsJag = mapsJag;
-    this.mapsMem = mapsMem;
-    this.landJag = landJag;
-    this.landMem = landMem;
-    this.memberWorld = memberWorld;
-    this.altFormat = basedMapData >= 28 && basedMapData <= 62;
-  }
-
-  /** True when the sector exists in the archives (same condition that makes
-   * {@link #sector} return non-null, without paying for the full decode).
-   * Members-only areas live solely in the .mem overlay — checking only the
-   * free archive silently drops half the world. */
-  @Override
-  public boolean exists(int height, int sectionX, int sectionY) {
-    String name = sectorName(height, sectionX, sectionY);
-    if (mapsJag.unpack(name + ".jm") != null || mapsJag.unpack(name + ".dat") != null) {
-      return true;
-    }
-    return memberWorld && mapsMem != null
-        && (mapsMem.unpack(name + ".jm") != null || mapsMem.unpack(name + ".dat") != null);
-  }
-
-  /**
-   * Open the landscape for a given map-data revision, or {@code null} if the primary
-   * {@code maps{rev}.jag} is absent or unreadable.
-   *
-   * <p>Prefer {@link LandscapeSource#fromJag(Path, int, boolean)}, which turns that {@code null}
-   * into a diagnosable failure — an absent archive must never quietly become a different landscape.
-   *
-   * @param mapsDir     directory holding {@code maps{rev}.jag} etc.
-   * @param rev         {@code based_map_data} (Uranium = 64)
-   * @param memberWorld whether to overlay member sectors
-   */
-  public static JagLandscape open(Path mapsDir, int rev, boolean memberWorld) throws IOException {
-    boolean bzip2 = rev >= 28;
-    Path mj = mapsDir.resolve("maps" + rev + ".jag");
-    if (!Files.exists(mj)) {
-      return null;
-    }
-    JagArchive mapsJag = JagArchive.open(mj, bzip2);
-    if (mapsJag == null) {
-      return null;
-    }
-    JagArchive mapsMem = JagArchive.open(mapsDir.resolve("maps" + rev + ".mem"), bzip2);
-    JagArchive landJag = JagArchive.open(mapsDir.resolve("land" + rev + ".jag"), bzip2);
-    JagArchive landMem = JagArchive.open(mapsDir.resolve("land" + rev + ".mem"), bzip2);
-    return new JagLandscape(mapsDir, mapsJag, mapsMem, landJag, landMem, memberWorld, rev);
-  }
-
-  @Override
-  public String describe() {
-    return "JAG maps" + rev + (memberWorld && mapsMem != null ? "+.mem" : "") + " under " + mapsDir;
-  }
-
-  private static String sectorName(int height, int sectionX, int sectionY) {
-    return "m" + height + sectionX / 10 + sectionX % 10 + sectionY / 10 + sectionY % 10;
-  }
-
-  /**
-   * Decode one sector, or {@code null} when neither a free nor member tile record exists for it
-   * (the server leaves such regions FULL_BLOCK).
-   */
-  @Override
-  public RawSector sector(int height, int sectionX, int sectionY) {
-    String name = sectorName(height, sectionX, sectionY);
-
-    JagFile jmFile = mapsJag.unpack(name + ".jm");
-    JagFile datFile = mapsJag.unpack(name + ".dat");
-    JagFile heiFile = landJag != null ? landJag.unpack(name + ".hei") : null;
-    JagFile locFile = mapsJag.unpack(name + ".loc");
-
-    if (memberWorld && mapsMem != null) {
-      JagFile memberJM = mapsMem.unpack(name + ".jm");
-      JagFile memberDat = mapsMem.unpack(name + ".dat");
-      JagFile memberHei = landMem != null ? landMem.unpack(name + ".hei") : null;
-      if (memberDat != null) {
-        datFile = memberDat;
-      }
-      if (memberJM != null) {
-        jmFile = memberJM;
-      }
-      if (memberHei != null) {
-        heiFile = memberHei;
-      }
+    private JagLandscape(
+            Path mapsDir,
+            JagArchive mapsJag,
+            JagArchive mapsMem,
+            JagArchive landJag,
+            JagArchive landMem,
+            boolean memberWorld,
+            int basedMapData) {
+        this.mapsDir = mapsDir;
+        this.rev = basedMapData;
+        this.mapsJag = mapsJag;
+        this.mapsMem = mapsMem;
+        this.landJag = landJag;
+        this.landMem = landMem;
+        this.memberWorld = memberWorld;
+        this.altFormat = basedMapData >= 28
+                && basedMapData
+                        <= 62; // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/io/WorldLoader.java#L343
     }
 
-    if (jmFile == null && datFile == null) {
-      return null;
-    }
-
-    byte[] terrainHeight = new byte[SIZE];
-    byte[] terrainColour = new byte[SIZE];
-    byte[] wallsEastWest = new byte[SIZE];
-    byte[] wallsNorthSouth = new byte[SIZE];
-    int[] wallsDiagonal = new int[SIZE];
-    byte[] wallsRoof = new byte[SIZE];
-    byte[] tileDecoration = new byte[SIZE];
-    byte[] tileDirection = new byte[SIZE];
-    int lastVal;
-
-    if (datFile != null) {
-      if (altFormat) {
-        decodeDatAlt(datFile, wallsEastWest, wallsNorthSouth, wallsDiagonal,
-            wallsRoof, tileDecoration, tileDirection);
-      } else {
-        decodeDatClassic(datFile, wallsEastWest, wallsNorthSouth, wallsDiagonal,
-            wallsRoof, tileDecoration, tileDirection);
-      }
-    } else {
-      if (height == 0) {
-        Arrays.fill(tileDecoration, (byte) -6);
-      }
-      if (height == 3) {
-        Arrays.fill(tileDecoration, (byte) 8);
-      }
-      if (locFile != null) {
-        for (int tile = 0; tile < SIZE; ) {
-          int val = locFile.readUnsignedByte();
-          if (val < 128) {
-            wallsDiagonal[tile++] = val + 48000;
-          } else {
-            tile += val - 128;
-          }
+    /**
+     * The archives of revision {@code rev} in {@code mapsDir}, or {@code null} when
+     * {@code maps<rev>.jag} is absent or does not open; the {@code .mem} and {@code land} archives
+     * are optional.
+     *
+     * @throws IOException when an archive exists but cannot be read
+     */
+    public static JagLandscape open(Path mapsDir, int rev, boolean memberWorld) throws IOException {
+        boolean bzip2 = rev >= 28;
+        Path mj = mapsDir.resolve("maps" + rev + ".jag");
+        if (!Files.exists(mj)) {
+            return null;
         }
-      }
+        JagArchive mapsJag = JagArchive.open(mj, bzip2);
+        if (mapsJag == null) {
+            return null;
+        }
+        JagArchive mapsMem = JagArchive.open(mapsDir.resolve("maps" + rev + ".mem"), bzip2);
+        JagArchive landJag = JagArchive.open(mapsDir.resolve("land" + rev + ".jag"), bzip2);
+        JagArchive landMem = JagArchive.open(mapsDir.resolve("land" + rev + ".mem"), bzip2);
+        return new JagLandscape(mapsDir, mapsJag, mapsMem, landJag, landMem, memberWorld, rev);
     }
 
-    if (heiFile != null) {
-      lastVal = 0;
-      for (int tile = 0; tile < 2304; ) {
-        int val = heiFile.readUnsignedByte();
-        if (val < 128) {
-          terrainHeight[tile++] = (byte) val;
-          lastVal = val;
+    @Override
+    public boolean exists(int height, int sectionX, int sectionY) {
+        String name = sectorName(height, sectionX, sectionY);
+        if (mapsJag.unpack(name + ".jm") != null || mapsJag.unpack(name + ".dat") != null) {
+            return true;
+        }
+        return memberWorld
+                && mapsMem != null
+                && (mapsMem.unpack(name + ".jm") != null || mapsMem.unpack(name + ".dat") != null);
+    }
+
+    @Override
+    public RawSector sector(int height, int sectionX, int sectionY) {
+        String name = sectorName(height, sectionX, sectionY);
+
+        JagFile jmFile = mapsJag.unpack(name + ".jm");
+        JagFile datFile = mapsJag.unpack(name + ".dat");
+        JagFile heiFile = landJag != null ? landJag.unpack(name + ".hei") : null;
+        JagFile locFile = mapsJag.unpack(name + ".loc");
+
+        if (memberWorld && mapsMem != null) {
+            JagFile memberJM = mapsMem.unpack(name + ".jm");
+            JagFile memberDat = mapsMem.unpack(name + ".dat");
+            JagFile memberHei = landMem != null ? landMem.unpack(name + ".hei") : null;
+            if (memberDat != null) {
+                datFile = memberDat;
+            }
+            if (memberJM != null) {
+                jmFile = memberJM;
+            }
+            if (memberHei != null) {
+                heiFile = memberHei;
+            }
+        }
+
+        if (jmFile == null && datFile == null) {
+            return null;
+        }
+
+        byte[] terrainHeight = new byte[SIZE];
+        byte[] terrainColour = new byte[SIZE];
+        byte[] wallsEastWest = new byte[SIZE];
+        byte[] wallsNorthSouth = new byte[SIZE];
+        int[] wallsDiagonal = new int[SIZE];
+        byte[] wallsRoof = new byte[SIZE];
+        byte[] tileDecoration = new byte[SIZE];
+        byte[] tileDirection = new byte[SIZE];
+        int lastVal;
+
+        if (datFile != null) {
+            if (altFormat) {
+                decodeDatAlt(
+                        datFile,
+                        wallsEastWest,
+                        wallsNorthSouth,
+                        wallsDiagonal,
+                        wallsRoof,
+                        tileDecoration,
+                        tileDirection);
+            } else {
+                decodeDatClassic(
+                        datFile,
+                        wallsEastWest,
+                        wallsNorthSouth,
+                        wallsDiagonal,
+                        wallsRoof,
+                        tileDecoration,
+                        tileDirection);
+            }
         } else {
-          for (int i = 0; i < val - 128; i++) {
-            terrainHeight[tile++] = (byte) lastVal;
-          }
+            // The server's defaults for a sector with no .dat entry.
+            // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/io/WorldLoader.java#L212
+            if (height == 0) {
+                Arrays.fill(tileDecoration, (byte) -6);
+            }
+            if (height == 3) {
+                Arrays.fill(tileDecoration, (byte) 8);
+            }
+            if (locFile != null) {
+                for (int tile = 0; tile < SIZE; ) {
+                    int val = locFile.readUnsignedByte();
+                    if (val < 128) {
+                        wallsDiagonal[tile++] = val + 48000;
+                    } else {
+                        tile += val - 128;
+                    }
+                }
+            }
         }
-      }
-      lastVal = 64;
-      for (int tileY = 0; tileY < 48; tileY++) {
-        for (int tileX = 0; tileX < 48; tileX++) {
-          lastVal = terrainHeight[tileX * 48 + tileY] + lastVal & 0x7f;
-          terrainHeight[tileX * 48 + tileY] = (byte) (lastVal * 2);
+
+        if (heiFile != null) {
+            lastVal = 0;
+            for (int tile = 0; tile < 2304; ) {
+                int val = heiFile.readUnsignedByte();
+                if (val < 128) {
+                    terrainHeight[tile++] = (byte) val;
+                    lastVal = val;
+                } else {
+                    for (int i = 0; i < val - 128; i++) {
+                        terrainHeight[tile++] = (byte) lastVal;
+                    }
+                }
+            }
+            lastVal = 64;
+            for (int tileY = 0; tileY < 48; tileY++) {
+                for (int tileX = 0; tileX < 48; tileX++) {
+                    lastVal = terrainHeight[tileX * 48 + tileY] + lastVal & 0x7f;
+                    terrainHeight[tileX * 48 + tileY] = (byte) (lastVal * 2);
+                }
+            }
+            lastVal = 0;
+            for (int tile = 0; tile < 2304; ) {
+                int val = heiFile.readUnsignedByte();
+                if (val < 128) {
+                    terrainColour[tile++] = (byte) val;
+                    lastVal = val;
+                } else {
+                    for (int i = 0; i < val - 128; i++) {
+                        terrainColour[tile++] = (byte) lastVal;
+                    }
+                }
+            }
+            lastVal = 35;
+            for (int tileY = 0; tileY < 48; tileY++) {
+                for (int tileX = 0; tileX < 48; tileX++) {
+                    lastVal = terrainColour[tileX * 48 + tileY] + lastVal & 0x7f;
+                    terrainColour[tileX * 48 + tileY] = (byte) (lastVal * 2);
+                }
+            }
         }
-      }
-      lastVal = 0;
-      for (int tile = 0; tile < 2304; ) {
-        int val = heiFile.readUnsignedByte();
-        if (val < 128) {
-          terrainColour[tile++] = (byte) val;
-          lastVal = val;
-        } else {
-          for (int i = 0; i < val - 128; i++) {
-            terrainColour[tile++] = (byte) lastVal;
-          }
+
+        if (jmFile != null) {
+            int val = 0;
+            for (int i = 0; i < SIZE; i++) {
+                val += jmFile.readUnsignedByte();
+                terrainHeight[i] = (byte) val;
+            }
+            val = 0;
+            for (int i = 0; i < SIZE; i++) {
+                val += jmFile.readUnsignedByte();
+                terrainColour[i] = (byte) val;
+            }
+            for (int i = 0; i < SIZE; i++) {
+                wallsEastWest[i] = jmFile.readByte();
+            }
+            for (int i = 0; i < SIZE; i++) {
+                wallsNorthSouth[i] = jmFile.readByte();
+            }
+            for (int i = 0; i < SIZE; i++) {
+                wallsDiagonal[i] = jmFile.readUnsignedByte() * 256 + jmFile.readUnsignedByte();
+            }
+            for (int i = 0; i < SIZE; i++) {
+                wallsRoof[i] = jmFile.readByte();
+            }
+            for (int i = 0; i < SIZE; i++) {
+                tileDecoration[i] = jmFile.readByte();
+            }
+            for (int i = 0; i < SIZE; i++) {
+                tileDirection[i] = jmFile.readByte();
+            }
         }
-      }
-      lastVal = 35;
-      for (int tileY = 0; tileY < 48; tileY++) {
-        for (int tileX = 0; tileX < 48; tileX++) {
-          lastVal = terrainColour[tileX * 48 + tileY] + lastVal & 0x7f;
-          terrainColour[tileX * 48 + tileY] = (byte) (lastVal * 2);
-        }
-      }
+
+        RawSector s = new RawSector();
+        System.arraycopy(terrainHeight, 0, s.groundElevation, 0, SIZE);
+        System.arraycopy(terrainColour, 0, s.groundTexture, 0, SIZE);
+        System.arraycopy(tileDecoration, 0, s.groundOverlay, 0, SIZE);
+        System.arraycopy(wallsRoof, 0, s.roofTexture, 0, SIZE);
+        System.arraycopy(wallsEastWest, 0, s.horizontalWall, 0, SIZE);
+        System.arraycopy(wallsNorthSouth, 0, s.verticalWall, 0, SIZE);
+        System.arraycopy(wallsDiagonal, 0, s.diagonalWalls, 0, SIZE);
+        return s;
     }
 
-    if (jmFile != null) {
-      int val = 0;
-      for (int i = 0; i < SIZE; i++) {
-        val += jmFile.readUnsignedByte();
-        terrainHeight[i] = (byte) val;
-      }
-      val = 0;
-      for (int i = 0; i < SIZE; i++) {
-        val += jmFile.readUnsignedByte();
-        terrainColour[i] = (byte) val;
-      }
-      for (int i = 0; i < SIZE; i++) {
-        wallsEastWest[i] = jmFile.readByte();
-      }
-      for (int i = 0; i < SIZE; i++) {
-        wallsNorthSouth[i] = jmFile.readByte();
-      }
-      for (int i = 0; i < SIZE; i++) {
-        wallsDiagonal[i] = jmFile.readUnsignedByte() * 256 + jmFile.readUnsignedByte();
-      }
-      for (int i = 0; i < SIZE; i++) {
-        wallsRoof[i] = jmFile.readByte();
-      }
-      for (int i = 0; i < SIZE; i++) {
-        tileDecoration[i] = jmFile.readByte();
-      }
-      for (int i = 0; i < SIZE; i++) {
-        tileDirection[i] = jmFile.readByte();
-      }
+    @Override
+    public String describe() {
+        return "JAG maps" + rev + (memberWorld && mapsMem != null ? "+.mem" : "") + " under " + mapsDir;
     }
 
-    RawSector s = new RawSector();
-    System.arraycopy(terrainHeight, 0, s.groundElevation, 0, SIZE);
-    System.arraycopy(terrainColour, 0, s.groundTexture, 0, SIZE);
-    System.arraycopy(tileDecoration, 0, s.groundOverlay, 0, SIZE);
-    System.arraycopy(wallsRoof, 0, s.roofTexture, 0, SIZE);
-    System.arraycopy(wallsEastWest, 0, s.horizontalWall, 0, SIZE);
-    System.arraycopy(wallsNorthSouth, 0, s.verticalWall, 0, SIZE);
-    System.arraycopy(wallsDiagonal, 0, s.diagonalWalls, 0, SIZE);
-    return s;
-  }
+    @Override
+    public void close() {}
 
-  /**
-   * {@code based_map_data} 28..62 RLE layout.
-   */
-  private static void decodeDatAlt(JagFile f, byte[] ew, byte[] ns, int[] diag,
-      byte[] roof, byte[] deco, byte[] dir) {
-    rleBytes(f, ew);
-    rleBytes(f, ns);
-    for (int i = 0; i < SIZE; ) {
-      int val = f.readUnsignedByte();
-      if (val < 128) {
-        diag[i++] = val;
-      } else {
-        for (int x = 0; x < val - 128; x++) {
-          diag[i++] = 0;
-        }
-      }
+    private static String sectorName(int height, int sectionX, int sectionY) {
+        return "m" + height + sectionX / 10 + sectionX % 10 + sectionY / 10 + sectionY % 10;
     }
-    for (int i = 0; i < SIZE; ) {
-      int val = f.readUnsignedByte();
-      if (val < 128) {
-        diag[i++] = val + 12000;
-      } else {
-        i += val - 128;
-      }
-    }
-    rleBytes(f, roof);
-    rleBytes(f, deco);
-    rleBytes(f, dir);
-  }
 
-  /**
-   * {@code based_map_data} 63/64 (and other classic) layout.
-   */
-  private static void decodeDatClassic(JagFile f, byte[] ew, byte[] ns, int[] diag,
-      byte[] roof, byte[] deco, byte[] dir) {
-    for (int i = 0; i < SIZE; i++) {
-      ew[i] = f.readByte();
-    }
-    for (int i = 0; i < SIZE; i++) {
-      ns[i] = f.readByte();
-    }
-    for (int i = 0; i < SIZE; i++) {
-      diag[i] = f.readUnsignedByte();
-    }
-    for (int i = 0; i < SIZE; i++) {
-      int val = f.readUnsignedByte();
-      if (val > 0) {
-        diag[i] = val + 12000;
-      }
-    }
-    for (int tile = 0; tile < 2304; ) {
-      int val = f.readUnsignedByte();
-      if (val < 128) {
-        roof[tile++] = (byte) val;
-      } else {
-        for (int i = 0; i < val - 128; i++) {
-          roof[tile++] = 0;
+    private static void decodeDatAlt(
+            JagFile f, byte[] ew, byte[] ns, int[] diag, byte[] roof, byte[] deco, byte[] dir) {
+        rleBytes(f, ew);
+        rleBytes(f, ns);
+        for (int i = 0; i < SIZE; ) {
+            int val = f.readUnsignedByte();
+            if (val < 128) {
+                diag[i++] = val;
+            } else {
+                for (int x = 0; x < val - 128; x++) {
+                    diag[i++] = 0;
+                }
+            }
         }
-      }
-    }
-    int lastVal = 0;
-    for (int tile = 0; tile < 2304; ) {
-      int val = f.readUnsignedByte();
-      if (val < 128) {
-        deco[tile++] = (byte) val;
-        lastVal = val;
-      } else {
-        for (int i = 0; i < val - 128; i++) {
-          deco[tile++] = (byte) lastVal;
+        for (int i = 0; i < SIZE; ) {
+            int val = f.readUnsignedByte();
+            if (val < 128) {
+                diag[i++] = val + 12000;
+            } else {
+                i += val - 128;
+            }
         }
-      }
+        rleBytes(f, roof);
+        rleBytes(f, deco);
+        rleBytes(f, dir);
     }
-    for (int tile = 0; tile < 2304; ) {
-      int val = f.readUnsignedByte();
-      if (val < 128) {
-        dir[tile++] = (byte) val;
-      } else {
-        for (int i = 0; i < val - 128; i++) {
-          dir[tile++] = 0;
-        }
-      }
-    }
-  }
 
-  /**
-   * Run-length: literal if {@code <128}, else a run of {@code val-128} zeros.
-   */
-  private static void rleBytes(JagFile f, byte[] out) {
-    for (int i = 0; i < SIZE; ) {
-      int val = f.readUnsignedByte();
-      if (val < 128) {
-        out[i++] = (byte) val;
-      } else {
-        for (int x = 0; x < val - 128; x++) {
-          out[i++] = 0;
+    private static void decodeDatClassic(
+            JagFile f, byte[] ew, byte[] ns, int[] diag, byte[] roof, byte[] deco, byte[] dir) {
+        for (int i = 0; i < SIZE; i++) {
+            ew[i] = f.readByte();
         }
-      }
+        for (int i = 0; i < SIZE; i++) {
+            ns[i] = f.readByte();
+        }
+        for (int i = 0; i < SIZE; i++) {
+            diag[i] = f.readUnsignedByte();
+        }
+        for (int i = 0; i < SIZE; i++) {
+            int val = f.readUnsignedByte();
+            if (val > 0) {
+                diag[i] = val + 12000;
+            }
+        }
+        for (int tile = 0; tile < 2304; ) {
+            int val = f.readUnsignedByte();
+            if (val < 128) {
+                roof[tile++] = (byte) val;
+            } else {
+                for (int i = 0; i < val - 128; i++) {
+                    roof[tile++] = 0;
+                }
+            }
+        }
+        int lastVal = 0;
+        for (int tile = 0; tile < 2304; ) {
+            int val = f.readUnsignedByte();
+            if (val < 128) {
+                deco[tile++] = (byte) val;
+                lastVal = val;
+            } else {
+                for (int i = 0; i < val - 128; i++) {
+                    deco[tile++] = (byte) lastVal;
+                }
+            }
+        }
+        for (int tile = 0; tile < 2304; ) {
+            int val = f.readUnsignedByte();
+            if (val < 128) {
+                dir[tile++] = (byte) val;
+            } else {
+                for (int i = 0; i < val - 128; i++) {
+                    dir[tile++] = 0;
+                }
+            }
+        }
     }
-  }
 
-  /** No-op: {@link JagArchive} holds only an in-memory {@code byte[]}, no file handle. */
-  @Override
-  public void close() {
-  }
+    private static void rleBytes(JagFile f, byte[] out) {
+        for (int i = 0; i < SIZE; ) {
+            int val = f.readUnsignedByte();
+            if (val < 128) {
+                out[i++] = (byte) val;
+            } else {
+                for (int x = 0; x < val - 128; x++) {
+                    out[i++] = 0;
+                }
+            }
+        }
+    }
 }

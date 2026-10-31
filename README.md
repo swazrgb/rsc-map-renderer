@@ -12,7 +12,9 @@ Software to generate a 2D & 3D render of the world of RuneScape Classic.
 
 | Module | What it is |
 | --- | --- |
-| **`game-data/`** | Shared loaders for the OpenRSC data tree — `ServerConf` (locates `conf/server`), the `SceneryLocs`/`BoundaryLocs`/`NpcLocs` parsers, and `LandscapeSource`, which reads a landscape from either the classic `.jag`/`.mem` archives or an `.orsc` repack behind one interface. |
+| **`game-data/`** | The OpenRSC data tree as one loaded world — `GameEnvironment.load(conf, world, landscape)` over `ServerConf` (locates `conf/server`), `WorldProfile` (which world's locs and landscape), `LandscapeSource` (the classic `.jag`/`.mem` archives or an `.orsc` repack behind one interface), the def and locs parsers, the collision map, the id tables and `Location`. |
+| **`account-data/`** | One account's durable state as frozen tick-values — `Inventory`/`Bank` containers, `Stats`, `Quests`, and the `AccountFacts` eligibility view the pathfinder plans against. |
+| **`nav/`** | The pathfinder: the contraction-hierarchy engine (`openrsc.nav.engine`), the `Transport` contract, the route follower (`openrsc.nav.walk` — how a route is walked one tick at a time, shared by the bot's walker and the route probe), the full transport registry (`AllTransports` — every ladder, ship, gate, spell, agility shortcut and quest obstacle as data, with `AccountFacts` prerequisites and an `EngageSpec`), and `Pathfinder`, built once from a `GameEnvironment`. Planning-side only: executing a transport against the live world is the bot's job. |
 | **`client-render/`** | Headless port of the OpenRSC client software renderer: rasterizes terrain + scenery models + walls from the `.orsc` cache into a plain `int[]` buffer. |
 | **`world3d-bake/`** | Bakes the complete static `/api/world3d/*` + `/api/map/*` asset tree the 3D viewer consumes — world-mesh cells, engine textures, the object/door libraries, npc/item/font/scenery sprite atlases, and the per-layer player-sprite atlas the viewer composites appearances from. |
 | **`viewer/`** | The standalone WebGL 3D world viewer (React + three.js). Renders the baked terrain + scenery mesh and billboarded NPC/player sprites. Entity data is injected via props — empty in the open-source demo. |
@@ -24,7 +26,7 @@ Software to generate a 2D & 3D render of the world of RuneScape Classic.
 `light` and the washed-out `dim` minimap shading), a walls overlay and an impassable-tile overlay —
 plus a GeoJSON feature layer (doors + NPC spawns).
 
-Prereqs: a JDK and Maven, plus a checkout of [OpenRSC](https://gitlab.com/openrsc/openrsc) beside this repo (`../openrsc`).
+Prereqs: JDK 26 (the Gradle wrapper fetches Gradle itself), plus a checkout of [OpenRSC](https://gitlab.com/openrsc/openrsc) beside this repo (`../openrsc`).
 
 ```bash
 scripts/render-map.sh map-out        # per-floor layers + previews/thumbnails into ./map-out
@@ -33,7 +35,7 @@ scripts/render-map.sh map-out 2      # …at 2× resolution
 
 ## Build the 3D viewer demo
 
-Prereqs: a JDK, Maven, Node, and a checkout of [OpenRSC](https://gitlab.com/openrsc/openrsc) beside this repo (`../openrsc`).
+Prereqs: JDK 26, Node, and a checkout of [OpenRSC](https://gitlab.com/openrsc/openrsc) beside this repo (`../openrsc`).
 
 ```bash
 scripts/build-site.sh site      # server tree + client cache auto-resolve from the ../openrsc checkout
@@ -64,8 +66,11 @@ root, each extra world in its own subdirectory. Add one by appending to `EXTRA_W
 From Java the same thing is a `WorldProfile`, read from the server's file or built by hand:
 
 ```java
-GameEnvironment cabbage = GameEnvironment.load(
-    conf, WorldProfile.fromConf(conf, "rsccabbage"), DoorOverrides.NONE);
+ServerConf conf = ServerConf.resolve();
+WorldProfile cabbage = WorldProfile.fromConf(conf, "rsccabbage");
+try (LandscapeSource landscape = cabbage.openLandscape(conf)) {
+  GameEnvironment env = GameEnvironment.load(conf, cabbage, landscape);
+}
 
 WorldProfile mine = WorldProfile.builder("my-world")
     .locationData(2)
@@ -97,7 +102,7 @@ landscape that cannot be opened is a hard error rather than a silent switch to t
 ### How it works
 
 The viewer fetches everything from absolute static paths (`/api/world3d/*`,
-`/api/map/*`, `/api/npc-spawns`, `/api/items/wearables`). **Player sprites are
+`/api/world/*`, `/api/map/scenery-atlas.json`, `/api/nav/*`). **Player sprites are
 composited in the browser** (`playerCompositor.ts`) from a per-layer atlas: the
 bake ships every wearable sprite reduced to recolour-neutral pixels, and the
 viewer replays the engine's recolour + layering to draw any `layers|colours`
@@ -105,13 +110,32 @@ appearance token — so all combinations render with nothing pre-baked per token
 Control verbs (`sendWalk`/`sendInteract`) are no-ops in the open-source build —
 there's nothing to command — so the demo is purely a viewer.
 
-**The living-world demo.** `map2d`'s `DemoEntityBaker` (run via `-cp` in the
-build script, since it needs the `CollisionMap`) simulates the server's roam
-behaviour offline: **every** NPC spawn gets a ~5-minute **collision-aware** wander
-track, plus a few players around Lumbridge. The tracks are stored in
-`/api/demo/entities.json` and looped client-side. With the in-view **simulation**
-toggle on (default) the whole world is alive; untick it to drop the live NPCs and
-reveal the raw `/api/npc-spawns` spawn table (ghost markers) instead.
+**The living-world demo.** With the in-view **simulation** toggle on (default)
+the page plays the server (`viewer/src/sim/demoServer.ts`): **every** NPC spawn
+roams its box, aggroes, chases and fights by the stock server's rules, over the
+pathfinder's own walk graph, and a few players wander Lumbridge. With a route
+planned, a **route bot** walks it live — the pathfinder in its worker is the bot,
+told each tick what it sees and answering what it sends. Untick the toggle to drop
+the living world and reveal the raw `/api/world/npc-spawns.json` spawn table
+(ghost markers) instead.
+
+**Search.** The box under the toolbar finds every NPC spawn, transport, scenery
+object and boundary object (doors, railings, webs) by name
+(`viewer/src/search/`). Partial words match, and what matched most ranks first;
+results group by name and def, so "spider" lists every spider spawn, each by its
+server index, and "fountain" every fountain. A number is an NPC def id (`34`) and `#` with a number
+a server index (`#1094`), both matched exactly; `|` searches for any of several
+(`spider|monk`, `spider|123`, `34|23|74`). Every match's spawn tile is outlined
+and, while the simulation runs, its live NPC ringed and named. Pointing at a
+spawn lights the box it
+wanders in, its tile, and its NPC's ring and nameplate (or an edge pointer when
+it is out of view); pointing at a group lights all of it, and clicking a row flies the
+camera there (and opens the card a click on it in the world would). A transport
+also answers to the object it is fired from, so "ladder" finds the ladders
+whatever the engine named them — once, as transports, not again as objects. Every
+match is listed, five thousand trees included: the list draws only the lines in
+view. Pointing at a group header lights the whole group, up to a thousand. The search
+is kept in `?q=`, so a search is a link.
 
 ## Feeding it live data
 
@@ -127,12 +151,13 @@ import {World3DView, configureViewerHost} from "rsc-world3d-viewer";
 import type {Observer, MapEntity} from "rsc-world3d-viewer";
 ```
 
-### 1. Entity data — the `observers` prop
+### 1. Entity data — the `observers` and `world` props
 
-Everything moving in the world arrives through one prop: `observers: Observer[]`.
-Each `Observer` is one **vantage point** onto the world — one of your bots, or
-(to mirror a whole server) every online player — carrying its own vitals *and its
-local view of everything it can see*:
+Live data arrives as two things: who is looking, and what is there.
+
+`observers: Observer[]` is the first. Each `Observer` is one **vantage point** —
+one of your bots, or (to mirror a whole server) every online player — carrying
+its own position and vitals, and nothing about anyone else:
 
 ```ts
 interface Observer {
@@ -169,18 +194,6 @@ interface Observer {
   /** …and the tick it popped. */
   bubbleTick?: number;
 
-  // The observer's LOCAL VIEW — everything this observer can see right now, merged
-  // across all observers (deduped by serverIndex / tile) into one shared world:
-  /** NPCs in view. */
-  npcs?: MapEntity[];
-  /** Other players in view. */
-  players?: MapEntity[];
-  /** Items lying on the floor. */
-  groundItems?: MapEntity[];
-  /** Live scenery — a mined rock, an opened chest (overrides the static bake). */
-  objects?: MapEntity[];
-  /** Doors / gates, addressed by tile-edge (their `dir`). */
-  wallObjects?: MapEntity[];
   /** Arrows / spells launched this tick (each animates once, then is gone). */
   projectiles?: {
     /** Which sprite: 0 orb, 1 magic, 2 ranged, 3 gnomeball, 4 skull, 5 spikeball. */
@@ -197,13 +210,35 @@ interface Observer {
 }
 ```
 
-Each `npcs` / `players` / `groundItems` / `objects` / `wallObjects` entry is a
-`MapEntity`. `serverIndex` is the server's stable handle for it (and the dedup key
-across observers); everything else is optional — send only what you know:
+`world: WorldEntities` is the second: everything the observers can see between
+them, **deduplicated** — one entry per thing, not one per (thing, observer who
+sees it).
+
+```ts
+interface WorldEntities {
+  npcs: MapEntity[];
+  players: MapEntity[];
+  /** Live scenery — a mined rock, an opened chest (overrides the static bake). */
+  objects: MapEntity[];
+  /** Doors / gates, addressed by tile-edge (their `dir`). */
+  wallObjects: MapEntity[];
+  groundItems: MapEntity[];
+}
+```
+
+Deduplicating is the feed's job, not the view's. Observers overlap heavily — a
+crowded bank is the same forty players in eight lists — and whoever assembles
+the feed already knows which sighting is freshest, where the view could only
+take the first one it met and patch later chat onto it. Sending pooled state
+also keeps the per-tick payload proportional to the world rather than to
+observers × world.
+
+Every entry is a `MapEntity`. `serverIndex` is the server's stable handle for it;
+everything else is optional — send only what you know:
 
 ```ts
 interface MapEntity {
-  /** Server's stable id for this npc/player/object — the dedup key across observers. */
+  /** Server's stable id for this npc/player/object — the key the view tracks it by. */
   serverIndex: number;
   /** Definition id (npc id, item id, scenery id); `0` for players. */
   id: number;
@@ -239,17 +274,27 @@ interface MapEntity {
   bubble?: number | null;
   /** …and the tick it popped. */
   bubbleTick?: number | null;
+  /** NPCs and players: the ground ring's own colour (0xRRGGBB), to mark this one out. The ring
+   *  glides with the sprite, so it marks a walker smoothly. Hover, selection and combat still win… */
+  ringColor?: number;
+  /** …unless this is set: then only hover and selection do. */
+  ringColorFirst?: boolean;
+  /** NPCs and players: the nameplate's fill (0xRRGGBB), with dark text. */
+  tagColor?: number;
+  /** NPCs and players: show the nameplate whatever the tags toggle and zoom say. */
+  tagAlways?: boolean;
+  /** NPCs and players: an outline round the nameplate, for one of a set the host marks. */
+  tagOutline?: number;
 }
 ```
 
-Feed a **fresh array once per server tick**. The viewer:
+Feed **fresh arrays once per server tick**. The viewer:
 
 - **interpolates** every entity from its previous tile to the new one over one
   tick — you send discrete positions each tick, *not* paths, and movement comes
   out smooth;
-- **dedupes** across observers by `serverIndex` (NPCs/players) and by tile
-  (ground items / scenery), so overlapping fields-of-view merge into one world
-  and nothing is drawn twice (nor an observer re-drawn as a player another sees);
+- drops any player whose `serverIndex` belongs to one of your observers, so an
+  observer is never re-drawn as a player somebody else can see;
 - reconciles observed `objects` / `wallObjects` against the static bake, rebuilding
   only the affected scenery cells (a mined rock, an opened door). An entry
   **leaving** the pool folds back to the static object — the tree regrew, the
@@ -258,13 +303,13 @@ Feed a **fresh array once per server tick**. The viewer:
 
 ```tsx
 function Live() {
-  const [observers, setObservers] = useState<Observer[]>([]);
+  const [tick, setTick] = useState<{observers: Observer[]; world: WorldEntities}>(EMPTY);
   useEffect(() => {
     const ws = new WebSocket("wss://your-backend/stream");
-    ws.onmessage = e => setObservers(JSON.parse(e.data));   // one snapshot per tick
+    ws.onmessage = e => setTick(JSON.parse(e.data));   // one snapshot per tick
     return () => ws.close();
   }, []);
-  return <World3DView observers={observers} />;
+  return <World3DView observers={tick.observers} world={tick.world} onPickEntity={setPicked} />;
 }
 ```
 
@@ -280,19 +325,46 @@ path, drawn as a line across the map — one `{x, z}` tile per step, in order. A
 step with `hop: true` is a jump rather than a walk (a transport, ladder, or
 teleport landing), so the line breaks there instead of tracing the ground.
 
-**Pooled world state.** At scale, merging every observer's view client-side
-gets expensive. `world` takes the already-deduped entity pools
-(`npcs`/`players`/`objects`/`wallObjects`/`groundItems`, keyed by
-`serverIndex`) and entity assembly reads them directly instead of merging the
-observers' per-observer lists — `observers` then only needs each observer's own
-vitals and position. The standalone demo omits it and keeps the per-observer
-merge.
+### 2. Picks — the `onPickEntity` prop
 
-### Overlays, tools and camera — the rest of the props
+Clicking a player, NPC, scenery object or boundary reports what it landed on.
+This is the one prop besides `observers` you have to pass: the view draws no
+info card of its own, because what to show for a pick — and where — belongs to
+the app around it. That is also what lets an app showing this beside a 2D map
+put one card behind both views rather than a private copy per view.
 
-Everything below is optional and host-driven; the standalone demo passes none
-of it. Each prop's full contract is documented inline in
-[`World3DView.tsx`](viewer/src/World3DView.tsx).
+```tsx
+const [picked, setPicked] = useState<PickedEntity | null>(null);
+
+<World3DView observers={observers} onPickEntity={setPicked} />
+{picked && <EntityCard pick={picked} onClose={() => setPicked(null)} />}
+```
+
+`null` means the click hit nothing, so whatever is open should close.
+`EntityCard` is the default card, exported for embedders that would rather not
+write one; it needs no data beyond the pick. Building your own instead? Read
+`wornItems(appearance, wearables)` for the equipment rows — that is all the
+built-in one does with the token. Its `details` prop takes labelled rows the
+app knows and the pick doesn't, in place of the kind / id / in-combat line,
+each copied to the clipboard on a click: the
+demo's NPC card joins an NPC pick's `serverIndex` to its spawn
+(`npc-spawns.json`) and its `npcId` to its def (`npc-defs.json`: stats, examine
+text, and the respawn in the baked world's seconds, its respawn multiplier and
+tick applied), and a search row opens the same card. While the list points at
+nothing, the NPC whose card is open is the search's target: its tag amber, and
+a pointer at the edge of the view while it is out of sight.
+
+Because the pick is yours, so is what can produce one: `kind` is any string, not
+just the five the view reports, so an overlay that wants a click of its own to
+open the same card just calls the same setter. The demo's regions do exactly
+that.
+
+### Tools, camera and toggles — the rest of the props
+
+Everything below is optional; the standalone demo wires a few to showcase them
+and leaves the rest unset. Each prop's full contract is documented inline on
+`World3DViewProps` in [`World3DView.tsx`](viewer/src/World3DView.tsx), which is
+exported for wrapping the component.
 
 | Prop | What it does |
 | --- | --- |
@@ -301,22 +373,97 @@ of it. Each prop's full contract is documented inline in
 | `layers` | Per-class toggles (`bots`, `npcs`, `players`, `npcSpawns`, `transports`, `shops`, `wilderness`), all default on. Off skips that class's *assembly*, not just its visibility — the toggles double as perf levers. `wilderness` draws depth contours with level-number pills. |
 | `transports` | Static transports on the active floor: each anchor object glows, hovering highlights its entry tiles and raises a clickable destination chip. |
 | `shops` | Static shop registry. Shops attach to their keeper NPCs (a ⚖ glyph on the nameplate); clicking reports `onSelectShop(id)`. |
-| `cannons` | Standing multicannons, drawn as amber owner nametags (`stage` 1 base … 4 complete). |
-| `victims` | Last-known player positions as red nametags, visible at **any** zoom (unlike the zoom-gated tags) — for spotting a target from a full overview. |
-| `follow` | Username the camera follows; the camera snaps (not glides) when it changes. |
-| `panTarget` | One-shot camera pan to a labelled tile; `nonce` re-triggers repeat clicks, and a floor change routes through `onFloorIndexChange`. |
+| `follow` | Username the camera follows — an observer or any other player in view, whichever answers to the name. Re-resolved against the live entities every frame, so a relog (which changes a player's server index) doesn't lose them. The camera snaps when the name changes and defers zoom-to-cursor to stay centred; a name nobody answers to parks it until they're seen again. |
 | `floorIndex` / `onFloorIndexChange` | Controlled floor in RSC's semantic numbering (0 ground, 1/2 upper storeys, 3 underground). `FLOOR_KEYS_BY_INDEX` / `floorKeyForIndex` / `floorIndexForKey` are exported for hosts seeding from a URL. |
-| `overlays` / `onOverlaysChange` | Controlled roofs/sight/tags toggles; when provided, the in-view toolbar hides and your sidebar renders them instead. |
-| `areaSelect` / `onAreaSelected` / `areaRect` | Area-select tool: a left drag sweeps a ground rectangle and reports the inclusive tile box; the committed rectangle has resize handles, and `areaRect` lets the host own it so the same selection shows in another view. |
+| `toggles` / `onTogglesChange` | Controlled roofs/sight/tags toggles, for an app that renders them in its own chrome. Whether the in-view toolbar exists is `toolbar`, separately. |
+| `toolbar` | The in-view toolbar — floor buttons, toggles, fly. Default on; `extraToggles` appends to it and `hideSight` drops its sight checkbox. |
+| `areaTool` / `areaRect` / `onAreaRectChange` | Area tool: a left drag sweeps a ground rectangle and reports the inclusive tile box; a committed rectangle has resize handles that report on every tile they cross. `areaRect` is controlled — it *is* the box, so keeping what `onAreaRectChange` hands you is what commits a sweep, dropping it is what discards one, and `null` clears. A gesture in flight is the exception: it draws locally until you release it. |
+| `selectOnClick` | Which kinds a click marks selected in the view (white ring, outlined plate); default every kind. A kind it refuses is the app's to show — it hears every pick anyway — so there is one highlight however the pick was made: the demo hands NPCs to its search's target, since their card also opens from the search list. |
 | `walkTool` | Clicks command the selected observer through `sendWalk`/`sendInteract` — left runs the top menu entry by stock client priority, right opens the full "Choose option" menu. |
 | `useItem` / `onUseItemDone` | Armed "Use *item* with …" mode: the next world click dispatches use-item on the object/NPC/wall/ground under the cursor, then disarms. |
 | `visible` | Pass false while another tab is showing: the component stays mounted (WebGL context and geometry survive for an instant switch-back) but the render loop parks. |
 | `sharedView` | Mutable camera box shared with a 2D map: the active view writes on pan, the newly revealed view reads once to re-centre. |
 
-Plus small knobs — `selectedBot`/`onSelectBot`, `focus`, `flyNonce`/`onFlyingChange`,
+Plus small knobs — `selectedBot`/`onSelectBot`, `focus`, `onFlyingChange`,
 `extraToggles`, `hideSight` — documented inline.
 
-### 2. Control — `configureViewerHost`
+**One-shot commands go through a ref**, not through props carrying a nonce you
+bump to re-fire:
+
+```tsx
+const view = useRef<World3DHandle>(null);
+<World3DView ref={view} … />
+
+view.current?.panTo({x, z, floor});  // search hit, chat jump, "locate"
+view.current?.snapNext();            // the next update is a jump in time, not motion
+view.current?.toggleFly();           // start/stop the flyby (`onFlyingChange` reports it)
+```
+
+`snapNext` is latched rather than immediate: the data for a new instant lands
+well after the request, so it marks whichever update carries it. `scrubbing`
+can't express that — it stays false through playback, where interpolating is
+right, and only the seek is discontinuous.
+
+### 3. Overlays — your own decoration
+
+The view draws the world and what the game defines. Anything a particular
+deployment cares about — no-go boxes, raid markers, whatever you think of next —
+is an **overlay**: it gets the frame, the coordinate transform, and the two
+primitives that are tedious to rebuild correctly (draped outlines and pooled
+labels).
+
+```tsx
+const regions = useMemo(() => regionOverlay(), []);   // impl STABLE
+<World3DView … overlays={[overlay("regions", regions, myRegions)]} />  // data per render
+```
+
+Entries are keyed by `id`, so a fresh array of fresh objects every render costs
+nothing — only add and remove are lifecycle events, and `data` is an argument to
+`frame`. The `overlay()` helper checks that an implementation is paired with the
+data it expects.
+
+An overlay implements `frame` (runs every frame — so guard the expensive part
+with `drapeGate()`, below), optionally `mount`/`dispose`, and optionally
+`hitTest` + `hover` to respond to the cursor. Its context carries:
+
+| | |
+| --- | --- |
+| `group` | Its own scene node, already excluded from the pick pass, torn down with it. |
+| `toWorld(x, z)` | Tile → world with terrain height folded in. Takes **absolute** z, so an overlay never does floor arithmetic. |
+| `npcAt(serverIndex)` | Where the view draws that live NPC this frame — mid-glide, as its sprite is — and its def id, or null (a ghost spawn is not live). For anything that should follow a walker smoothly; its tile jumps one a tick. |
+| `floor` | The floor being shown; filtering your data to it is the overlay's job. |
+| `heightsRev` | Changes when the terrain has **settled** at a new shape — redrape then, not on every streamed cell. |
+| `zoomTiles` / `view` | View height in tiles (zoom-gate detail), and the frame's screen size, measured once. |
+| `ribbon(…)` / `tags(…)` | A draped outline and a pooled label layer, both owned by the overlay. |
+
+Geometry drapes at extrude time, so it has to be rebuilt when the data, the
+floor or the settled terrain changes — and only then. `drapeGate()` is that
+check: `const stale = drapeGate()` at construction, `if (!stale(ctx, data))
+return` at the top of `frame`. Labels reproject every frame and stay outside it.
+
+Two interaction rules are worth knowing before you design against them. **Hover
+is broadcast**: every overlay whose `hitTest` claims the cursor is told, because
+a character standing inside a zone must not stop the zone highlighting.
+**Clicks are not part of the interface** — put them on a label by making its tag
+pool `interactive` and setting its `onClick`. Geometry that takes clicks also
+swallows them, and a zone is big enough that the hole would eat most of the
+walkable ground it covers. A label only consumes the click itself: pressing one
+and dragging pans the camera like a press anywhere else.
+
+Draw order is named rather than numeric: `OVERLAY_BAND.ground` sits under the
+character sprites (where an outline belongs), `aboveGround` over other ground
+decoration, `chrome` over everything. Labels stack by `TAG_BAND` the same way — the same vocabulary in the DOM.
+
+Overlays are how the app this was extracted from draws its own layers — no-go
+zones with hover highlighting and a clickable label, cannon owners, victim
+markers — none of which the library knows about. The view's own route and trail
+ribbons are overlays too, same interface, same band, no private path. Both come from `pathOverlay(style)`, which is exported: a
+draped polyline that breaks at floor changes, at flagged jumps and over gaps too
+big to have been walked is a style away, not a rewrite. For everything else,
+`viewer/src/world3dTestMain.tsx` has a worked example with a ribbon, a clickable
+label and hover highlighting.
+
+### 4. Control — `configureViewerHost`
 
 Call once at startup to wire the only per-deployment behaviour: the two outbound
 control verbs. Both optional; unset verbs no-op (the open-source build is
@@ -368,10 +515,12 @@ const token = formatAppearance({sprites: [4, 5, 3], hair: 1, top: 12, bottom: 2,
 
 ### A working reference
 
-`viewer/src/world3dTestMain.tsx` is a complete, runnable host: it loads baked
-wander tracks and, every frame, assembles a one-element `observers` array and
-hands it to `World3DView`. Swap its baked-track expansion for your live stream
-(and add `configureViewerHost` for walk/interact) and you have a live client.
+`viewer/src/world3dTestMain.tsx` is a complete, runnable embedding: it loads
+baked wander tracks, builds a `WorldEntities` from them every tick, holds the
+pick and area-selection state the view reports, and adds an overlay of its own
+with hover highlighting and a clickable label — the whole contract in a few
+`useState`s. Swap its baked-track expansion for your live stream (and add
+`configureViewerHost` for walk/interact) and you have a live client.
 
 ## Dev
 

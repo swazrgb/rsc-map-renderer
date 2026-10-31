@@ -3,31 +3,33 @@ import react from "@vitejs/plugin-react";
 import {existsSync, statSync, createReadStream} from "node:fs";
 import {join, extname} from "node:path";
 
-// The viewer fetches its world assets from absolute /api/world3d/* + /api/map/*
-// + /api/npc-spawns + /api/items/wearables. In production those are served as
-// static files by the same host that serves the app (see the bake CLI + deploy
-// script). In dev, this plugin serves a baked asset tree from disk so the app
-// runs with no backend. Point it at a `world3d-bake` output dir:
-//   WORLD3D_SITE=/path/to/baked-site npm run dev
+// In dev, /api/* is served from a world3d-bake output directory: WORLD3D_SITE=<dir> npm run dev.
 const SITE = process.env.WORLD3D_SITE ?? "";
 
 const MIME: Record<string, string> = {
-    ".json": "application/json", ".png": "image/png", ".bin": "application/octet-stream",
+    ".json": "application/json",
+    ".png": "image/png",
+    ".bin": "application/octet-stream",
+    ".wasm": "application/wasm",
+    ".js": "text/javascript",
 };
 
-/** Serve <SITE>/api/* as static files (query strings ignored). */
 const bakedAssets = (): Plugin => ({
     name: "world3d-baked-assets",
     configureServer(server) {
         if (!SITE) {
             server.config.logger.warn(
                 "[world3d] WORLD3D_SITE not set — /api/* asset fetches will 404. " +
-                "Run: WORLD3D_SITE=<bake outDir> npm run dev");
+                    "Run: WORLD3D_SITE=<bake outDir> npm run dev",
+            );
             return;
         }
         server.middlewares.use((req, res, next) => {
             const url = (req.url ?? "").split("?")[0];
-            if (!url.startsWith("/api/")) return next();
+            if (!url.startsWith("/api/")) {
+                next();
+                return;
+            }
             const file = join(SITE, url);
             if (!existsSync(file) || !statSync(file).isFile()) {
                 res.statusCode = 404;
@@ -40,10 +42,11 @@ const bakedAssets = (): Plugin => ({
 });
 
 export default defineConfig({
-    // Set VITE_BASE=/repo-name/ for a GitHub *project* Pages site; defaults to
-    // "/" (root domain / user-or-org Pages / custom domain).
+    // A GitHub project Pages site needs VITE_BASE=/<repo>/.
     base: process.env.VITE_BASE ?? "/",
     plugins: [react(), bakedAssets()],
+    // The planner worker loads the TeaVM runtime with a dynamic import(), which needs a module worker.
+    worker: {format: "es"},
     build: {
         outDir: "dist",
         emptyOutDir: true,

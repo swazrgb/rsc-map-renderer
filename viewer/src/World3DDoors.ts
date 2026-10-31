@@ -1,20 +1,7 @@
 import * as THREE from "three";
-import {asset} from "./api";
+import {versioned} from "./api";
 
-/**
- * Client-side door/boundary assembly for the 3D world view.
- *
- * Static boundary edges (doors, gates, some fences) are STRIPPED from the
- * baked wall meshes; the viewer draws each one as the engine does — a single
- * quad on the tile edge, front/back textured, corner posts at per-endpoint
- * ground elevation (mudclient_create_wall_object) — and swaps an edge's
- * boundary id when a bot observes different state (an opened door).
- *
- * Lighting replicates the engine's boundary-model light call
- * (set_light(60, 24, -50,-10,-50)): ambience 16, divisor (768·|L|)>>8 = 213;
- * front shade = 16 − intensity, back = 16 + intensity.
- */
-
+/** A boundary object definition: height in engine units, front and back texture (12345678 for none). */
 export interface DoorDefLite {
     id: number;
     height: number;
@@ -22,31 +9,33 @@ export interface DoorDefLite {
     texB: number;
     doorType: number;
     name: string;
-    /** Right-click menu commands ("Open", "Picklock"…); absent when the def has none. */
+    /** Its menu commands; absent when it has none. */
     cmd1?: string;
     cmd2?: string;
 }
 
+/** A placed boundary object; z is floor-local and `dir` the tile edge it stands on. */
 export interface BoundaryPlacement {
     id: number;
     x: number;
-    z: number; // floor-local
+    z: number;
     floor: number;
     dir: number;
 }
 
+/** The boundary definitions and every placement; null when either cannot be loaded. */
 export async function fetchDoorData(): Promise<{
     defs: Map<number, DoorDefLite>;
     boundaries: BoundaryPlacement[];
 } | null> {
     try {
         const [dl, bl] = await Promise.all([
-            fetch(asset("/api/world3d/doorlib.json")),
-            fetch(asset("/api/world3d/boundaries.json")),
+            versioned("/api/world3d/doorlib.json").then((url) => fetch(url)),
+            versioned("/api/world/boundaries.json").then((url) => fetch(url)),
         ]);
         if (!dl.ok || !bl.ok) return null;
-        const doors = (await dl.json()).doors as DoorDefLite[];
-        const bounds = (await bl.json()).boundaries as BoundaryPlacement[];
+        const doors = ((await dl.json()) as {doors: DoorDefLite[]}).doors;
+        const bounds = ((await bl.json()) as {boundaries: BoundaryPlacement[]}).boundaries;
         const defs = new Map<number, DoorDefLite>();
         for (const d of doors) defs.set(d.id, d);
         return {defs, boundaries: bounds};
@@ -55,45 +44,71 @@ export async function fetchDoorData(): Promise<{
     }
 }
 
-/** Edge endpoints per direction (client mudclient_create_wall_object). */
+// The edge a boundary stands on, by direction, as the client builds it.
+// https://gitlab.com/openrsc/openrsc/-/blob/df86308af/Client_Base/src/orsc/mudclient.java#L2588
 function endpoints(x: number, z: number, dir: number): [number, number, number, number] {
     switch (dir & 3) {
-        case 0: return [x, z, x + 1, z];
-        case 1: return [x, z, x, z + 1];
-        case 2: return [x + 1, z, x, z + 1];
-        default: return [x, z, x + 1, z + 1];
+        case 0:
+            return [x, z, x + 1, z];
+        case 1:
+            return [x, z, x, z + 1];
+        case 2:
+            return [x + 1, z, x, z + 1];
+        default:
+            return [x, z, x + 1, z + 1];
     }
 }
 
-const LX = -50, LY = -10, LZ = -50;
-const DIVISOR = 213; // (light_diffuse 768 · |L| 71) >> 8
-const AMBIENCE = 16; // 256 − 60·4
+// The client's lighting for a boundary: light (-50, -10, -50), ambience 16, divisor 213; the front
+// face is shaded 16 - intensity and the back 16 + intensity.
+// https://gitlab.com/openrsc/openrsc/-/blob/df86308af/Client_Base/src/orsc/mudclient.java#L2617
+const LX = -50,
+    LY = -10,
+    LZ = -50;
+const DIVISOR = 213;
+const AMBIENCE = 16;
 
 /**
- * Assemble one cell's boundary quads, grouped by texture. Corner heights come
- * from the terrain height grid (three-y up); coordinates converted like all
- * other geometry (x mirrored).
+ * Boundary objects as the client draws them: one quad on the tile edge, each end standing on the
+ * ground at that corner, textured front and back. Grouped by texture. `cornerHeight` gives the
+ * terrain height at a tile corner; `idFor` gives a per-boundary pick id, baked into a `pickId`
+ * attribute so the whole quad is its hit area.
  */
 export function assembleDoors(
     defs: Map<number, DoorDefLite>,
     placements: BoundaryPlacement[],
     worldWidthUnits: number,
     cornerHeight: (cx: number, cz: number) => number,
-    // Optional GPU-pick id per boundary (see World3DView's id-pick); baked as a
-    // per-vertex `pickId` vec4-u8 attribute so a tall gate's whole silhouette is
-    // its hit area instead of a thin ground-proximity band.
     idFor?: (b: BoundaryPlacement) => number,
 ): {tex: number; geometry: THREE.BufferGeometry}[] {
-    type Acc = {pos: number[]; shade: number[]; base: number[]; uv: number[];
-        pid: number[]};
+    interface Acc {
+        pos: number[];
+        shade: number[];
+        base: number[];
+        uv: number[];
+        pid: number[];
+    }
     const acc = new Map<number, Acc>();
-    const push = (a: Acc, v: number[][], shade: number, tex: number,
-                  reversed: boolean, pid: number) => {
-        // v = 4 quad corners; UVs = corners in vertex order (engine quads).
-        const uvs = [[0, 0], [1, 0], [1, 1], [0, 1]];
-        const tris = reversed ? [[0, 2, 1], [0, 3, 2]] : [[0, 1, 2], [0, 2, 3]];
-        const pr = pid & 255, pg = (pid >> 8) & 255,
-              pb = (pid >> 16) & 255, pa = (pid >> 24) & 255;
+    const push = (a: Acc, v: number[][], shade: number, tex: number, reversed: boolean, pid: number) => {
+        const uvs = [
+            [0, 0],
+            [1, 0],
+            [1, 1],
+            [0, 1],
+        ];
+        const tris = reversed
+            ? [
+                  [0, 2, 1],
+                  [0, 3, 2],
+              ]
+            : [
+                  [0, 1, 2],
+                  [0, 2, 3],
+              ];
+        const pr = pid & 255,
+            pg = (pid >> 8) & 255,
+            pb = (pid >> 16) & 255,
+            pa = (pid >> 24) & 255;
         for (const tri of tris) {
             for (const idx of tri) {
                 a.pos.push(v[idx][0], v[idx][1], v[idx][2]);
@@ -117,7 +132,6 @@ export function assembleDoors(
         const [x1, z1, x2, z2] = endpoints(b.x, b.z, b.dir);
         const g1 = cornerHeight(x1, z1);
         const g2 = cornerHeight(x2, z2);
-        // Engine coords for normal math (y negative up), then convert.
         const e1 = {x: x1 * 128, y: -g1, z: z1 * 128};
         const e2 = {x: x2 * 128, y: -g2, z: z2 * 128};
         const quadE = [
@@ -126,11 +140,12 @@ export function assembleDoors(
             [e2.x, e2.y - def.height, e2.z],
             [e2.x, e2.y, e2.z],
         ];
-        // Face normal (computeNormals cross convention on v0,v1,v2).
-        const x21 = quadE[1][0] - quadE[0][0], y21 = quadE[1][1] - quadE[0][1],
-              z21 = quadE[1][2] - quadE[0][2];
-        const x31 = quadE[2][0] - quadE[0][0], y31 = quadE[2][1] - quadE[0][1],
-              z31 = quadE[2][2] - quadE[0][2];
+        const x21 = quadE[1][0] - quadE[0][0],
+            y21 = quadE[1][1] - quadE[0][1],
+            z21 = quadE[1][2] - quadE[0][2];
+        const x31 = quadE[2][0] - quadE[0][0],
+            y31 = quadE[2][1] - quadE[0][1],
+            z31 = quadE[2][2] - quadE[0][2];
         let nx = z31 * y21 - z21 * y31;
         let ny = z21 * x31 - x21 * z31;
         let nz = x21 * y31 - x31 * y21;
@@ -141,18 +156,16 @@ export function assembleDoors(
         const intensity = Math.round((nx * LX + ny * LY + nz * LZ) / DIVISOR);
         const shadeF = Math.max(0, Math.min(255, AMBIENCE - intensity));
         const shadeB = Math.max(0, Math.min(255, AMBIENCE + intensity));
-        // Convert to three space (x mirrored, y up).
+        // The normal is taken in engine space (y up negative), then the quad converted, x mirrored.
         const quad = quadE.map(([ex, ey, ez]) => [worldWidthUnits - ex, -ey, ez]);
         if (def.texF !== 12345678) {
             let a = acc.get(def.texF);
-            if (!a) acc.set(def.texF,
-                a = {pos: [], shade: [], base: [], uv: [], pid: []});
+            if (!a) acc.set(def.texF, (a = {pos: [], shade: [], base: [], uv: [], pid: []}));
             push(a, quad, shadeF, def.texF, false, pid);
         }
         if (def.texB !== 12345678) {
             let a = acc.get(def.texB);
-            if (!a) acc.set(def.texB,
-                a = {pos: [], shade: [], base: [], uv: [], pid: []});
+            if (!a) acc.set(def.texB, (a = {pos: [], shade: [], base: [], uv: [], pid: []}));
             push(a, quad, shadeB, def.texB, true, pid);
         }
     }
@@ -164,8 +177,7 @@ export function assembleDoors(
         geo.setAttribute("base", new THREE.BufferAttribute(new Uint8Array(a.base), 3, true));
         geo.setAttribute("uv", new THREE.BufferAttribute(new Float32Array(a.uv), 2));
         if (idFor) {
-            geo.setAttribute("pickId",
-                new THREE.BufferAttribute(new Uint8Array(a.pid), 4, true));
+            geo.setAttribute("pickId", new THREE.BufferAttribute(new Uint8Array(a.pid), 4, true));
         }
         out.push({tex, geometry: geo});
     }

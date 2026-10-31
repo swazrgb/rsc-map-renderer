@@ -47,14 +47,14 @@ there is no fallback between them: a landscape that cannot be opened is a hard e
 # convenience wrapper (builds the jar, then renders): outDir defaults to ./map-out
 scripts/render-map.sh [outDir] [scale]
 
-# or by hand — build a runnable fat jar
-mvn -pl . package
+# or by hand — build a runnable fat jar (from rsc-map-renderer/)
+./gradlew :map2d:shadowJar
 
 # render to ./map-out (run from inside the openrsc checkout)
-java -jar target/rsc-map-renderer.jar [outputDir]
+java -jar map2d/target/rsc-map-renderer.jar [outputDir]
 
 # or without packaging
-mvn exec:java -Dexec.args="map-out"
+./gradlew :map2d:run --args="map-out"
 ```
 
 Pass `-Dmap.scale=N` (or the script's `scale` arg) to bake every layer at `N`× the native

@@ -1,0 +1,295 @@
+.scriptgen {
+    width: 340px;
+}
+
+.scriptgen-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 8px;
+    font-size: 12px;
+    color: #c9d1d9;
+}
+
+.scriptgen-body h4 {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 4px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #8b949e;
+}
+
+.scriptgen-hint {
+    margin-left: auto;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.scriptgen-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.scriptgen-row > span:first-child {
+    width: 36px;
+    color: #8b949e;
+}
+
+.scriptgen-dim,
+.scriptgen-empty {
+    color: #8b949e;
+}
+
+.scriptgen-targets {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.scriptgen-targets li {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 1px 0;
+}
+
+.scriptgen-targets li .scriptgen-x {
+    margin-left: auto;
+}
+
+:where(.scriptgen) button.scriptgen-link {
+    padding: 0;
+    border: none;
+    background: none;
+    color: #58a6ff;
+}
+
+:where(.scriptgen) button.scriptgen-x {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+}
+
+.scriptgen-items {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.scriptgen-items th {
+    font-weight: 400;
+    color: #8b949e;
+    text-align: center;
+}
+
+.scriptgen-items td {
+    padding: 1px 2px;
+    text-align: center;
+    vertical-align: middle;
+}
+
+.scriptgen-items td.scriptgen-name {
+    max-width: 120px;
+    overflow: hidden;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.scriptgen-count {
+    width: 42px;
+    font: inherit;
+    background: #0d1117;
+    color: inherit;
+    border: 1px solid #30363d;
+    border-radius: 3px;
+}
+
+.scriptgen-picker {
+    position: relative;
+}
+
+.scriptgen-picker input {
+    width: 100%;
+    box-sizing: border-box;
+    font: inherit;
+    background: #0d1117;
+    color: inherit;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    padding: 3px 6px;
+}
+
+.scriptgen-picker ul {
+    position: absolute;
+    z-index: 2;
+    left: 0;
+    right: 0;
+    margin: 2px 0 0;
+    padding: 2px;
+    list-style: none;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+}
+
+:where(.scriptgen) .scriptgen-picker button {
+    width: 100%;
+    text-align: left;
+    border: none;
+}
+
+.scriptgen-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 4px;
+}
+
+.scriptgen-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 1px 2px;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+}
+
+.scriptgen-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 6px;
+}
+
+.scriptgen-error,
+.scriptgen-warning {
+    margin: 4px 0;
+    padding: 4px 6px;
+    border-radius: 4px;
+}
+
+.scriptgen-error {
+    border: 1px solid #f85149;
+    color: #ffa198;
+}
+
+.scriptgen-warning {
+    border: 1px solid #d29922;
+    color: #e3b341;
+}
+
+.scriptgen-steps {
+    margin: 4px 0;
+    padding-left: 18px;
+}
+
+.scriptgen-file {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 4px 0;
+}
+
+.scriptgen-file span {
+    flex: 1;
+    font-family: monospace;
+}
+
+.scriptgen-recipe {
+    max-height: 240px;
+    overflow: auto;
+    margin: 4px 0 0;
+    padding: 6px;
+    font-size: 11px;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+}
+
+:where(.scriptgen) button.scriptgen-sweep {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 18px;
+    padding: 0;
+}
+
+.scriptgen-steps code {
+    font-family: monospace;
+    color: #ff7b72;
+}
+
+:where(.scriptgen) button.scriptgen-clear {
+    margin-left: auto;
+    color: #f85149;
+    border-color: #f85149;
+}
+
+:where(.scriptgen) button.scriptgen-clear.scriptgen-clear-near {
+    margin-left: 0;
+}
+
+.fw .fw-btn.scriptgen-import {
+    width: auto;
+    padding: 0 6px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.scriptgen-bury {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+}
+
+:where(.scriptgen) button.scriptgen-toggle {
+    display: inline-flex;
+    padding: 1px;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    opacity: 0.45;
+    filter: grayscale(1);
+}
+
+:where(.scriptgen) button.scriptgen-toggle.active {
+    background: #12261e;
+    border-color: #2ea043;
+    opacity: 1;
+    filter: none;
+}
+
+.scriptgen-addall > span:first-child {
+    width: auto;
+}
+
+.scriptgen-count.wide {
+    width: 72px;
+}
+
+.scriptgen-items th.scriptgen-carry {
+    text-align: left;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.scriptgen-over {
+    color: #f85149;
+}

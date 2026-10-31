@@ -3,1693 +3,1710 @@ package openrsc.gamedata.world;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
+import java.util.Objects;
 import java.util.Set;
-import openrsc.gamedata.geometry.Area;
-import openrsc.gamedata.geometry.Point;
-import openrsc.gamedata.BoundaryLocs;
+import openrsc.gamedata.defs.BoundaryLocs;
 import openrsc.gamedata.defs.DoorDefs;
+import openrsc.gamedata.defs.ObjectDef;
 import openrsc.gamedata.defs.ObjectDefs;
-import openrsc.gamedata.SceneryLocs;
-import openrsc.gamedata.defs.DoorOverrides;
+import openrsc.gamedata.defs.SceneryLocs;
 import openrsc.gamedata.defs.TileDefs;
+import openrsc.gamedata.geometry.Area;
+import openrsc.gamedata.geometry.Dest;
+import openrsc.gamedata.geometry.Point;
+import openrsc.gamedata.geometry.Rect;
+import openrsc.gamedata.geometry.Targetable;
 import openrsc.gamedata.landscape.LandscapeSource;
 import openrsc.gamedata.landscape.RawSector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Static ground-floor walkability bitmap, derived once at startup from a RSC landscape
- * ({@link LandscapeSource} — JAG map archives or an {@code .orsc} repack) plus the door and tile
- * def tables. Mirrors plutonium {@code world.go} but limited to floor 0 (the ground plane scripts
- * will path on).
+ * The collision of the whole world, built from a landscape and the static locs: each tile's flag
+ * byte as the server's {@code TileValue.traversalMask} holds it, and its projectile clip. The walk,
+ * reach and line-of-sight tests below are the server's own rules over those flags; each names the
+ * server method it mirrors.
  *
- * <p>Each tile holds an 8-bit flag mask:
- * <pre>
- *   bit 0 (0x01)  wallNorth   — blocks moving north INTO this tile (or south OUT of (x,z+1))
- *   bit 1 (0x02)  wallEast    — blocks moving east INTO this tile
- *   bit 2 (0x04)  wallSouth   — blocks moving south INTO this tile
- *   bit 3 (0x08)  wallWest    — blocks moving west INTO this tile
- *   bit 4 (0x10)  fullBlockA  — diagonal full-block A
- *   bit 5 (0x20)  fullBlockB  — diagonal full-block B
- *   bit 6 (0x40)  fullBlockC  — ground-overlay block (water, etc.)
- * </pre>
- * Bits map to plutonium's wall* / fullBlock* constants (world.go:23-29) — the pathfinder consults
- * these via {@link #blockedDir} helpers.
+ * <p>Tiles are absolute. The four floors share one plane: floor {@code n} is
+ * {@code y = n * FLOOR_HEIGHT + floorLocalY}, and a wall along each seam keeps a walk on its floor.
+ * In RSC east is toward lower x and north toward lower y. {@link #WALL_NORTH} on a tile walls its
+ * north edge, {@link #WALL_EAST} its east edge and so on; every edge is stamped on both tiles that
+ * share it.
+ *
+ * <p>Generic free doors ({@link DoorDefs#isGenericFreeDoor}, {@link ObjectDefs#isGenericFreeDoor})
+ * are never stamped, so the map reads them open.
+ *
+ * <p>Methods taking a {@link LocalOverlay} read the map through it ({@link #flags(int, int,
+ * LocalOverlay)}); {@code null} reads the map as built. Methods taking {@link Overlays} read its
+ * walk layer to walk or stand and its line-of-sight layer for reach and line of sight. Immutable
+ * once built, so safe to share across threads.
+ *
+ * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/io/WorldLoader.java#L337">WorldLoader.loadSection</a>
+ * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/world/World.java#L489">World.registerGameObject</a>
+ * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/PathValidation.java#L523">PathValidation.checkAdjacent</a>
  */
 public final class CollisionMap {
 
-  private static final Logger LOG = LoggerFactory.getLogger(CollisionMap.class);
+    /**
+     * How far a trade request reaches, in tiles of truncated pythagoras.
+     *
+     * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/net/rsc/handlers/PlayerTradeHandler.java#L98">PlayerTradeHandler.process</a>
+     */
+    public static final int TRADE_RANGE = 4;
 
-  // Per-tile collision bitmask (wire format, plutonium world.go): bits 0-3 the
-  // four cardinal wall edges, 4-6 the server's three full-block sources.
-  public static final int WALL_NORTH = 1 << 0; // 0x01
-  public static final int WALL_EAST  = 1 << 1; // 0x02
-  public static final int WALL_SOUTH = 1 << 2; // 0x04
-  public static final int WALL_WEST  = 1 << 3; // 0x08
-  public static final int FULL_BLOCK_A = 1 << 4; // 0x10
-  public static final int FULL_BLOCK_B = 1 << 5; // 0x20
-  public static final int FULL_BLOCK_C = 1 << 6; // 0x40
-  public static final int FULL_BLOCK = FULL_BLOCK_A | FULL_BLOCK_B | FULL_BLOCK_C;
+    /**
+     * Changes whenever a change to the step rules can change which steps are legal, so step data
+     * kept outside the process can be recognised as stale.
+     */
+    public static final int STEP_RULES_VERSION = 1;
 
-  /**
-   * Scenery ids whose "Open" command is gated by a quest, payment, or dialogue — they cannot be
-   * opened with a plain atObject click. We stamp these as static walls so A* either picks the
-   * dedicated Transport (e.g. {@link openrsc.bot.scripts.path.transports.AlKharidGateTransport}) or
-   * routes around. Add new ids here as we discover them.
-   */
-  public static final Set<Integer> TOLL_GATE_IDS = Set.of(
-      180  // Al Kharid border gate — needs 10 coins via BorderGuard NPC
-  );
+    private static final Logger LOG = LoggerFactory.getLogger(CollisionMap.class);
 
-  /**
-   * Object/door names whose tiles the server marks {@code projectileAllowed} (line of sight passes
-   * over them). Verbatim, lower-cased copy of server {@code Constants.objectsProjectileClipAllowed}
-   * — kept in sync by {@link openrsc.gamedata.world.CollisionMapServerParityTest} which transcribes
-   * the same source independently. Compared case-insensitively (server uses {@code equalsIgnoreCase}).
-   */
-  private static final Set<String> PROJECTILE_CLIP_ALLOWED_NAMES = Set.of(
-      "gravestone", "sign", "broken pillar", "bone", "animalskull", "skull", "egg", "eggs", "ladder",
-      "torch", "rock", "treestump", "railing", "railings", "gate", "fence", "table", "smashed chair",
-      "smashed table", "longtable", "wooden gate", "metal gate", "chair");
+    /**
+     * Tiles a mob blocks this tick. The step tests consult it where the server's step test consults
+     * mob blocking: at the destination and, for a diagonal, at both flanks, never at the mover's own
+     * tile.
+     *
+     * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/PathValidation.java#L625">PathValidation.checkBlocking</a>
+     */
+    @FunctionalInterface
+    public interface TileOccupancy {
 
-  /**
-   * Landscape-archive wall ids that projectiles / line of sight pass over even though they block
-   * walking — fences and low rails baked into the map sectors (horizontal/vertical/diagonal wall
-   * values), distinct from the name-keyed {@link #PROJECTILE_CLIP_ALLOWED_NAMES} scenery objects.
-   * Verbatim copy of server {@code WorldLoader.ALLOWED_WALL_ID_TYPES}; the raw 1-based sector wall
-   * value is tested (the server passes {@code verticalWall}/{@code horizontalWall}/{@code
-   * diagonalWalls & 0xFF}, not the {@code -1} def index). Missing this made the cannon/ranged/trade
-   * LOS wall off fences the server shoots through (e.g. the ogre pen at ~662,533).
-   */
-  private static final Set<Integer> PROJECTILE_CLIP_ALLOWED_WALL_IDS =
-      Set.of(5, 6, 14, 42, 63, 128, 229, 230);
+        boolean blockedAt(int x, int y);
+    }
 
-  private static boolean isLandscapeWallProjectilePass(int rawWallId) {
-    return PROJECTILE_CLIP_ALLOWED_WALL_IDS.contains(rawWallId);
-  }
+    /**
+     * A wall on the tile's north edge. The flag bits are the server's {@code CollisionFlag} bits.
+     *
+     * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/util/rsc/CollisionFlag.java#L4">CollisionFlag.WALL_NORTH</a>
+     */
+    public static final int WALL_NORTH = 1 << 0;
 
-  // Landscape archive layout. X range mirrors plutonium world.go; the Y
-  // range mirrors the SERVER's WorldLoader.loadWorld, which loops
-  // `sy < 944` step 48 → sector rows 37..56 (20 rows) per floor. We used
-  // to load row 57 as well — a sector the server never reads — which left
-  // ~48 rows of phantom-walkable stale terrain per floor seam (bot map
-  // walkable, server FULL_BLOCK). See pathfinder review 2026-06.
-  public static final int REGION_SIZE = 48;
-  public static final int LOAD_REGION_X_FROM = 48;
-  public static final int LOAD_REGION_X_TO = 68;
-  public static final int LOAD_REGION_Y_FROM = 37;
-  public static final int LOAD_REGION_Y_TO = 56;
-  static final int REGIONS_X = LOAD_REGION_X_TO - LOAD_REGION_X_FROM + 1; // 21
-  static final int REGIONS_Y = LOAD_REGION_Y_TO - LOAD_REGION_Y_FROM + 1; // 20
-  static final int TILE_BYTES = 10; // groundEl, groundTex, groundOv, roofTex, hwall, vwall, 4×diagonalWalls
+    public static final int WALL_EAST = 1 << 1;
+    public static final int WALL_SOUTH = 1 << 2;
+    public static final int WALL_WEST = 1 << 3;
+    /** A diagonal wall: a dir-2 boundary, or a landscape diagonal of 12001..23999. */
+    public static final int FULL_BLOCK_A = 1 << 4;
+    /** The other diagonal wall: a dir-3 boundary, or a landscape diagonal of 1..11999. */
+    public static final int FULL_BLOCK_B = 1 << 5;
+    /** A solid block: def-type 1 scenery, a blocking ground overlay, or no landscape at all. */
+    public static final int FULL_BLOCK_C = 1 << 6;
 
-  /**
-   * Number of vertical floor planes (0=ground, 1/2=upper, 3=basement).
-   */
-  public static final int FLOOR_COUNT = 4;
-  /**
-   * Y offset per floor — RSC encodes upper-floor tiles at {@code y + 944*floor}.
-   */
-  public static final int FLOOR_HEIGHT = 944;
-  /**
-   * Width in absolute world tiles (same across floors).
-   */
-  public static final int WIDTH = REGIONS_X * REGION_SIZE;
-  /**
-   * Height covering all 4 floors. Floor n occupies y = n*FLOOR_HEIGHT .. n*FLOOR_HEIGHT +
-   * REGIONS_Y*REGION_SIZE.
-   */
-  public static final int HEIGHT = FLOOR_COUNT * FLOOR_HEIGHT;
+    public static final int FULL_BLOCK = FULL_BLOCK_A | FULL_BLOCK_B | FULL_BLOCK_C;
+    /**
+     * Set only by an overlay: a projectile passes over the tile, as over a {@link #projectileAllowed}
+     * one, because of a projectile-clip scenery the server spawned there.
+     */
+    public static final int PROJECTILE_PASS = 1 << 7;
 
-  private final byte[] flags = new byte[WIDTH * HEIGHT];
-  /**
-   * Server {@code TileValue.projectileAllowed} per tile — true where a projectile / line of sight
-   * passes <em>over</em> the tile even though it may block walking. Set by the server (and mirrored
-   * here in {@link #applySceneryProjectileClip} / {@link #applyBoundaryProjectileClip}) for
-   * projectile-clip scenery: every 1×1 non-chest non-tree object (e.g. an anvil), the named
-   * allowlist (signs, railings, gates, fences, tables…), and doorType-1 boundaries on the allowlist.
-   *
-   * <p>This is what makes the server's LOS check ({@code PathValidation.checkAdjacentDistance} via
-   * {@code checkBlockingDistance}) differ from its walking check ({@code checkAdjacent}): the former
-   * treats a {@code projectileAllowed} tile as clear, the latter does not. The bot's walking
-   * collision ({@link #canStep}) ignores this field entirely — only {@link #checkPath} (trade /
-   * ranged / magic / duel line-of-sight) consults it via {@link #checkProjectileStep}. Default false
-   * (server {@code TileValue} default), so a tile that's never stamped behaves exactly as before.
-   */
-  private final boolean[] projectileAllowed = new boolean[WIDTH * HEIGHT];
-  /**
-   * Static connected-component id per tile, 8-connected over {@link #canStep} with no overlay. 0 =
-   * unwalkable (fully blocked) or out-of-bounds. Computed once after all flag stamping; see
-   * {@link #computeComponents}.
-   */
-  private final short[] components = new short[WIDTH * HEIGHT];
-  private int componentCount;
+    // The server's Constants.objectsProjectileClipAllowed, compared ignoring case.
+    // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/constants/Constants.java#L93
+    private static final Set<String> PROJECTILE_CLIP_ALLOWED_NAMES = Set.of(
+            "gravestone",
+            "sign",
+            "broken pillar",
+            "bone",
+            "animalskull",
+            "skull",
+            "egg",
+            "eggs",
+            "ladder",
+            "torch",
+            "rock",
+            "treestump",
+            "railing",
+            "railings",
+            "gate",
+            "fence",
+            "table",
+            "smashed chair",
+            "smashed table",
+            "longtable",
+            "wooden gate",
+            "metal gate",
+            "chair");
 
-  /**
-   * Raw {@code groundTexture} byte per tile from the landscape archive. Indexes the 256-entry biome
-   * palette (0-63 water, 64-127 grass, 128-191 sand, 192-255 dirt — see stock client
-   * {@code orsc/graphics/three/World.java:60-74}). Used by the web UI's terrain renderer;
-   * pathfinding ignores this.
-   */
-  private final byte[] groundTexture = new byte[WIDTH * HEIGHT];
-  /**
-   * Raw {@code groundOverlay} byte per tile (1-based id into TileDefs; 0 = no overlay). Same
-   * archive source as {@link #groundTexture}.
-   */
-  private final byte[] groundOverlay = new byte[WIDTH * HEIGHT];
-  /**
-   * Raw {@code roofTexture} byte per tile from the landscape archive. The stock client uses F0's
-   * value as its {@code hasRoofTile} rendering gate for upper floors; we keep it for the web UI's
-   * renderer only. Pathfinding deliberately does NOT gate F1+ walkability on it — the server
-   * permits walking upper-floor void ({@code ServerAcceptsVoidWalkIT}), and a roof gate would be
-   * more restrictive than the server.
-   */
-  private final byte[] roofTexture = new byte[WIDTH * HEIGHT];
+    // Landscape wall values (def id + 1) a projectile passes over.
+    // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/io/WorldLoader.java#L26
+    private static final Set<Integer> PROJECTILE_CLIP_ALLOWED_WALL_IDS = Set.of(5, 6, 14, 42, 63, 128, 229, 230);
 
-  private CollisionMap() {
-    // Mirror server TileValue defaults: every tile starts FULL_BLOCK_C
-    // (void / no section data). loadSection clears this for each tile in
-    // a present section, leaving missing sections (upper-floor void)
-    // permanently blocked — matches OpenRSC server behaviour, where
-    // TileValue.traversalMask = CollisionFlag.FULL_BLOCK until a sector
-    // overwrites it. Without this, A* freely explored upper-floor void
-    // tiles (no archive entry → flags stayed 0 → walkable).
-    Arrays.fill(flags, (byte) FULL_BLOCK_C);
-  }
+    /**
+     * The server's region and landscape sector edge, in tiles.
+     *
+     * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/constants/Constants.java#L77">Constants.REGION_SIZE</a>
+     */
+    public static final int REGION_SIZE = 48;
 
-  /** Door-override seam (see {@link DoorOverrides}); {@link DoorOverrides#NONE} = generic doors
-   *  only, the renderer/raw-grid view. The bot injects a SpecialDoor-backed impl. */
-  private DoorOverrides overrides = DoorOverrides.NONE;
+    /**
+     * The landscape sections the server loads on each floor: x 48..68, y 37..56, inclusive.
+     *
+     * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/io/WorldLoader.java#L527">WorldLoader.loadWorld</a>
+     */
+    public static final int LOAD_REGION_X_FROM = 48;
 
-  public static CollisionMap load(LandscapeSource landscape, DoorDefs doorDefs, TileDefs tileDefs) {
-    return load(landscape, doorDefs, tileDefs, null, null, null);
-  }
+    public static final int LOAD_REGION_X_TO = 68;
+    public static final int LOAD_REGION_Y_FROM = 37;
+    public static final int LOAD_REGION_Y_TO = 56;
+    static final int REGIONS_X = LOAD_REGION_X_TO - LOAD_REGION_X_FROM + 1;
 
-  /**
-   * Load landscape walls + optionally stamp scenery blocks and boundary walls. Pass {@code null}
-   * for any optional argument to skip that pass (e.g. tests that only need the static landscape
-   * grid).
-   */
-  public static CollisionMap load(LandscapeSource landscape, DoorDefs doorDefs, TileDefs tileDefs,
-      List<SceneryLocs.Loc> scenery, ObjectDefs objectDefs,
-      List<BoundaryLocs.Loc> boundaries) {
-    return load(landscape, doorDefs, tileDefs, scenery, objectDefs, boundaries,
-        DoorOverrides.NONE);
-  }
+    public static final int FLOOR_COUNT = 4;
+    /**
+     * The y distance between floors. The last section row of a floor runs 16 tiles past it, into the
+     * next floor's rows, on the server too.
+     *
+     * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/io/WorldLoader.java#L528">WorldLoader.loadWorld</a>
+     */
+    public static final int FLOOR_HEIGHT = 944;
 
-  /**
-   * As {@link #load(LandscapeSource, DoorDefs, TileDefs, List, ObjectDefs, List)} but with a
-   * door-override seam (the bot passes a SpecialDoor-backed impl; renderers pass
-   * {@link DoorOverrides#NONE}).
-   *
-   * <p>The landscape container is the caller's choice and does not reach this far: JAG archives and
-   * the {@code .orsc} repack both decode to {@link openrsc.gamedata.landscape.RawSector}, so region
-   * iteration, floor offsets and per-tile stamping are identical either way. Which dataset you pass
-   * matters a great deal though — only the JAG archives match a stock server's collision (see
-   * {@link LandscapeSource}). The source is <em>not</em> closed here; the caller owns it.
-   */
-  public static CollisionMap load(LandscapeSource landscape,
-      DoorDefs doorDefs, TileDefs tileDefs,
-      List<SceneryLocs.Loc> scenery, ObjectDefs objectDefs,
-      List<BoundaryLocs.Loc> boundaries, DoorOverrides overrides) {
-    CollisionMap m = new CollisionMap();
-    m.overrides = overrides;
-    for (int floor = 0; floor < FLOOR_COUNT; floor++) {
-      int missing = 0;
-      for (int rx = LOAD_REGION_X_FROM; rx <= LOAD_REGION_X_TO; rx++) {
-        for (int ry = LOAD_REGION_Y_FROM; ry <= LOAD_REGION_Y_TO; ry++) {
-          RawSector s = landscape.sector(floor, rx, ry);
-          if (s == null) {
-            missing++;
-            continue;
-          }
-          int baseX = (rx - LOAD_REGION_X_FROM) * REGION_SIZE;
-          int baseY = (ry - LOAD_REGION_Y_FROM) * REGION_SIZE + floor * FLOOR_HEIGHT;
-          for (int x = 0; x < REGION_SIZE; x++) {
-            for (int y = 0; y < REGION_SIZE; y++) {
-              int bx = baseX + x;
-              int by = baseY + y;
-              if (bx < 0 || bx >= WIDTH || by < 0 || by >= HEIGHT) {
-                continue;
-              }
-              int idx = x * REGION_SIZE + y; // sector index: x-major, matches server Sector
-              m.stampTile(bx, by, s.groundTexture[idx] & 0xFF, s.groundOverlay[idx] & 0xFF,
-                  s.roofTexture[idx] & 0xFF, s.horizontalWall[idx] & 0xFF,
-                  s.verticalWall[idx] & 0xFF, s.diagonalWalls[idx], doorDefs, tileDefs);
+    public static final int WIDTH = REGIONS_X * REGION_SIZE;
+    public static final int HEIGHT = FLOOR_COUNT * FLOOR_HEIGHT;
+
+    private final byte[] flags;
+
+    // The part of flags the static locs contributed: what a live view replaces. Terrain, landscape
+    // walls and seams are not in it; the server never streams them.
+    private final byte[] objectFlags;
+
+    private final boolean[] projectileAllowed;
+
+    private final short[] components;
+
+    // Per tile, the canStep answer for each of the 8 neighbours with no overlay and no mob, bit
+    // stepBit(dx, dy).
+    private final byte[] staticSteps;
+
+    private int componentCount;
+
+    private final StaticLocIndex staticLocIndex;
+
+    private final ObjectDefs objectDefs;
+
+    private final byte[] groundTexture;
+
+    private final byte[] groundOverlay;
+
+    private final byte[] roofTexture;
+
+    /**
+     * Builds the map: the landscape's sectors, then the static locs' collision and projectile clip.
+     * A tile with no sector stays fully blocked, as on the server. {@code scenery} and
+     * {@code boundaries} may be {@code null} to stamp none. {@code landscape} is read, not closed.
+     *
+     * @throws NullPointerException when {@code objectDefs} is {@code null}
+     */
+    public CollisionMap(
+            LandscapeSource landscape,
+            DoorDefs doorDefs,
+            TileDefs tileDefs,
+            List<SceneryLocs.Loc> scenery,
+            ObjectDefs objectDefs,
+            List<BoundaryLocs.Loc> boundaries) {
+        this.objectDefs = Objects.requireNonNull(
+                objectDefs, "objectDefs — a CollisionMap must carry the scenery defs for engagement geometry");
+        int tiles = WIDTH * HEIGHT;
+        this.flags = new byte[tiles];
+        this.objectFlags = new byte[tiles];
+        this.projectileAllowed = new boolean[tiles];
+        this.components = new short[tiles];
+        this.staticSteps = new byte[tiles];
+        this.groundTexture = new byte[tiles];
+        this.groundOverlay = new byte[tiles];
+        this.roofTexture = new byte[tiles];
+        Arrays.fill(flags, (byte) FULL_BLOCK_C);
+        for (int floor = 0; floor < FLOOR_COUNT; floor++) {
+            int missing = 0;
+            for (int rx = LOAD_REGION_X_FROM; rx <= LOAD_REGION_X_TO; rx++) {
+                for (int ry = LOAD_REGION_Y_FROM; ry <= LOAD_REGION_Y_TO; ry++) {
+                    RawSector s = landscape.sector(floor, rx, ry);
+                    if (s == null) {
+                        missing++;
+                        continue;
+                    }
+                    int baseX = (rx - LOAD_REGION_X_FROM) * REGION_SIZE;
+                    int baseY = (ry - LOAD_REGION_Y_FROM) * REGION_SIZE + floor * FLOOR_HEIGHT;
+                    for (int x = 0; x < REGION_SIZE; x++) {
+                        for (int y = 0; y < REGION_SIZE; y++) {
+                            int bx = baseX + x;
+                            int by = baseY + y;
+                            if (bx < 0 || bx >= WIDTH || by < 0 || by >= HEIGHT) {
+                                continue;
+                            }
+                            int idx = x * REGION_SIZE + y;
+                            stampTile(
+                                    bx,
+                                    by,
+                                    s.groundTexture[idx] & 0xFF,
+                                    s.groundOverlay[idx] & 0xFF,
+                                    s.roofTexture[idx] & 0xFF,
+                                    s.horizontalWall[idx] & 0xFF,
+                                    s.verticalWall[idx] & 0xFF,
+                                    s.diagonalWalls[idx],
+                                    doorDefs,
+                                    tileDefs);
+                        }
+                    }
+                }
             }
-          }
-        }
-      }
-      if (missing > 0) {
-        LOG.debug("landscape floor {}: {} missing sections (expected on sparse upper floors)",
-            floor, missing);
-      }
-    }
-    m.finishLoad(scenery, objectDefs, boundaries, doorDefs);
-    return m;
-  }
-
-  /**
-   * Shared post-decode tail: stamp scenery + boundary locs, seal floor seams, compute connected
-   * components.
-   */
-  private void finishLoad(List<SceneryLocs.Loc> scenery, ObjectDefs objectDefs,
-      List<BoundaryLocs.Loc> boundaries, DoorDefs doorDefs) {
-    if (scenery != null && objectDefs != null) {
-      int stamped = applyScenery(scenery, objectDefs);
-      LOG.info("stamped {} scenery blocks into collision map", stamped);
-      int clip = applySceneryProjectileClip(scenery, objectDefs);
-      LOG.info("stamped {} scenery projectile-clip tiles into collision map", clip);
-    }
-    if (boundaries != null) {
-      int stamped = applyBoundaries(boundaries, doorDefs);
-      LOG.info("stamped {} boundary walls into collision map", stamped);
-      if (doorDefs != null) {
-        int clip = applyBoundaryProjectileClip(boundaries, doorDefs);
-        LOG.info("stamped {} boundary projectile-clip tiles into collision map", clip);
-      }
-    }
-    sealFloorSeams();
-    computeComponents();
-  }
-
-  /**
-   * Stamp a wall along every floor seam so walking searches can never step between the flat-encoded
-   * floor planes.
-   *
-   * <p>Why this is needed: each floor's last sector row (sy=912, local y
-   * 912..959) bleeds 16 rows past the 944-tile floor stride into the next floor's address space —
-   * on the SERVER too (WorldLoader writes them and missing upper-floor sectors leave the stale rows
-   * walkable). Pre-fix the map had ~3000 walkable canStep crossings at the floor 1→2 seam and one
-   * walking component spanning both floors, letting cluster legs, intra matrices, and the component
-   * oracle plan geographic-nonsense "walks" between floors (bottom-row HPA clusters straddle the
-   * seam internally).
-   *
-   * <p>The server would technically accept such a step, but a sane route
-   * never needs it — floors are only meant to connect via ladder/stair transports. A static wall
-   * row costs nothing on the canStep hot path, unlike a per-call floor-equality check.
-   */
-  private void sealFloorSeams() {
-    for (int floor = 1; floor < FLOOR_COUNT; floor++) {
-      int seamY = floor * FLOOR_HEIGHT;
-      for (int x = 0; x < WIDTH; x++) {
-        or(x, seamY, WALL_NORTH);       // blocks dy=-1 out of the upper plane
-        or(x, seamY - 1, WALL_SOUTH);   // blocks dy=+1 out of the lower plane
-      }
-    }
-  }
-
-  /**
-   * 8-connected walking flood-fill over the static topology (null overlay). Labels every walkable
-   * tile with a 1-based component id; blocked tiles stay 0. Used by {@link #componentId} for the
-   * pathfinder's reachability oracle: tiles in different components can never be connected by
-   * walking alone, so A* on such pairs can early-exit (Transports may still bridge components — the
-   * pathfinder handles that separately).
-   */
-  private void computeComponents() {
-    int label = 0;
-    int[] queue = new int[1 << 16]; // grows on demand
-    for (int y = 0; y < HEIGHT; y++) {
-      for (int x = 0; x < WIDTH; x++) {
-        int idx = y * WIDTH + x;
-        if (components[idx] != 0) {
-          continue;
-        }
-        if ((flags[idx] & FULL_BLOCK) != 0) {
-          continue;
-        }
-        label++;
-        if (label > 0xFFFF) {
-          throw new IllegalStateException("too many components for short[] storage");
-        }
-        int head = 0, tail = 0;
-        if (tail >= queue.length) {
-          queue = grow(queue);
-        }
-        queue[tail++] = idx;
-        components[idx] = (short) label;
-        while (head < tail) {
-          int cur = queue[head++];
-          int cx = cur % WIDTH;
-          int cy = cur / WIDTH;
-          for (int dy = -1; dy <= 1; dy++) {
-            for (int dx = -1; dx <= 1; dx++) {
-              if (dx == 0 && dy == 0) {
-                continue;
-              }
-              int nx = cx + dx, ny = cy + dy;
-              if (nx < 0 || nx >= WIDTH || ny < 0 || ny >= HEIGHT) {
-                continue;
-              }
-              int nidx = ny * WIDTH + nx;
-              if (components[nidx] != 0) {
-                continue;
-              }
-              if (!canStep(cx, cy, nx, ny, null)) {
-                continue;
-              }
-              components[nidx] = (short) label;
-              if (tail >= queue.length) {
-                queue = grow(queue);
-              }
-              queue[tail++] = nidx;
+            if (missing > 0) {
+                LOG.debug("landscape floor {}: {} missing sections (expected on sparse upper floors)", floor, missing);
             }
-          }
         }
-      }
+        this.staticLocIndex = StaticLocIndex.build(scenery, objectDefs, boundaries, doorDefs);
+        staticLocIndex.forEachContribution(this::orObject);
+        LOG.info(
+                "stamped {}/{} scenery and {}/{} boundary locs into collision map",
+                staticLocIndex.stampedSceneryCount(),
+                staticLocIndex.sceneryCount(),
+                staticLocIndex.stampedBoundaryCount(),
+                staticLocIndex.boundaryCount());
+        if (scenery != null && objectDefs != null) {
+            int clip = applySceneryProjectileClip(scenery, objectDefs);
+            LOG.info("stamped {} scenery projectile-clip tiles into collision map", clip);
+        }
+        if (boundaries != null && doorDefs != null) {
+            int clip = applyBoundaryProjectileClip(boundaries, doorDefs);
+            LOG.info("stamped {} boundary projectile-clip tiles into collision map", clip);
+        }
+        sealFloorSeams();
+        long stepsStart = System.nanoTime();
+        buildStaticSteps();
+        LOG.info("baked static steps in {}ms", (System.nanoTime() - stepsStart) / 1_000_000);
+        computeComponents();
     }
-    componentCount = label;
-    LOG.info("collision-map: labelled {} walking components", label);
-  }
 
-  private static int[] grow(int[] a) {
-    int[] b = new int[a.length * 2];
-    System.arraycopy(a, 0, b, 0, a.length);
-    return b;
-  }
+    /** Every per-tile plane of a map, each {@code WIDTH * HEIGHT} long and indexed {@code y * WIDTH + x}. */
+    public record Planes(
+            byte[] flags,
+            byte[] objectFlags,
+            boolean[] projectileAllowed,
+            short[] components,
+            int componentCount,
+            byte[] staticSteps,
+            byte[] groundTexture,
+            byte[] groundOverlay,
+            byte[] roofTexture) {}
 
-  /**
-   * Static walking-component id for {@code (x, y)}. 0 = blocked or OOB; ids start at 1. Tiles
-   * sharing an id are connected via walking only (no transports). Pathfinder uses this as a
-   * reachability oracle to short- circuit unreachable searches before A* floods the map.
-   */
-  public int componentId(int x, int y) {
-    if (!inBounds(x, y)) {
-      return 0;
+    /** This map's planes: the live arrays, not copies, so a caller must not write them. */
+    public Planes planes() {
+        return new Planes(
+                flags,
+                objectFlags,
+                projectileAllowed,
+                components,
+                componentCount,
+                staticSteps,
+                groundTexture,
+                groundOverlay,
+                roofTexture);
     }
-    return components[y * WIDTH + x] & 0xFFFF;
-  }
 
-  public int componentCount() {
-    return componentCount;
-  }
-
-  /**
-   * Apply BoundaryLocs entries as wall flags. Mirrors OpenRSC server
-   * {@code World.registerGameObject} for {@code BOUNDARY} type: dir 0 = north wall (mirrored as
-   * south wall on tile y-1), dir 1 = east wall (mirrored as west wall on x-1), dirs 2/3 = diagonal
-   * full-blocks.
-   *
-   * <p>Door classification logic (replaces the old "skip everything
-   * Cmd1≠WalkTo" rule that wrongly let A* route through guild doors, jungle, flamewall, etc.):
-   * <ol>
-   *   <li>{@link SpecialDoor#at} — per-(id, x, y, dir) override. If present,
-   *       the boundary is wall-stamped here (and the Transport layer adds a
-   *       prereq-gated bypass edge).</li>
-   *   <li>{@link SpecialDoor#hasIdWildcard} — id-only override (e.g. jungle
-   *       id 204 at any (x, y)). Also wall-stamped.</li>
-   *   <li>{@link DoorDefs#isGenericFreeDoor} — name+id whitelist for the
-   *       server's unconditional-toggle bottom-of-switch arms. SKIPPED
-   *       (passable).</li>
-   *   <li>Default — wall-stamp. Catches any doorType=1 boundary that
-   *       neither has an override nor matches the generic whitelist (i.e.
-   *       a door with a script we haven't yet modeled — safer to wall it
-   *       than let A* plan through and get stuck clicking).</li>
-   * </ol>
-   */
-  private int applyBoundaries(List<BoundaryLocs.Loc> boundaries, DoorDefs doorDefs) {
-    int stamped = 0;
-    int skippedDoors = 0;
-    int specialDoorWalls = 0;
-    for (BoundaryLocs.Loc b : boundaries) {
-      int id = b.id();
-      // OpenRSC server: only boundaries with DoorType == 1 are collidable
-      // (World.java:546-549). DoorType 0 = doorframe-like decoration,
-      // 2/3 = projectile-only.
-      if (doorDefs.doorType(id) != 1) {
-        continue;
-      }
-      int x = b.pos().x();
-      int y = b.pos().y();
-      if (!inBounds(x, y)) {
-        continue;
-      }
-      int dir = b.direction();
-      // Resolution order: door override → generic whitelist → wall.
-      boolean hasOverride = overrides.has(DoorOverrides.Kind.BOUNDARY, id, x, y, dir)
-          || overrides.hasIdWildcard(DoorOverrides.Kind.BOUNDARY, id);
-      if (!hasOverride && doorDefs.isGenericFreeDoor(id)) {
-        skippedDoors++;
-        continue;
-      }
-      if (hasOverride) {
-        specialDoorWalls++;
-      }
-      switch (b.direction()) {
-        case 0 -> {
-          or(x, y, WALL_NORTH);
-          if (inBounds(x, y - 1)) {
-            or(x, y - 1, WALL_SOUTH);
-          }
-          stamped++;
-        }
-        case 1 -> {
-          or(x, y, WALL_EAST);
-          if (inBounds(x - 1, y)) {
-            or(x - 1, y, WALL_WEST);
-          }
-          stamped++;
-        }
-        case 2 -> {
-          or(x, y, FULL_BLOCK_A);
-          stamped++;
-        }
-        case 3 -> {
-          or(x, y, FULL_BLOCK_B);
-          stamped++;
-        }
-        default -> { /* unknown direction — ignore */ }
-      }
+    /**
+     * A map over {@code planes} taken from a built one, adopting the arrays, with the loc index
+     * rebuilt from the locs the planes were stamped from.
+     *
+     * @throws IllegalArgumentException when a plane is not {@code WIDTH * HEIGHT} long
+     */
+    public static CollisionMap restore(
+            Planes planes,
+            List<SceneryLocs.Loc> scenery,
+            ObjectDefs objectDefs,
+            List<BoundaryLocs.Loc> boundaries,
+            DoorDefs doorDefs) {
+        return new CollisionMap(planes, StaticLocIndex.build(scenery, objectDefs, boundaries, doorDefs), objectDefs);
     }
-    if (skippedDoors > 0) {
-      LOG.info(
-          "skipped {} generic free boundary doors (runtime-tracked); stamped {} SpecialDoor overrides",
-          skippedDoors, specialDoorWalls);
-    }
-    return stamped;
-  }
 
-  /**
-   * Apply scenery (object) entries. Mirrors OpenRSC server {@code World.registerGameObject} SCENERY
-   * branch (World.java:506-543):
-   *
-   * <ul>
-   *   <li>{@code ObjectDef.type == 1} — full block. Every tile in the
-   *       footprint gets {@link #FULL_BLOCK_C}.</li>
-   *   <li>{@code ObjectDef.type == 2} — single wall. Per-tile cardinal flag
-   *       chosen by {@code direction} (0/2/4/6), mirrored onto the adjacent
-   *       tile (e.g. dir 0 = WALL_EAST + WALL_WEST on x-1).</li>
-   *   <li>Other types (0, 3, 4, …) — non-blocking, skipped.</li>
-   * </ul>
-   * <p>
-   * Footprint width/height swap when {@code direction} is not 0 or 4.
-   */
-  private int applyScenery(List<SceneryLocs.Loc> scenery, ObjectDefs defs) {
-    int stamped = 0;
-    int skippedDoors = 0;
-    for (SceneryLocs.Loc loc : scenery) {
-      ObjectDefs.Entry def = defs.get(loc.id());
-      if (def == null) {
-        continue;
-      }
-      int typ = def.typ();
-      if (typ != 1 && typ != 2) {
-        continue;
-      }
-      // Door classification mirrors applyBoundaries (see that method's
-      // javadoc for the resolution order). For SCENERY: lookup
-      // SpecialDoor first; fall back to ObjectDefs's name+id whitelist
-      // for generic gates/doors (ids 57/60/64).
-      if (typ == 2) {
-        int dir = loc.direction();
-        int dx = loc.pos().x();
-        int dy = loc.pos().y();
-        boolean hasOverride = overrides.has(DoorOverrides.Kind.SCENERY, loc.id(), dx, dy, dir)
-            || overrides.hasIdWildcard(DoorOverrides.Kind.SCENERY, loc.id());
-        if (!hasOverride && defs.isGenericFreeDoor(loc.id())) {
-          skippedDoors++;
-          continue;
+    private CollisionMap(Planes p, StaticLocIndex index, ObjectDefs objectDefs) {
+        int tiles = WIDTH * HEIGHT;
+        if (p.flags().length != tiles
+                || p.objectFlags().length != tiles
+                || p.projectileAllowed().length != tiles
+                || p.components().length != tiles
+                || p.staticSteps().length != tiles
+                || p.groundTexture().length != tiles
+                || p.groundOverlay().length != tiles
+                || p.roofTexture().length != tiles) {
+            throw new IllegalArgumentException("planes are not " + WIDTH + "x" + HEIGHT);
         }
-      }
-      // Server stamps FULL_BLOCK_C on every typ=1 footprint including
-      // ladders (openrsc World.java:523-524) — the bot can never walk
-      // onto a ladder tile in normal play, only adjacent. Earlier this
-      // code skipped climbable typ=1 to avoid "sealing the transport
-      // off from A*", but that justification was wrong:
-      // LadderTransport.enumerateEntries covers all 8 surrounding tiles
-      // (and atObject works from each — see LadderDiagonalEntryIT), so
-      // A* can always reach the transport without ever needing to walk
-      // onto the ladder itself. Aligning with server here means the
-      // pathfinder can't plan paths *through* ladder tiles and the
-      // walls overlay correctly dims them.
-      int dir = loc.direction();
-      int w = def.width();
-      int h = def.height();
-      if (dir != 0 && dir != 4) {
-        int t = w;
-        w = h;
-        h = t;
-      }
-      int dx = loc.pos().x();
-      int dy = loc.pos().y();
-      for (int x = dx; x < dx + w; x++) {
-        for (int y = dy; y < dy + h; y++) {
-          if (!inBounds(x, y)) {
-            continue;
-          }
-          if (typ == 1) {
-            or(x, y, FULL_BLOCK_C);
-            stamped++;
-          } else { // typ == 2 — direction-keyed wall
+        this.objectDefs = Objects.requireNonNull(objectDefs, "objectDefs");
+        this.flags = p.flags();
+        this.objectFlags = p.objectFlags();
+        this.projectileAllowed = p.projectileAllowed();
+        this.components = p.components();
+        this.componentCount = p.componentCount();
+        this.staticSteps = p.staticSteps();
+        this.groundTexture = p.groundTexture();
+        this.groundOverlay = p.groundOverlay();
+        this.roofTexture = p.roofTexture();
+        this.staticLocIndex = index;
+    }
+
+    public boolean inBounds(int x, int y) {
+        return x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT;
+    }
+
+    public int width() {
+        return WIDTH;
+    }
+
+    public int height() {
+        return HEIGHT;
+    }
+
+    /** The tile's flag byte as built; {@link #FULL_BLOCK} off the map. */
+    public int flags(int x, int y) {
+        if (!inBounds(x, y)) {
+            return FULL_BLOCK;
+        }
+        return flags[y * WIDTH + x] & 0xFF;
+    }
+
+    /**
+     * The tile's flag byte read through {@code overlay}. In a chunk the overlay {@link
+     * LocalOverlay#isLive is live} for, the stream replaces the static locs' collision, so a loc the
+     * server removed reads gone; elsewhere the overlay only adds. Terrain, landscape walls and floor
+     * seams stand either way. A {@code null} overlay reads the map as built.
+     */
+    public int flags(int x, int y, LocalOverlay overlay) {
+        int f = flags(x, y);
+        if (overlay == null) {
+            return f;
+        }
+        if (overlay.isLive(x, y)) {
+            return (f & ~objectFlags(x, y)) | overlay.flags(x, y);
+        }
+        return f | overlay.flags(x, y);
+    }
+
+    /** The part of {@link #flags(int, int)} the static locs contributed; 0 off the map. */
+    public int objectFlags(int x, int y) {
+        if (!inBounds(x, y)) {
+            return 0;
+        }
+        return objectFlags[y * WIDTH + x] & 0xFF;
+    }
+
+    public boolean fullyBlocked(int x, int y) {
+        return (flags(x, y) & FULL_BLOCK) != 0;
+    }
+
+    public boolean fullyBlocked(int x, int y, LocalOverlay overlay) {
+        return (flags(x, y, overlay) & FULL_BLOCK) != 0;
+    }
+
+    /**
+     * Whether a projectile passes over the tile, though it may block walking: the server's
+     * {@code TileValue.projectileAllowed} as the world loads. {@code false} off the map.
+     *
+     * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/world/region/TileValue.java#L12">TileValue.projectileAllowed</a>
+     */
+    public boolean projectileAllowed(int x, int y) {
+        return inBounds(x, y) && projectileAllowed[y * WIDTH + x];
+    }
+
+    public boolean checkAdjacent(int fx, int fy, int tx, int ty) {
+        return checkAdjacent(fx, fy, tx, ty, (LocalOverlay) null, null);
+    }
+
+    public boolean checkAdjacent(int fx, int fy, int tx, int ty, LocalOverlay overlay) {
+        return checkAdjacent(fx, fy, tx, ty, overlay, null);
+    }
+
+    /**
+     * Whether a mob may walk from {@code (fx, fy)} to the neighbouring {@code (tx, ty)}: the
+     * server's per-step walk test. {@code false} for a tile that is not a neighbour, or off the map.
+     * {@code mob} may be {@code null} for no mob blocking.
+     *
+     * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/PathValidation.java#L523">PathValidation.checkAdjacent</a>
+     */
+    public boolean checkAdjacent(int fx, int fy, int tx, int ty, LocalOverlay overlay, TileOccupancy mob) {
+        if (!inBounds(tx, ty) || fullyBlocked(tx, ty, overlay)) {
+            return false;
+        }
+        int dx = tx - fx, dy = ty - fy;
+        int from = flags(fx, fy, overlay);
+        if (dy == 0 || dx == 0) {
+            if (mob != null && mob.blockedAt(tx, ty)) {
+                return false;
+            }
+            if (dy == 0) {
+                if (dx == 1) {
+                    return (from & WALL_WEST) == 0;
+                }
+                if (dx == -1) {
+                    return (from & WALL_EAST) == 0;
+                }
+                return false;
+            }
+            if (dy == 1) {
+                return (from & WALL_SOUTH) == 0;
+            }
+            if (dy == -1) {
+                return (from & WALL_NORTH) == 0;
+            }
+            return false;
+        }
+        if (dx > 1 || dx < -1 || dy > 1 || dy < -1) {
+            return false;
+        }
+        return canStepDiagonal(fx, fy, tx, ty, from, overlay, mob);
+    }
+
+    /**
+     * Whether {@code (fx, fy)} to {@code (tx, ty)} is one step, taken in one tick: {@link
+     * #checkAdjacent} allows it and, for a diagonal, both flanks are open or both shut. With one flank
+     * open the server's path builder walks that flank first, so the diagonal takes two steps.
+     *
+     * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/Path.java#L102">Path.addStep</a>
+     */
+    public boolean canStep(int fx, int fy, int tx, int ty, LocalOverlay overlay, TileOccupancy mob) {
+        int dx = tx - fx;
+        int dy = ty - fy;
+        if (mob == null
+                && inBounds(fx, fy)
+                && (dx | dy) != 0
+                && dx >= -1
+                && dx <= 1
+                && dy >= -1
+                && dy <= 1
+                && (overlay == null || (overlay instanceof ChunkBoxOverlay box && box.agreesAround(this, fx, fy)))) {
+            // Nothing here differs from the map as built, so the precomputed answer holds.
+            return (staticSteps[fy * WIDTH + fx] & 1 << stepBit(dx, dy)) != 0;
+        }
+        return canStepByRule(fx, fy, tx, ty, overlay, mob);
+    }
+
+    private boolean canStepByRule(int fx, int fy, int tx, int ty, LocalOverlay overlay, TileOccupancy mob) {
+        if (!checkAdjacent(fx, fy, tx, ty, overlay, mob)) {
+            return false;
+        }
+        if (fx == tx || fy == ty) {
+            return true;
+        }
+        boolean flankX = checkAdjacent(fx, fy, tx, fy, overlay, mob);
+        boolean flankY = checkAdjacent(fx, fy, fx, ty, overlay, mob);
+        return flankX == flankY;
+    }
+
+    /**
+     * A copy of the {@link #canStep} answers with no overlay and no mob: one byte per tile, indexed
+     * {@code y * WIDTH + x}, with bit {@code (dy + 1) * 3 + dx + 1} set, less one past the centre,
+     * when the step {@code (dx, dy)} is legal.
+     */
+    public byte[] staticSteps() {
+        return staticSteps.clone();
+    }
+
+    private static int stepBit(int dx, int dy) {
+        int d = (dy + 1) * 3 + dx + 1;
+        return d < 4 ? d : d - 1;
+    }
+
+    private void buildStaticSteps() {
+        for (int y = 0; y < HEIGHT; y++) {
+            for (int x = 0; x < WIDTH; x++) {
+                int bits = 0;
+                for (int dy = -1; dy <= 1; dy++) {
+                    for (int dx = -1; dx <= 1; dx++) {
+                        if ((dx | dy) != 0 && canStepByRule(x, y, x + dx, y + dy, null, null)) {
+                            bits |= 1 << stepBit(dx, dy);
+                        }
+                    }
+                }
+                staticSteps[y * WIDTH + x] = (byte) bits;
+            }
+        }
+    }
+
+    public boolean canStep(int fx, int fy, int tx, int ty) {
+        return canStep(fx, fy, tx, ty, (LocalOverlay) null, null);
+    }
+
+    public boolean canStep(int fx, int fy, int tx, int ty, LocalOverlay overlay) {
+        return canStep(fx, fy, tx, ty, overlay, null);
+    }
+
+    /**
+     * The radius a melee-shaped mob action reaches: talk, command, use on an NPC, and an attack at
+     * the {@code pvm_catching_distance} and {@code pvp_catching_distance} uranium.conf sets.
+     *
+     * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/net/rsc/handlers/NpcTalkTo.java#L41">NpcTalkTo.process</a>
+     * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/uranium.conf#L88">pvm_catching_distance</a>
+     */
+    public static final int MOB_REACH_RADIUS = 1;
+
+    /**
+     * Whether a melee-shaped action from {@code (fx, fy)} lands on a mob at {@code (tx, ty)}: within
+     * {@link #MOB_REACH_RADIUS} and a clear adjacent line. A diagonal passes one flank blocked by solid
+     * scenery, but not two. {@code (fx, fy)} is the tile the server tests: the player's next tile while
+     * walking.
+     *
+     * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/action/WalkToMobAction.java#L36">WalkToMobAction.shouldExecuteInternal</a>
+     */
+    public boolean canReachMob(int fx, int fy, int tx, int ty, LocalOverlay overlay) {
+        return Point.pythagoras(fx, fy, tx, ty) <= MOB_REACH_RADIUS
+                && checkAdjacentDistance(fx, fy, tx, ty, true, false, overlay);
+    }
+
+    /**
+     * Whether a stopped player on {@code (px, py)} reaches block scenery covering the inclusive rect:
+     * standing in it, or on a neighbour whose walls toward it are clear. Walls only, no full blocks.
+     * An empty rect ({@code minX > maxX}) is reached from nowhere.
+     *
+     * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/entity/Mob.java#L238">Mob.canReach</a>
+     * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/entity/Mob.java#L257">Mob.canReachDiagonal</a>
+     */
+    public boolean canReachScenery(int px, int py, int minX, int maxX, int minY, int maxY, LocalOverlay overlay) {
+        if (px >= minX && px <= maxX && py >= minY && py <= maxY) {
+            return true;
+        }
+        if (minX <= px - 1
+                && maxX >= px - 1
+                && minY <= py
+                && maxY >= py
+                && (flags(px - 1, py, overlay) & WALL_WEST) == 0) {
+            return true;
+        }
+        if (px + 1 >= minX
+                && px + 1 <= maxX
+                && minY <= py
+                && maxY >= py
+                && (flags(px + 1, py, overlay) & WALL_EAST) == 0) {
+            return true;
+        }
+        if (minX <= px
+                && maxX >= px
+                && py - 1 >= minY
+                && maxY >= py - 1
+                && (flags(px, py - 1, overlay) & WALL_SOUTH) == 0) {
+            return true;
+        }
+        if (minX <= px
+                && px <= maxX
+                && minY <= py + 1
+                && maxY >= py + 1
+                && (flags(px, py + 1, overlay) & WALL_NORTH) == 0) {
+            return true;
+        }
+        if (minX <= px - 1
+                && maxX >= px - 1
+                && minY <= py - 1
+                && maxY >= py - 1
+                && (flags(px - 1, py - 1, overlay) & (WALL_SOUTH | WALL_WEST)) == 0) {
+            return true;
+        }
+        if (px + 1 >= minX
+                && px + 1 <= maxX
+                && py - 1 >= minY
+                && maxY >= py - 1
+                && (flags(px + 1, py - 1, overlay) & (WALL_SOUTH | WALL_EAST)) == 0) {
+            return true;
+        }
+        if (minX <= px - 1
+                && maxX >= px - 1
+                && minY <= py + 1
+                && maxY >= py + 1
+                && (flags(px - 1, py + 1, overlay) & (WALL_NORTH | WALL_WEST)) == 0) {
+            return true;
+        }
+        if (px + 1 >= minX
+                && px + 1 <= maxX
+                && py + 1 >= minY
+                && maxY >= py + 1
+                && (flags(px + 1, py + 1, overlay) & (WALL_NORTH | WALL_EAST)) == 0) {
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Whether a projectile's line from one tile to another is clear, stepping toward the target one
+     * tile at a time. Unlike walking, a {@link #projectileAllowed} or {@link #PROJECTILE_PASS} tile
+     * never blocks. A closed door does, so pass the door-honest layer. {@code true} for one tile.
+     *
+     * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/PathValidation.java#L35">PathValidation.checkPath</a>
+     */
+    public boolean checkPath(int fromX, int fromY, int toX, int toY, LocalOverlay overlay) {
+        int curX = fromX, curY = fromY;
+        int diffX = toX - fromX;
+        int diffY = toY - fromY;
+        int max = Math.max(Math.abs(diffX), Math.abs(diffY));
+        for (int i = 0; i < max; i++) {
+            if (diffX > 0) {
+                diffX--;
+            } else if (diffX < 0) {
+                diffX++;
+            }
+            if (diffY > 0) {
+                diffY--;
+            } else if (diffY < 0) {
+                diffY++;
+            }
+            int nextX = toX - diffX;
+            int nextY = toY - diffY;
+            if (!checkAdjacentDistance(curX, curY, nextX, nextY, false, true, overlay)) {
+                return false;
+            }
+            curX = nextX;
+            curY = nextY;
+        }
+        return true;
+    }
+
+    /**
+     * The tile's walking component as built: tiles sharing an id connect by walking alone. Ids run
+     * from 1; 0 is a fully blocked tile or off the map.
+     */
+    public int componentId(int x, int y) {
+        if (!inBounds(x, y)) {
+            return 0;
+        }
+        return components[y * WIDTH + x] & 0xFFFF;
+    }
+
+    public int componentCount() {
+        return componentCount;
+    }
+
+    public StaticLocIndex staticLocIndex() {
+        return staticLocIndex;
+    }
+
+    /** The scenery def for {@code id}, or {@code null} when the id is unknown. */
+    public ObjectDef objectDef(int id) {
+        return objectDefs.get(id);
+    }
+
+    /**
+     * Whether the server accepts an action on {@code t} from {@code (fx, fy)}. The server has no one
+     * reach: each target kind has its own test, and this dispatches to the one {@code t}'s kind uses.
+     */
+    public boolean canEngage(int fx, int fy, Targetable t, LocalOverlay overlay) {
+        return switch (t.kind()) {
+            case NPC, PLAYER -> canReachMob(fx, fy, t.x(), t.z(), overlay);
+            case PLAYER_TRADE -> withinTradeRange(fx, fy, t.x(), t.z(), overlay);
+            case PLAYER_USE ->
+                canReachMob(fx, fy, t.x(), t.z(), overlay) && canReachPlayer(fx, fy, t.x(), t.z(), overlay);
+            case NPC_SPAWN -> reachesMobInPlace(fx, fy, t.x(), t.z(), overlay);
+            case SCENERY -> atScenery(fx, fy, t.id(), t.x(), t.z(), t.dir(), overlay);
+            case BOUNDARY -> atBoundary(fx, fy, t.x(), t.z(), t.dir());
+            case GROUND -> canTakeGroundItem(fx, fy, t.x(), t.z(), overlay);
+        };
+    }
+
+    /**
+     * Whether a trade request between the two tiles carries: within {@link #TRADE_RANGE} and a clear
+     * {@link #checkPath} line both ways, since each player's side tests from its own tile.
+     *
+     * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/net/rsc/handlers/PlayerTradeHandler.java#L104">PlayerTradeHandler.process</a>
+     */
+    public boolean withinTradeRange(int fx, int fy, int tx, int ty, LocalOverlay overlay) {
+        return Point.pythagoras(fx, fy, tx, ty) <= TRADE_RANGE
+                && checkPath(fx, fy, tx, ty, overlay)
+                && checkPath(tx, ty, fx, fy, overlay);
+    }
+
+    /**
+     * {@link #canReachMob}, less the diagonals with exactly one open flank: from one of those the
+     * server's path builder steps onto the open flank first, so the action lands from there.
+     *
+     * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/Path.java#L127">Path.addStep</a>
+     */
+    public boolean reachesMobInPlace(int fx, int fy, int tx, int ty, LocalOverlay overlay) {
+        if (!canReachMob(fx, fy, tx, ty, overlay)) {
+            return false;
+        }
+        int dx = tx - fx;
+        int dy = ty - fy;
+        if (dx == 0 || dy == 0) {
+            return true;
+        }
+        return checkAdjacent(fx, fy, tx, fy, overlay) == checkAdjacent(fx, fy, fx, ty, overlay);
+    }
+
+    /**
+     * Whether a stopped player on {@code (px, py)} reaches scenery {@code id} placed at {@code (x, z)}
+     * facing {@code dir}. Wall-type scenery (def type 2 or 3) is reached from any tile of its
+     * boundary, with no collision read; other scenery by {@link #canReachScenery}, and runecraft
+     * altars from further out. An unknown id is a 1x1 block.
+     *
+     * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/entity/Mob.java#L197">Mob.atObject</a>
+     */
+    public boolean atScenery(int px, int py, int id, int x, int z, int dir, LocalOverlay overlay) {
+        ObjectDef def = objectDef(id);
+        Bounds b = sceneryBounds(def, x, z, dir);
+        if (isWallScenery(def)) {
+            return b.contains(px, py);
+        }
+        return canReachScenery(px, py, b.minX(), b.maxX(), b.minY(), b.maxY(), overlay)
+                || closeSpecObject(px, py, id, b);
+    }
+
+    /**
+     * Whether a player on {@code (px, py)} reaches a boundary at {@code (x, z)}: from either tile of
+     * its edge, or the 3x3 around it for a diagonal, with no collision read.
+     *
+     * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/entity/GameObject.java#L86">GameObject.getObjectBoundary</a>
+     */
+    public static boolean atBoundary(int px, int py, int x, int z, int dir) {
+        return boundaryBounds(x, z, dir).contains(px, py);
+    }
+
+    /**
+     * Whether a take from {@code (px, py)} picks up an item on {@code (tx, ty)}: from the item's tile,
+     * or a neighbour when static scenery has its origin there; from the same server region; and with
+     * the item reachable. A player in combat or a blocking NPC on the item's tile also widens the
+     * server's reach; neither is modelled.
+     *
+     * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/net/rsc/handlers/GroundItemTake.java#L51">GroundItemTake.process</a>
+     */
+    public boolean canTakeGroundItem(int px, int py, int tx, int ty, LocalOverlay overlay) {
+        int radius = staticLocIndex.hasSceneryAt(tx, ty) ? 1 : 0;
+        return Point.pythagoras(px, py, tx, ty) <= radius
+                && sameServerRegion(px, py, tx, ty)
+                && canReachGroundItem(px, py, tx, ty, overlay);
+    }
+
+    /**
+     * Whether two tiles lie in one of the server's 48x48 regions, as a ground-item action looks the
+     * item up in the player's own region.
+     *
+     * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/world/region/RegionManager.java#L198">RegionManager.getRegion</a>
+     */
+    public static boolean sameServerRegion(int ax, int ay, int bx, int by) {
+        return ax / REGION_SIZE == bx / REGION_SIZE && ay / REGION_SIZE == by / REGION_SIZE;
+    }
+
+    /**
+     * Every tile a player can stand on from which {@link #canEngage} accepts {@code t}, except the
+     * tile an NPC or player target stands on.
+     */
+    public List<Point> engageTiles(Targetable t, LocalOverlay overlay) {
+        Bounds window =
+                switch (t.kind()) {
+                    case SCENERY -> {
+                        Bounds b = sceneryBounds(objectDef(t.id()), t.x(), t.z(), t.dir());
+                        int m = closeSpecReach(t.id());
+                        yield new Bounds(b.minX() - m, b.minY() - m, b.maxX() + m, b.maxY() + m);
+                    }
+                    case BOUNDARY -> boundaryBounds(t.x(), t.z(), t.dir());
+                    case NPC, PLAYER, PLAYER_USE, NPC_SPAWN, GROUND ->
+                        new Bounds(t.x() - 1, t.z() - 1, t.x() + 1, t.z() + 1);
+                    case PLAYER_TRADE ->
+                        new Bounds(t.x() - TRADE_RANGE, t.z() - TRADE_RANGE, t.x() + TRADE_RANGE, t.z() + TRADE_RANGE);
+                };
+        boolean mob = t.kind() == Targetable.Kind.NPC
+                || t.kind() == Targetable.Kind.PLAYER
+                || t.kind() == Targetable.Kind.PLAYER_USE;
+        List<Point> out = new ArrayList<>();
+        for (int y = window.minY(); y <= window.maxY(); y++) {
+            for (int x = window.minX(); x <= window.maxX(); x++) {
+                if (mob && x == t.x() && y == t.z()) {
+                    continue;
+                }
+                if (inBounds(x, y) && !fullyBlocked(x, y, overlay) && canEngage(x, y, t, overlay)) {
+                    out.add(new Point(x, y));
+                }
+            }
+        }
+        return out;
+    }
+
+    /** Every tile a player can stand on from which {@link #canReachScenery} reaches {@code footprint}. */
+    public List<Point> engageTilesAround(Rect footprint, LocalOverlay overlay) {
+        List<Point> out = new ArrayList<>();
+        for (int ny = footprint.minY() - 1; ny <= footprint.maxY() + 1; ny++) {
+            for (int nx = footprint.minX() - 1; nx <= footprint.maxX() + 1; nx++) {
+                if (inBounds(nx, ny)
+                        && !fullyBlocked(nx, ny, overlay)
+                        && canReachScenery(
+                                nx,
+                                ny,
+                                footprint.minX(),
+                                footprint.maxX(),
+                                footprint.minY(),
+                                footprint.maxY(),
+                                overlay)) {
+                    out.add(new Point(nx, ny));
+                }
+            }
+        }
+        return out;
+    }
+
+    /**
+     * How far a spell reaches a mob, in tiles of truncated pythagoras.
+     *
+     * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/net/rsc/handlers/SpellHandler.java#L1378">SpellHandler.handleMobCast</a>
+     */
+    public static final int SPELL_RANGE = 4;
+
+    /**
+     * Whether a ranged attack or spell at {@code (tx, ty)} is taken from {@code (fx, fy)}: within
+     * {@code range} tiles of truncated pythagoras, and a clear {@link #checkPath} line.
+     */
+    public boolean resolvesFrom(int fx, int fy, int tx, int ty, int range, LocalOverlay overlay) {
+        return Point.pythagoras(fx, fy, tx, ty) <= range && checkPath(fx, fy, tx, ty, overlay);
+    }
+
+    /** Every tile a player can stand on that {@link #resolvesFrom} accepts for {@code (tx, ty)}. */
+    public List<Point> rangeTiles(int tx, int ty, int range, LocalOverlay overlay) {
+        List<Point> out = new ArrayList<>();
+        for (int y = ty - range; y <= ty + range; y++) {
+            for (int x = tx - range; x <= tx + range; x++) {
+                if (inBounds(x, y) && !fullyBlocked(x, y, overlay) && resolvesFrom(x, y, tx, ty, range, overlay)) {
+                    out.add(new Point(x, y));
+                }
+            }
+        }
+        return out;
+    }
+
+    /**
+     * The {@link #engageTiles} tile fewest steps from {@code (fx, fy)}, walking on the walk layer, or
+     * {@code null} when none is reachable within 24 tiles of the start and those tiles.
+     */
+    public Point closestEngageTile(int fx, int fy, Targetable t, Overlays o) {
+        List<Point> goals = engageTiles(t, o.losOverlay());
+        LocalOverlay walk = o.walkOverlay();
+        if (goals.isEmpty()) {
+            return null;
+        }
+        int gMinX = fx;
+        int gMaxX = fx;
+        int gMinY = fy;
+        int gMaxY = fy;
+        for (Point g : goals) {
+            gMinX = Math.min(gMinX, g.x());
+            gMaxX = Math.max(gMaxX, g.x());
+            gMinY = Math.min(gMinY, g.y());
+            gMaxY = Math.max(gMaxY, g.y());
+        }
+        int xMin = gMinX - 24;
+        int xMax = gMaxX + 24;
+        int yMin = gMinY - 24;
+        int yMax = gMaxY + 24;
+        int width = xMax - xMin + 1;
+        int height = yMax - yMin + 1;
+        if ((long) width * height > 4 * 64 * 64) {
+            return null;
+        }
+        boolean[] goal = new boolean[width * height];
+        for (Point g : goals) {
+            if (g.x() >= xMin && g.x() <= xMax && g.y() >= yMin && g.y() <= yMax) {
+                goal[(g.y() - yMin) * width + (g.x() - xMin)] = true;
+            }
+        }
+        int start = (fy - yMin) * width + (fx - xMin);
+        if (goal[start]) {
+            return new Point(fx, fy);
+        }
+        boolean[] seen = new boolean[width * height];
+        int[] queue = new int[width * height];
+        int qh = 0;
+        int qt = 0;
+        seen[start] = true;
+        queue[qt++] = start;
+        while (qh < qt) {
+            int cur = queue[qh++];
+            int cx = xMin + cur % width;
+            int cy = yMin + cur / width;
+            for (int dy = -1; dy <= 1; dy++) {
+                for (int dx = -1; dx <= 1; dx++) {
+                    if (dx == 0 && dy == 0) {
+                        continue;
+                    }
+                    int nx = cx + dx;
+                    int ny = cy + dy;
+                    if (nx < xMin || ny < yMin || nx > xMax || ny > yMax) {
+                        continue;
+                    }
+                    int nIdx = (ny - yMin) * width + (nx - xMin);
+                    if (seen[nIdx] || !canStep(cx, cy, nx, ny, walk, null)) {
+                        continue;
+                    }
+                    if (goal[nIdx]) {
+                        return new Point(nx, ny);
+                    }
+                    seen[nIdx] = true;
+                    queue[qt++] = nIdx;
+                }
+            }
+        }
+        return null;
+    }
+
+    private record Bounds(int minX, int minY, int maxX, int maxY) {
+        boolean contains(int x, int y) {
+            return x >= minX && x <= maxX && y >= minY && y <= maxY;
+        }
+    }
+
+    private static boolean isWallScenery(ObjectDef def) {
+        return def != null && (def.typ() == 2 || def.typ() == 3);
+    }
+
+    // The server's boundary of a scenery placement, unclamped: a zero-size def gives an empty box.
+    // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/entity/GameObject.java#L48
+    private static Bounds sceneryBounds(ObjectDef def, int x, int z, int dir) {
+        int w;
+        int h;
+        if (def == null) {
+            w = 1;
+            h = 1;
+        } else if (dir != 0 && dir != 4) {
+            w = def.height();
+            h = def.width();
+        } else {
+            w = def.width();
+            h = def.height();
+        }
+        int minX = x;
+        int minY = z;
+        if (isWallScenery(def)) {
+            if (dir == 0) {
+                w++;
+                minX--;
+            }
+            if (dir == 2) {
+                h++;
+            }
+            if (dir == 6) {
+                minY--;
+                h++;
+            }
+            if (dir == 4) {
+                w++;
+            }
+        }
+        return new Bounds(minX, minY, x + w - 1, z + h - 1);
+    }
+
+    private static Bounds boundaryBounds(int x, int z, int dir) {
+        if (dir == 0) {
+            return new Bounds(x, z - 1, x, z);
+        }
+        if (dir == 1) {
+            return new Bounds(x - 1, z, x, z);
+        }
+        if (dir == 2 || dir == 3) {
+            return new Bounds(x - 1, z - 1, x + 1, z + 1);
+        }
+        return new Bounds(x, z, x, z);
+    }
+
+    // The server's further reach for runecraft altars. Its 1228..1232 clause sits in the else of the
+    // 1227 test and never matches, so it is left out.
+    // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/entity/Mob.java#L216
+    private static boolean closeSpecObject(int px, int py, int id, Bounds b) {
+        int lowXDiff = Math.abs(px - b.minX());
+        int highXDiff = Math.abs(px - b.maxX());
+        int lowYDiff = Math.abs(py - b.minY());
+        int highYDiff = Math.abs(py - b.maxY());
+        if (id >= 1190 && id <= 1225) {
+            return (lowXDiff <= 2 || highXDiff <= 2) && (lowYDiff <= 2 || highYDiff <= 2);
+        }
+        if (id == 1227) {
+            return (lowXDiff <= 2 || highXDiff <= 2) && highYDiff <= 3;
+        }
+        return false;
+    }
+
+    private static int closeSpecReach(int id) {
+        return id >= 1190 && id <= 1232 ? 3 : 1;
+    }
+
+    private boolean canReachGroundItem(int px, int py, int ex, int ey, LocalOverlay overlay) {
+        return canReachEntity(px, py, ex, ey, true, overlay);
+    }
+
+    public boolean canReachPlayer(int px, int py, int ex, int ey, LocalOverlay overlay) {
+        return canReachEntity(px, py, ex, ey, false, overlay);
+    }
+
+    // Mob.canReach(Entity): walks Mob.nextStep greedily to the target, clause for clause, including
+    // the second refusal's myYBlocked where newYBlocked would read more naturally.
+    // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/entity/Mob.java#L282
+    private boolean canReachEntity(int px, int py, int ex, int ey, boolean groundItem, LocalOverlay overlay) {
+        int x = px;
+        int y = py;
+        while (x != ex || y != ey) {
+            int newX = x;
+            int newY = y;
+            boolean myXBlocked = false;
+            boolean myYBlocked = false;
+            boolean newXBlocked = false;
+            boolean newYBlocked = false;
+            if (x > ex) {
+                myXBlocked = entityStepBlocked(x - 1, y, WALL_WEST, ex, ey, groundItem, overlay);
+                newX = x - 1;
+            } else if (x < ex) {
+                myXBlocked = entityStepBlocked(x + 1, y, WALL_EAST, ex, ey, groundItem, overlay);
+                newX = x + 1;
+            }
+            if (y > ey) {
+                myYBlocked = entityStepBlocked(x, y - 1, WALL_SOUTH, ex, ey, groundItem, overlay);
+                newY = y - 1;
+            } else if (y < ey) {
+                myYBlocked = entityStepBlocked(x, y + 1, WALL_NORTH, ex, ey, groundItem, overlay);
+                newY = y + 1;
+            }
+            if ((myXBlocked && myYBlocked) || (myXBlocked && y == newY) || (myYBlocked && x == newX)) {
+                return false;
+            }
+            if (newX > x) {
+                newXBlocked = entityStepBlocked(newX, newY, WALL_EAST, ex, ey, groundItem, overlay);
+            } else if (newX < x) {
+                newXBlocked = entityStepBlocked(newX, newY, WALL_WEST, ex, ey, groundItem, overlay);
+            }
+            if (newY > y) {
+                newYBlocked = entityStepBlocked(newX, newY, WALL_NORTH, ex, ey, groundItem, overlay);
+            } else if (newY < y) {
+                newYBlocked = entityStepBlocked(newX, newY, WALL_SOUTH, ex, ey, groundItem, overlay);
+            }
+            if ((newXBlocked && newYBlocked) || (newXBlocked && y == newY) || (myYBlocked && x == newX)) {
+                return false;
+            }
+            if ((myXBlocked && newXBlocked) || (myYBlocked && newYBlocked)) {
+                return false;
+            }
+            x = newX;
+            y = newY;
+        }
+        return true;
+    }
+
+    // Mob.isBlocking: only a ground item exempts the full block of its own tile.
+    // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/entity/Mob.java#L351
+    private boolean entityStepBlocked(int x, int y, int bit, int ex, int ey, boolean groundItem, LocalOverlay overlay) {
+        int v = flags(x, y, overlay);
+        return (v & bit) != 0
+                || (v & (FULL_BLOCK_A | FULL_BLOCK_B)) != 0
+                || ((v & FULL_BLOCK_C) != 0 && !(groundItem && x == ex && y == ey));
+    }
+
+    /** The landscape's ground texture byte for the tile; 0 off the map. */
+    public int groundTexture(int x, int absY) {
+        if (!inBounds(x, absY)) {
+            return 0;
+        }
+        return groundTexture[absY * WIDTH + x] & 0xFF;
+    }
+
+    /**
+     * Whether the tile lies in one of the landscape's sectors. A tile of none has no ground, and only
+     * a sector's overlay or a loc ever fully blocks one that has.
+     */
+    public boolean inSector(int x, int absY) {
+        if (!inBounds(x, absY)) {
+            return false;
+        }
+        int idx = absY * WIDTH + x;
+        return groundOverlay[idx] != 0
+                || groundTexture[idx] != 0
+                || (flags[idx] & ~objectFlags[idx] & FULL_BLOCK_C) == 0;
+    }
+
+    /** The tile's ground overlay, a 1-based tile def id, 0 for none or off the map; 250 reads as 2. */
+    public int groundOverlay(int x, int absY) {
+        if (!inBounds(x, absY)) {
+            return 0;
+        }
+        return groundOverlay[absY * WIDTH + x] & 0xFF;
+    }
+
+    // One tile of WorldLoader.loadSection, except that a generic free door is not stamped.
+    // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/io/WorldLoader.java#L362
+    private void stampTile(
+            int bx,
+            int by,
+            int texture,
+            int groundOverlay,
+            int roofTex,
+            int horizontalWall,
+            int verticalWall,
+            int diagonalWalls,
+            DoorDefs doorDefs,
+            TileDefs tileDefs) {
+        int rawOverlay = groundOverlay;
+        if (groundOverlay
+                == 250) { // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/io/WorldLoader.java#L380
+            groundOverlay = 2;
+        }
+        int idx = by * WIDTH + bx;
+        flags[idx] = 0;
+        this.groundTexture[idx] = (byte) texture;
+        this.groundOverlay[idx] = (byte) groundOverlay;
+        this.roofTexture[idx] = (byte) roofTex;
+        if (groundOverlay > 0 && tileDefs.objectType(groundOverlay - 1) != 0) {
+            or(bx, by, FULL_BLOCK_C);
+        }
+        if (verticalWall > 0 && doorDefs.collides(verticalWall - 1)) {
+            if (!doorDefs.isGenericFreeDoor(verticalWall - 1)) {
+                or(bx, by, WALL_NORTH);
+                if (by - 1 >= 0) {
+                    or(bx, by - 1, WALL_SOUTH);
+                }
+            }
+            if (isLandscapeWallProjectilePass(verticalWall)) {
+                setProjectileAllowed(bx, by);
+                setProjectileAllowed(bx, by - 1);
+            }
+        }
+        if (horizontalWall > 0 && doorDefs.collides(horizontalWall - 1)) {
+            if (!doorDefs.isGenericFreeDoor(horizontalWall - 1)) {
+                or(bx, by, WALL_EAST);
+                if (bx - 1 >= 0) {
+                    or(bx - 1, by, WALL_WEST);
+                }
+            }
+            if (isLandscapeWallProjectilePass(horizontalWall)) {
+                setProjectileAllowed(bx, by);
+                setProjectileAllowed(bx - 1, by);
+            }
+        }
+        int dw = diagonalWalls & 0xFFFF;
+        if (dw > 0 && dw < 12000 && doorDefs.collides(dw - 1)) {
+            if (!doorDefs.isGenericFreeDoor(dw - 1)) {
+                or(bx, by, FULL_BLOCK_B);
+            }
+            if (isLandscapeWallProjectilePass(diagonalWalls & 0xFF)) {
+                setProjectileAllowed(bx, by);
+            }
+        }
+        if (dw > 12000 && dw < 24000 && doorDefs.collides(dw - 12001)) {
+            if (!doorDefs.isGenericFreeDoor(dw - 12001)) {
+                or(bx, by, FULL_BLOCK_A);
+            }
+            if (isLandscapeWallProjectilePass(diagonalWalls & 0xFF)) {
+                setProjectileAllowed(bx, by);
+            }
+        }
+        // The server tests the overlay it stored before turning 250 into 2.
+        // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/io/WorldLoader.java#L442
+        if (rawOverlay == 2 || rawOverlay == 11) {
+            setProjectileAllowed(bx, by);
+        }
+    }
+
+    // A floor's last sector row runs 16 tiles into the next floor's rows, so without a wall a walk
+    // could cross between floors.
+    private void sealFloorSeams() {
+        for (int floor = 1; floor < FLOOR_COUNT; floor++) {
+            int seamY = floor * FLOOR_HEIGHT;
+            for (int x = 0; x < WIDTH; x++) {
+                or(x, seamY, WALL_NORTH);
+                or(x, seamY - 1, WALL_SOUTH);
+            }
+        }
+    }
+
+    private void computeComponents() {
+        int label = 0;
+        int[] queue = new int[1 << 16];
+        for (int y = 0; y < HEIGHT; y++) {
+            for (int x = 0; x < WIDTH; x++) {
+                int idx = y * WIDTH + x;
+                if (components[idx] != 0) {
+                    continue;
+                }
+                if ((flags[idx] & FULL_BLOCK) != 0) {
+                    continue;
+                }
+                label++;
+                if (label > 0xFFFF) {
+                    throw new IllegalStateException("too many components for short[] storage");
+                }
+                int head = 0, tail = 0;
+                if (tail >= queue.length) {
+                    queue = grow(queue);
+                }
+                queue[tail++] = idx;
+                components[idx] = (short) label;
+                while (head < tail) {
+                    int cur = queue[head++];
+                    int cx = cur % WIDTH;
+                    int cy = cur / WIDTH;
+                    for (int dy = -1; dy <= 1; dy++) {
+                        for (int dx = -1; dx <= 1; dx++) {
+                            if (dx == 0 && dy == 0) {
+                                continue;
+                            }
+                            int nx = cx + dx, ny = cy + dy;
+                            if (nx < 0 || nx >= WIDTH || ny < 0 || ny >= HEIGHT) {
+                                continue;
+                            }
+                            int nidx = ny * WIDTH + nx;
+                            if (components[nidx] != 0) {
+                                continue;
+                            }
+                            if (!checkAdjacent(cx, cy, nx, ny, (LocalOverlay) null)) {
+                                continue;
+                            }
+                            components[nidx] = (short) label;
+                            if (tail >= queue.length) {
+                                queue = grow(queue);
+                            }
+                            queue[tail++] = nidx;
+                        }
+                    }
+                }
+            }
+        }
+        componentCount = label;
+        LOG.info("collision-map: labelled {} walking components", label);
+    }
+
+    // The projectile clip World.registerGameObject sets for static scenery.
+    // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/world/World.java#L520
+    private int applySceneryProjectileClip(List<SceneryLocs.Loc> scenery, ObjectDefs defs) {
+        int stamped = 0;
+        for (SceneryLocs.Loc loc : scenery) {
+            ObjectDef def = defs.get(loc.id());
+            if (def == null) {
+                continue;
+            }
+            int objectType = def.typ();
+            if (objectType != 1 && objectType != 2) {
+                continue;
+            }
+            if (!isSceneryProjectileClipAllowed(def)) {
+                continue;
+            }
+            int dir = loc.direction();
+            int w = def.width();
+            int h = def.height();
+            if (dir != 0 && dir != 4) {
+                int t = w;
+                w = h;
+                h = t;
+            }
+            int dx = loc.pos().x();
+            int dy = loc.pos().y();
+            for (int x = dx; x < dx + w; x++) {
+                for (int y = dy; y < dy + h; y++) {
+                    stamped += setProjectileAllowed(x, y) ? 1 : 0;
+                    if (objectType == 1) {
+                        continue;
+                    }
+                    switch (dir) {
+                        case 0 -> stamped += setProjectileAllowed(x - 1, y) ? 1 : 0;
+                        case 2 -> stamped += setProjectileAllowed(x, y + 1) ? 1 : 0;
+                        case 4 -> stamped += setProjectileAllowed(x + 1, y) ? 1 : 0;
+                        case 6 -> stamped += setProjectileAllowed(x, y - 1) ? 1 : 0;
+                        default -> {}
+                    }
+                }
+            }
+        }
+        return stamped;
+    }
+
+    // The projectile clip World.registerGameObject sets for a listed boundary of door type 1: its tile
+    // and, for dir 0 or 2, the neighbour that dir names as a scenery direction.
+    // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/world/World.java#L593
+    private int applyBoundaryProjectileClip(List<BoundaryLocs.Loc> boundaries, DoorDefs doorDefs) {
+        int stamped = 0;
+        for (BoundaryLocs.Loc b : boundaries) {
+            int id = b.id();
+            if (doorDefs.doorType(id) != 1) {
+                continue;
+            }
+            if (!isNameProjectileClipAllowed(doorDefs.name(id))) {
+                continue;
+            }
+            int x = b.pos().x();
+            int y = b.pos().y();
+            int dir = b.direction();
+            stamped += setProjectileAllowed(x, y) ? 1 : 0;
             switch (dir) {
-              case 0 -> {
-                or(x, y, WALL_EAST);
-                if (inBounds(x - 1, y)) {
-                  or(x - 1, y, WALL_WEST);
-                }
-                stamped++;
-              }
-              case 2 -> {
-                or(x, y, WALL_SOUTH);
-                if (inBounds(x, y + 1)) {
-                  or(x, y + 1, WALL_NORTH);
-                }
-                stamped++;
-              }
-              case 4 -> {
-                or(x, y, WALL_WEST);
-                if (inBounds(x + 1, y)) {
-                  or(x + 1, y, WALL_EAST);
-                }
-                stamped++;
-              }
-              case 6 -> {
-                or(x, y, WALL_NORTH);
-                if (inBounds(x, y - 1)) {
-                  or(x, y - 1, WALL_SOUTH);
-                }
-                stamped++;
-              }
-              default -> { /* unknown dir on wall scenery — ignore */ }
+                case 0 -> stamped += setProjectileAllowed(x - 1, y) ? 1 : 0;
+                case 2 -> stamped += setProjectileAllowed(x, y + 1) ? 1 : 0;
+                case 4 -> stamped += setProjectileAllowed(x + 1, y) ? 1 : 0;
+                case 6 -> stamped += setProjectileAllowed(x, y - 1) ? 1 : 0;
+                default -> {}
             }
-          }
         }
-      }
+        return stamped;
     }
-    if (skippedDoors > 0) {
-      LOG.info("skipped {} openable scenery doors (runtime-tracked)", skippedDoors);
-    }
-    return stamped;
-  }
 
-  /**
-   * Stamp {@link #projectileAllowed} for scenery, mirroring server {@code World.registerGameObject}
-   * SCENERY (World.java:518-543): for every footprint tile of an object that passes
-   * {@code isProjectileClipAllowed}, run {@code handleProjectileClipAllowance}. A full-block
-   * ({@code typ==1}) object stamps only its own footprint tiles; a wall ({@code typ==2}) object
-   * additionally stamps one direction-keyed neighbour.
-   *
-   * <p>This is a SEPARATE pass from {@link #applyScenery} (which stamps walking collision) on purpose
-   * — projectile clip is independent of the bot's openable-door abstraction (the server stamps it for
-   * gates/fences regardless), and keeping the walking-collision stamping untouched guarantees this
-   * change can't alter pathfinding.
-   */
-  private int applySceneryProjectileClip(List<SceneryLocs.Loc> scenery, ObjectDefs defs) {
-    int stamped = 0;
-    for (SceneryLocs.Loc loc : scenery) {
-      ObjectDefs.Entry def = defs.get(loc.id());
-      if (def == null) {
-        continue;
-      }
-      int objectType = def.typ(); // server o.getGameObjectDef().getType(): 1=full block, 2=wall
-      if (objectType != 1 && objectType != 2) {
-        continue;
-      }
-      // SceneryLocs are loc-type 0 ("o.getType() == 0"): allowed iff 1×1 (raw def dims) and not a
-      // tree/chest, OR the name is on the projectile-clip allowlist.
-      if (!isSceneryProjectileClipAllowed(def)) {
-        continue;
-      }
-      int dir = loc.direction();
-      int w = def.width();
-      int h = def.height();
-      if (dir != 0 && dir != 4) {
-        int t = w;
-        w = h;
-        h = t;
-      }
-      int dx = loc.pos().x();
-      int dy = loc.pos().y();
-      for (int x = dx; x < dx + w; x++) {
-        for (int y = dy; y < dy + h; y++) {
-          // server handleProjectileClipAllowance(x, y, dir, type=0, objectType, doorType=-1)
-          stamped += setProjectileAllowed(x, y) ? 1 : 0;
-          // Full-block scenery (objectType==1) stamps only the footprint tile (early return on
-          // server: type==0 && objectType==1); wall scenery (objectType==2) also stamps one neighbour.
-          if (objectType == 1) {
-            continue;
-          }
-          switch (dir) {
-            case 0 -> stamped += setProjectileAllowed(x - 1, y) ? 1 : 0;
-            case 2 -> stamped += setProjectileAllowed(x, y + 1) ? 1 : 0;
-            case 4 -> stamped += setProjectileAllowed(x + 1, y) ? 1 : 0;
-            case 6 -> stamped += setProjectileAllowed(x, y - 1) ? 1 : 0;
-            default -> { /* server only special-cases 0/2/4/6 */ }
-          }
+    private boolean setProjectileAllowed(int x, int y) {
+        if (!inBounds(x, y)) {
+            return false;
         }
-      }
-    }
-    return stamped;
-  }
-
-  /**
-   * Stamp {@link #projectileAllowed} for boundaries (doors/walls), mirroring server
-   * {@code World.registerGameObject} BOUNDARY (World.java:546-553): only doorType-1 boundaries whose
-   * name is on the allowlist, and then {@code handleProjectileClipAllowance(x, y, dir, type=1, -1,
-   * doorType=1)} — which stamps {@code (x, y)} plus one neighbour, but only for boundary {@code
-   * dir==0} (the server's dir cases are 0/2/4/6 and boundary dirs are 0/1/2/3, so 1/2/3 stamp the
-   * base tile alone). Faithful to that quirk; the parity test pins it.
-   */
-  private int applyBoundaryProjectileClip(List<BoundaryLocs.Loc> boundaries, DoorDefs doorDefs) {
-    int stamped = 0;
-    for (BoundaryLocs.Loc b : boundaries) {
-      int id = b.id();
-      if (doorDefs.doorType(id) != 1) { // server returns early for non-type-1 boundaries
-        continue;
-      }
-      if (!isNameProjectileClipAllowed(doorDefs.name(id))) { // boundary is loc-type 1 → name-only test
-        continue;
-      }
-      int x = b.pos().x();
-      int y = b.pos().y();
-      int dir = b.direction();
-      stamped += setProjectileAllowed(x, y) ? 1 : 0;
-      // type==1 && doorType==1 → does NOT early-return, so the dir-keyed neighbour is also stamped.
-      switch (dir) {
-        case 0 -> stamped += setProjectileAllowed(x - 1, y) ? 1 : 0;
-        case 2 -> stamped += setProjectileAllowed(x, y + 1) ? 1 : 0;
-        case 4 -> stamped += setProjectileAllowed(x + 1, y) ? 1 : 0;
-        case 6 -> stamped += setProjectileAllowed(x, y - 1) ? 1 : 0;
-        default -> { /* boundary dirs 1/2/3 stamp the base tile only, per the server */ }
-      }
-    }
-    return stamped;
-  }
-
-  /** Server {@code isProjectileClipAllowed} for a loc-type-0 scenery object (reads its def). */
-  private static boolean isSceneryProjectileClipAllowed(ObjectDefs.Entry def) {
-    String name = def.name() == null ? "" : def.name();
-    if (!name.equalsIgnoreCase("tree")
-        && def.width() == 1 && def.height() == 1
-        && !name.equalsIgnoreCase("chest")) {
-      return true;
-    }
-    return isNameProjectileClipAllowed(name);
-  }
-
-  private static boolean isNameProjectileClipAllowed(String name) {
-    return name != null && PROJECTILE_CLIP_ALLOWED_NAMES.contains(name.toLowerCase());
-  }
-
-  /** Set {@link #projectileAllowed} at a tile; returns true if it flipped a fresh tile (for stats). */
-  private boolean setProjectileAllowed(int x, int y) {
-    if (!inBounds(x, y)) {
-      return false;
-    }
-    int idx = y * WIDTH + x;
-    if (projectileAllowed[idx]) {
-      return false;
-    }
-    projectileAllowed[idx] = true;
-    return true;
-  }
-
-  /** Server {@code TileValue.projectileAllowed} for {@code (x, y)}; false out of bounds. */
-  public boolean projectileAllowed(int x, int y) {
-    return inBounds(x, y) && projectileAllowed[y * WIDTH + x];
-  }
-
-  /**
-   * Stamp one tile's raw landscape record (texture / overlay / roof / walls) into {@link #flags} +
-   * the render arrays. Mirrors the server's {@code WorldLoader.loadSection} per-tile body, with the
-   * bot's generic-free-door exception ({@link #isLandscapeWallFree}) so A* doesn't treat openable
-   * doors as walls.
-   */
-  private void stampTile(int bx, int by, int texture, int groundOverlay, int roofTex,
-      int horizontalWall, int verticalWall, int diagonalWalls,
-      DoorDefs doorDefs, TileDefs tileDefs) {
-    if (groundOverlay == 250) {
-      groundOverlay = 2;
-    }
-    int idx = by * WIDTH + bx;
-    // Section is present for this tile — clear the void-default
-    // FULL_BLOCK_C bit before stamping. Mirrors server
-    // WorldLoader.loadSection setting traversalMask = 0 at the
-    // top of its per-tile loop.
-    flags[idx] = 0;
-    this.groundTexture[idx] = (byte) texture;
-    this.groundOverlay[idx] = (byte) groundOverlay;
-    this.roofTexture[idx] = (byte) roofTex;
-    if (groundOverlay > 0 && tileDefs.objectType(groundOverlay - 1) != 0) {
-      or(bx, by, FULL_BLOCK_C);
-    }
-    // Door classification mirrors applyBoundaries — SpecialDoor
-    // override first, then DoorDefs's name+id whitelist for
-    // generic free doors. Landscape-archive walls are wall-
-    // stamped unless they're a known toggle-anyone boundary.
-    if (verticalWall > 0
-        && doorDefs.unknown(verticalWall - 1) == 0
-        && doorDefs.doorType(verticalWall - 1) != 0) {
-      if (!isLandscapeWallFree(overrides, doorDefs, verticalWall - 1, bx, by, 0)) {
-        or(bx, by, WALL_NORTH);
-        if (by - 1 >= 0) {
-          or(bx, by - 1, WALL_SOUTH);
+        int idx = y * WIDTH + x;
+        if (projectileAllowed[idx]) {
+            return false;
         }
-      }
-      // Server WorldLoader marks both this tile and its south neighbour projectile-pass.
-      if (isLandscapeWallProjectilePass(verticalWall)) {
-        setProjectileAllowed(bx, by);
-        setProjectileAllowed(bx, by - 1);
-      }
+        projectileAllowed[idx] = true;
+        return true;
     }
-    if (horizontalWall > 0
-        && doorDefs.unknown(horizontalWall - 1) == 0
-        && doorDefs.doorType(horizontalWall - 1) != 0) {
-      if (!isLandscapeWallFree(overrides, doorDefs, horizontalWall - 1, bx, by, 1)) {
-        or(bx, by, WALL_EAST);
-        if (bx - 1 >= 0) {
-          or(bx - 1, by, WALL_WEST);
+
+    private void or(int x, int y, int mask) {
+        flags[y * WIDTH + x] |= (byte) mask;
+    }
+
+    private void orObject(int x, int y, int mask) {
+        int idx = y * WIDTH + x;
+        flags[idx] |= (byte) mask;
+        objectFlags[idx] |= (byte) mask;
+    }
+
+    private boolean destBlocked(int x, int y, int wallBits, LocalOverlay overlay) {
+        int v = flags(x, y, overlay);
+        return (v & wallBits) != 0 || (v & FULL_BLOCK) != 0;
+    }
+
+    // The diagonal arm of PathValidation.checkAdjacent.
+    // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/PathValidation.java#L523
+    private boolean canStepDiagonal(int fx, int fy, int tx, int ty, int from, LocalOverlay overlay, TileOccupancy mob) {
+        boolean myX, newX;
+        if (tx < fx) {
+            myX = (from & WALL_EAST) != 0;
+            newX = destBlocked(fx - 1, fy, WALL_WEST, overlay) || occupied(mob, fx - 1, fy);
+        } else {
+            myX = (from & WALL_WEST) != 0;
+            newX = destBlocked(fx + 1, fy, WALL_EAST, overlay) || occupied(mob, fx + 1, fy);
         }
-      }
-      if (isLandscapeWallProjectilePass(horizontalWall)) {
-        setProjectileAllowed(bx, by);
-        setProjectileAllowed(bx - 1, by);
-      }
-    }
-    int dw = diagonalWalls & 0xFFFF; // plutonium truncates to int16
-    if (dw > 0 && dw < 12000
-        && doorDefs.unknown(dw - 1) == 0
-        && doorDefs.doorType(dw - 1) != 0) {
-      if (!isLandscapeWallFree(overrides, doorDefs, dw - 1, bx, by, 2)) {
-        or(bx, by, FULL_BLOCK_B);
-      }
-      if (isLandscapeWallProjectilePass(diagonalWalls & 0xFF)) {
-        setProjectileAllowed(bx, by);
-      }
-    }
-    if (dw > 12000 && dw < 24000
-        && doorDefs.unknown(dw - 12001) == 0
-        && doorDefs.doorType(dw - 12001) != 0) {
-      if (!isLandscapeWallFree(overrides, doorDefs, dw - 12001, bx, by, 3)) {
-        or(bx, by, FULL_BLOCK_A);
-      }
-      if (isLandscapeWallProjectilePass(diagonalWalls & 0xFF)) {
-        setProjectileAllowed(bx, by);
-      }
-    }
-    // Server WorldLoader:442 — ground overlays 2 and 11 (water / lava) are projectile-pass, so a
-    // ranged/cannon/trade line of sight crosses water and lava exactly as the server allows.
-    if (groundOverlay == 2 || groundOverlay == 11) {
-      setProjectileAllowed(bx, by);
-    }
-  }
-
-  private void or(int x, int y, int mask) {
-    flags[y * WIDTH + x] |= (byte) mask;
-  }
-
-  /**
-   * Landscape-wall door classification (per-tile-wall variant of the BoundaryLocs check). True iff
-   * the boundary id at (bx, by) with the given direction is "anyone toggles" — same resolution
-   * order as {@link #applyBoundaries}: SpecialDoor override first, then DoorDefs name+id
-   * whitelist.
-   */
-  private static boolean isLandscapeWallFree(DoorOverrides overrides, DoorDefs doorDefs, int id,
-      int bx, int by, int dir) {
-    if (overrides.has(DoorOverrides.Kind.BOUNDARY, id, bx, by, dir)) {
-      return false;
-    }
-    if (overrides.hasIdWildcard(DoorOverrides.Kind.BOUNDARY, id)) {
-      return false;
-    }
-    return doorDefs.isGenericFreeDoor(id);
-  }
-
-
-  public boolean inBounds(int x, int y) {
-    return x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT;
-  }
-
-  /**
-   * Raw flag byte for the tile. {@link #FULL_BLOCK} if out of bounds.
-   */
-  public int flags(int x, int y) {
-    if (!inBounds(x, y)) {
-      return FULL_BLOCK;
-    }
-    return flags[y * WIDTH + x] & 0xFF;
-  }
-
-  /**
-   * Static + overlay flag byte for the tile.
-   */
-  public int flags(int x, int y, WallOverlay overlay) {
-    int f = flags(x, y);
-    if (overlay != null) {
-      f |= overlay.flags(x, y);
-    }
-    return f;
-  }
-
-  /**
-   * <b>Static</b> "is {@code (x,y)} unwalkable" — the base-map full-block test with no dynamic
-   * overlay. This is the deliberate static-topology primitive for the pathfinder's stable layers
-   * (component graph, HPA cluster building, transport entry enumeration), where dynamic walls only
-   * <em>add</em> blockage and a static-clear tile is reachable once the walker opens the door en
-   * route. For the bot's <em>current</em> blockage (static + dynamic / closed doors) call
-   * {@link #fullyBlocked(int, int, WallOverlay)} with the live overlay.
-   */
-  public boolean fullyBlocked(int x, int y) {
-    return (flags(x, y) & FULL_BLOCK) != 0;
-  }
-
-  public boolean fullyBlocked(int x, int y, WallOverlay overlay) {
-    return (flags(x, y, overlay) & FULL_BLOCK) != 0;
-  }
-
-  /**
-   * Can the player step from {@code (fx, fy)} → {@code (tx, ty)}? Used by the pathfinder.
-   * {@code (tx, ty)} must be a 4- or 8-neighbour of {@code (fx, fy)}.
-   *
-   * <p>Literal port of the server's {@code PathValidation.checkAdjacent}
-   * (mob/player blocking omitted — runtime concerns, not map topology). Cardinal arms keep the
-   * original fast path, which a full-map differential probe showed is exactly equivalent to the
-   * server rules. Diagonal arms run the server's complete rule sequence including
-   * {@code checkDiagonalPassThroughCollisions} — the previous "one flanking cardinal must be
-   * steppable" approximation allowed 184 map-wide diagonal steps the server refuses (corner-clip
-   * cases), each a silent server-side walk stall. See {@code CollisionMapServerParityTest}.
-   *
-   * <p><b>Static</b> form: no wall overlay and no mob occupancy — the base-map step test. Use it for
-   * the pathfinder's stable static graph; for the bot's current topology (dynamic walls / closed
-   * doors) call {@link #canStep(int, int, int, int, WallOverlay)} with the live overlay, or just use
-   * {@code Bot.canStep}, which always passes it. (The script-facing {@code Bot.canStep} is never
-   * static — only this low-level map primitive is.)
-   */
-  public boolean canStep(int fx, int fy, int tx, int ty) {
-    return canStep(fx, fy, tx, ty, null, null);
-  }
-
-  public boolean canStep(int fx, int fy, int tx, int ty, WallOverlay overlay) {
-    return canStep(fx, fy, tx, ty, overlay, null);
-  }
-
-  /**
-   * Transient per-tick tile occupancy (blocking NPCs). Mirrors the {@code isMobBlocking}
-   * contribution inside the server's {@code checkBlocking}: consulted at the step destination and,
-   * for diagonals, at the two flanking tiles — never at the source tile (the server exempts the
-   * mover's own tile).
-   */
-  @FunctionalInterface
-  public interface TileOccupancy {
-
-    boolean blockedAt(int x, int y);
-  }
-
-  /**
-   * {@link #canStep} with live mob occupancy injected at exactly the tiles where the server's
-   * {@code checkAdjacent} consults {@code isMobBlocking} (every {@code checkBlocking} call site
-   * except the mover's own tile; the diagonal pass-through reads raw tile masks and stays
-   * mob-free). Wall-on-one-flank + mob-on-the-other combinations block a diagonal exactly as on the
-   * server.
-   */
-  public boolean canStep(int fx, int fy, int tx, int ty, WallOverlay overlay, TileOccupancy mob) {
-    if (!inBounds(tx, ty) || fullyBlocked(tx, ty, overlay)) {
-      return false;
-    }
-    int dx = tx - fx, dy = ty - fy;
-    int from = flags(fx, fy, overlay);
-    // OpenRSC coordinate convention (per server PathValidation.checkAdjacentDistance):
-    //   - decreasing X (dx=-1) corresponds to "east"  — checks WALL_EAST on source
-    //   - increasing X (dx=+1) corresponds to "west"  — checks WALL_WEST on source
-    //   - decreasing Y (dy=-1) corresponds to "north" — checks WALL_NORTH on source
-    //   - increasing Y (dy=+1) corresponds to "south" — checks WALL_SOUTH on source
-    //
-    // Branch tree is on (dx, dy) packed into a small int. Avoid String
-    // concat in switch — this method is on the A* hot path; the old
-    // `switch (dx + "," + dy)` allocated a String every call.
-    if (dy == 0 || dx == 0) {
-      // Cardinal: mob contribution reduces to "destination occupied"
-      // (server: newX/newYBlocked at dest && startY == coords[1]).
-      if (mob != null && mob.blockedAt(tx, ty)) {
-        return false;
-      }
-      if (dy == 0) {
-        if (dx == 1) {
-          return (from & WALL_WEST) == 0;
+        boolean myY, newY;
+        if (ty < fy) {
+            myY = (from & WALL_NORTH) != 0;
+            newY = destBlocked(fx, fy - 1, WALL_SOUTH, overlay) || occupied(mob, fx, fy - 1);
+        } else {
+            myY = (from & WALL_SOUTH) != 0;
+            newY = destBlocked(fx, fy + 1, WALL_NORTH, overlay) || occupied(mob, fx, fy + 1);
         }
-        if (dx == -1) {
-          return (from & WALL_EAST) == 0;
+        if (myX && myY) {
+            return false;
+        }
+        if (newX && newY) {
+            return false;
+        }
+        if ((myX && newX) || (myY && newY)) {
+            return false;
+        }
+        newX = destBlocked(tx, ty, tx > fx ? WALL_EAST : WALL_WEST, overlay) || occupied(mob, tx, ty);
+        newY = destBlocked(tx, ty, ty > fy ? WALL_NORTH : WALL_SOUTH, overlay) || occupied(mob, tx, ty);
+        if (newX && newY) {
+            return false;
+        }
+        if (myX && newX) {
+            return false;
+        }
+        if (myY && newY) {
+            return false;
+        }
+        int cornerBits = (tx > fx ? WALL_EAST : WALL_WEST) | (ty > fy ? WALL_NORTH : WALL_SOUTH);
+        if (destBlocked(tx, ty, cornerBits, overlay)) {
+            return false;
+        }
+        return !diagonalPassThroughBlocked(fx, fy, tx, ty, overlay);
+    }
+
+    // PathValidation.checkDiagonalPassThroughCollisions, reading the tiles the server reads: its
+    // north-west case reads (x + 1, y + 1) where the corner would be (x + 1, y - 1).
+    // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/PathValidation.java#L389
+    private boolean diagonalPassThroughBlocked(int x, int y, int xn, int yn, LocalOverlay overlay) {
+        if (xn == x - 1 && yn == y - 1) {
+            int m = flags(x - 1, y, overlay);
+            if ((m & (FULL_BLOCK_A | FULL_BLOCK_C)) != 0) {
+                if ((flags(x, y - 1, overlay) & WALL_EAST) != 0) {
+                    return true;
+                }
+                if ((flags(x - 1, y - 1, overlay) & WALL_WEST) != 0) {
+                    return true;
+                }
+            }
+            m = flags(x, y - 1, overlay);
+            if ((m & (FULL_BLOCK_A | FULL_BLOCK_C)) != 0) {
+                if ((flags(x - 1, y, overlay) & WALL_NORTH) != 0) {
+                    return true;
+                }
+                return (flags(x - 1, y - 1, overlay) & WALL_SOUTH) != 0;
+            }
+            return false;
+        }
+        if (xn == x + 1 && yn == y - 1) {
+            int m = flags(x + 1, y, overlay);
+            if ((m & (FULL_BLOCK_B | FULL_BLOCK_C)) != 0) {
+                if ((flags(x, y - 1, overlay) & WALL_WEST) != 0) {
+                    return true;
+                }
+                if ((flags(x + 1, y + 1, overlay) & WALL_EAST) != 0) {
+                    return true;
+                }
+            }
+            m = flags(x, y - 1, overlay);
+            if ((m & (FULL_BLOCK_B | FULL_BLOCK_C)) != 0) {
+                if ((flags(x + 1, y, overlay) & WALL_NORTH) != 0) {
+                    return true;
+                }
+                return (flags(x + 1, y - 1, overlay) & WALL_SOUTH) != 0;
+            }
+            return false;
+        }
+        if (xn == x - 1 && yn == y + 1) {
+            int m = flags(x - 1, y, overlay);
+            if ((m & (FULL_BLOCK_B | FULL_BLOCK_C)) != 0) {
+                if ((flags(x, y + 1, overlay) & WALL_EAST) != 0) {
+                    return true;
+                }
+                if ((flags(x - 1, y + 1, overlay) & WALL_WEST) != 0) {
+                    return true;
+                }
+            }
+            m = flags(x, y + 1, overlay);
+            if ((m & (FULL_BLOCK_B | FULL_BLOCK_C)) != 0) {
+                if ((flags(x - 1, y, overlay) & WALL_SOUTH) != 0) {
+                    return true;
+                }
+                return (flags(x - 1, y + 1, overlay) & WALL_NORTH) != 0;
+            }
+            return false;
+        }
+        if (xn == x + 1 && yn == y + 1) {
+            int m = flags(x + 1, y, overlay);
+            if ((m & (FULL_BLOCK_A | FULL_BLOCK_C)) != 0) {
+                if ((flags(x, y + 1, overlay) & WALL_WEST) != 0) {
+                    return true;
+                }
+                if ((flags(x + 1, y + 1, overlay) & WALL_EAST) != 0) {
+                    return true;
+                }
+            }
+            m = flags(x, y + 1, overlay);
+            if ((m & (FULL_BLOCK_A | FULL_BLOCK_C)) != 0) {
+                if ((flags(x + 1, y, overlay) & WALL_SOUTH) != 0) {
+                    return true;
+                }
+                return (flags(x + 1, y + 1, overlay) & WALL_NORTH) != 0;
+            }
+            return false;
         }
         return false;
-      }
-      if (dy == 1) {
-        return (from & WALL_SOUTH) == 0;
-      }
-      if (dy == -1) {
-        return (from & WALL_NORTH) == 0;
-      }
-      return false;
     }
-    if (dx > 1 || dx < -1 || dy > 1 || dy < -1) {
-      return false;
-    }
-    return canStepDiagonal(fx, fy, tx, ty, from, overlay, mob);
-  }
 
-  /**
-   * Tick-denominated cost of an already-validated step (10 units = one server tick). Cardinals cost
-   * 10. Diagonals price the server's packet-time interpolation ({@code Path.addStep}, WalkRequest
-   * path):
-   * <ul>
-   *   <li>both flanking cardinal steps walkable → the diagonal rides
-   *       through as one waypoint → 10;</li>
-   *   <li>exactly ONE flank walkable → the server zigzags through that
-   *       flank: two waypoints, two ticks → 20;</li>
-   *   <li>neither flank walkable → addStep's fallback emits the diagonal
-   *       directly (one waypoint) and the per-tick {@code checkAdjacent}
-   *       — which the caller already passed via {@link #canStep} —
-   *       accepts it → 10.</li>
-   * </ul>
-   * The server moves one waypoint per tick regardless of diagonality, so
-   * WITHOUT this rule a planner counting every step as one tick
-   * systematically underprices corner-hugging diagonals past trees,
-   * rocks and fences. Caller must have verified {@code canStep} for the
-   * step itself; this only prices it.
-   */
-  public int stepCost10(int fx, int fy, int tx, int ty, WallOverlay overlay, TileOccupancy mob) {
-    int dx = tx - fx, dy = ty - fy;
-    if (dx == 0 || dy == 0) {
-      return 10;
-    }
-    boolean flankX = canStep(fx, fy, tx, fy, overlay, mob);
-    boolean flankY = canStep(fx, fy, fx, ty, overlay, mob);
-    return flankX == flankY ? 10 : 20;
-  }
-
-  /** {@link #diagonalIntermediate} sentinel: the bot rides straight to the destination, no zigzag. */
-  public static final long NO_INTERMEDIATE = Long.MIN_VALUE;
-
-  /**
-   * Predict the cardinal tile the server inserts when it ZIGZAGS a diagonal step at packet time
-   * ({@code Path.addStep}), or {@link #NO_INTERMEDIATE} when the bot rides straight to {@code (tx,ty)}
-   * in one tick. This is the geometric companion to {@link #stepCost10}: the same one-flank-open rule
-   * that prices the zigzag at 20 also tells you WHICH tile the bot transits — and that tile can sit
-   * inside a hostile's aggro range even when neither diagonal endpoint does, which is how a route that
-   * looks clear at the planned waypoints still draws aggro. The walker expands its emitted chunk
-   * through this before testing for grazes so the danger check sees the tile the bot truly occupies.
-   *
-   * <p>Mirrors {@code Path.addStep} for one {@code |dx|==|dy|==1} step, with
-   * {@code flankX = canStep(A→horizontal neighbour)}, {@code flankY = canStep(A→vertical neighbour)},
-   * {@code diag = canStep(A→B)}:
-   * <ul>
-   *   <li>both flanks open + straight diagonal clear → ride through (no intermediate);</li>
-   *   <li>both flanks open + a diagonal wall between (!diag) → zigzag, horizontal-first if that
-   *       intermediate can then reach B, else vertical-first. (Unreachable for a {@link #canStep}-valid
-   *       step — {@code canStep(A→B)} is false here, so the planner never emits such a diagonal — but
-   *       mirrored for completeness.);</li>
-   *   <li>exactly one flank open → the server steps that cardinal first → that flank IS the
-   *       intermediate (the common corner-hug case, priced 20);</li>
-   *   <li>neither flank open → {@code addStep}'s fallback emits the diagonal directly → no
-   *       intermediate.</li>
-   * </ul>
-   * Returns the intermediate packed as {@code (x << 32) | (z & 0xFFFFFFFFL)}.
-   */
-  public long diagonalIntermediate(int fx, int fy, int tx, int ty, WallOverlay overlay,
-      TileOccupancy mob) {
-    int dx = tx - fx, dy = ty - fy;
-    if (dx == 0 || dy == 0) {
-      return NO_INTERMEDIATE; // cardinals never zigzag
-    }
-    boolean flankX = canStep(fx, fy, tx, fy, overlay, mob);
-    boolean flankY = canStep(fx, fy, fx, ty, overlay, mob);
-    if (flankX && flankY) {
-      if (canStep(fx, fy, tx, ty, overlay, mob)) {
-        return NO_INTERMEDIATE; // straight diagonal rides through in one tick
-      }
-      if (canStep(tx, fy, tx, ty, overlay, mob)) {
-        return ((long) tx << 32) | (fy & 0xFFFFFFFFL); // horizontal-first
-      }
-      if (canStep(fx, ty, tx, ty, overlay, mob)) {
-        return ((long) fx << 32) | (ty & 0xFFFFFFFFL); // vertical-first
-      }
-      return NO_INTERMEDIATE; // server truncates the path; bot won't transit either flank
-    }
-    if (flankX) {
-      return ((long) tx << 32) | (fy & 0xFFFFFFFFL); // only horizontal flank open
-    }
-    if (flankY) {
-      return ((long) fx << 32) | (ty & 0xFFFFFFFFL); // only vertical flank open
-    }
-    return NO_INTERMEDIATE; // neither flank: addStep emits the diagonal directly
-  }
-
-  /**
-   * True iff the destination-style blocking test passes for {@code (x, y)}: the given wall bit is
-   * clear AND the tile is not fully blocked. Mirrors server {@code PathValidation.isBlocking} with
-   * {@code isCurrentTile=false} (positive bit ⇒ all three FULL_BLOCK variants block).
-   */
-  private boolean destBlocked(int x, int y, int wallBits, WallOverlay overlay) {
-    int v = flags(x, y, overlay);
-    return (v & wallBits) != 0 || (v & FULL_BLOCK) != 0;
-  }
-
-  private static boolean occupied(TileOccupancy mob, int x, int y) {
-    return mob != null && mob.blockedAt(x, y);
-  }
-
-  /**
-   * Diagonal arm of {@link #canStep} — the server's full {@code checkAdjacent} rule sequence for
-   * {@code |dx|==|dy|==1}. {@code from} is the already-fetched source-tile flag byte.
-   */
-  private boolean canStepDiagonal(int fx, int fy, int tx, int ty, int from, WallOverlay overlay,
-      TileOccupancy mob) {
-    // First pass: walls on the source tile (full blocks ignored on the
-    // current tile) and on the two flanking tiles (full blocks count;
-    // mob occupancy contributes exactly like the server's
-    // isMobBlocking inside checkBlocking).
-    boolean myX, newX;
-    if (tx < fx) { // moving "east" (decreasing x)
-      myX = (from & WALL_EAST) != 0;
-      newX = destBlocked(fx - 1, fy, WALL_WEST, overlay) || occupied(mob, fx - 1, fy);
-    } else {       // moving "west"
-      myX = (from & WALL_WEST) != 0;
-      newX = destBlocked(fx + 1, fy, WALL_EAST, overlay) || occupied(mob, fx + 1, fy);
-    }
-    boolean myY, newY;
-    if (ty < fy) { // moving "north" (decreasing y)
-      myY = (from & WALL_NORTH) != 0;
-      newY = destBlocked(fx, fy - 1, WALL_SOUTH, overlay) || occupied(mob, fx, fy - 1);
-    } else {       // moving "south"
-      myY = (from & WALL_SOUTH) != 0;
-      newY = destBlocked(fx, fy + 1, WALL_NORTH, overlay) || occupied(mob, fx, fy + 1);
-    }
-    if (myX && myY) {
-      return false;
-    }
-    if (newX && newY) {
-      return false;
-    }
-    if ((myX && newX) || (myY && newY)) {
-      return false;
-    }
-    // Second pass: re-test both axes' walls on the destination tile.
-    // (Server recomputes newX/newY at coords == dest for diagonals.)
-    newX = destBlocked(tx, ty, tx > fx ? WALL_EAST : WALL_WEST, overlay) || occupied(mob, tx, ty);
-    newY = destBlocked(tx, ty, ty > fy ? WALL_NORTH : WALL_SOUTH, overlay) || occupied(mob, tx, ty);
-    if (newX && newY) {
-      return false;
-    }
-    if (myX && newX) {
-      return false;
-    }
-    if (myY && newY) {
-      return false;
-    }
-    // Destination corner wall pair (PathValidation.java:599-615): the
-    // dest tile must not carry the two walls facing the approach corner.
-    int cornerBits = (tx > fx ? WALL_EAST : WALL_WEST)
-                     | (ty > fy ? WALL_NORTH : WALL_SOUTH);
-    if (destBlocked(tx, ty, cornerBits, overlay)) {
-      return false;
-    }
-    return !diagonalPassThroughBlocked(fx, fy, tx, ty, overlay);
-  }
-
-  /**
-   * Port of server {@code PathValidation.checkDiagonalPassThroughCollisions}: when a flanking tile
-   * is full-blocked (diagonal wall or scenery), specific wall flags on the flanking/corner tiles
-   * block the diagonal squeeze. Returns {@code true} when the step is blocked.
-   *
-   * <p>Faithfully reproduces the server's per-direction tile reads —
-   * including the "northwest" branch reading {@code (x+1, y+1)} (PathValidation.java:389), which is
-   * NOT the corner tile. Quirk or not, the server is the contract; the full-map parity test pins
-   * it.
-   */
-  private boolean diagonalPassThroughBlocked(int x, int y, int xn, int yn, WallOverlay overlay) {
-    if (xn == x - 1 && yn == y - 1) { // server "northeast"
-      int m = flags(x - 1, y, overlay);
-      if ((m & (FULL_BLOCK_A | FULL_BLOCK_C)) != 0) {
-        if ((flags(x, y - 1, overlay) & WALL_EAST) != 0) {
-          return true;
+    // PathValidation.checkAdjacentDistance: the reach and line-of-sight step, which unlike the walk
+    // step can let a projectile-clip tile through and skips the diagonal pass-through test.
+    // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/PathValidation.java#L118
+    private boolean checkAdjacentDistance(
+            int startX,
+            int startY,
+            int destX,
+            int destY,
+            boolean ignoreProjectileAllowed,
+            boolean wantDiagCheck,
+            LocalOverlay overlay) {
+        boolean ipa = ignoreProjectileAllowed;
+        int cx = startX, cy = startY;
+        boolean myX = false, myY = false, newX = false, newY = false;
+        if (startX > destX) {
+            myX = checkBlockingDistance(startX, startY, WALL_EAST, true, ipa, overlay);
+            newX = checkBlockingDistance(startX - 1, startY, WALL_WEST, false, ipa, overlay);
+            cx = startX - 1;
+        } else if (startX < destX) {
+            myX = checkBlockingDistance(startX, startY, WALL_WEST, true, ipa, overlay);
+            newX = checkBlockingDistance(startX + 1, startY, WALL_EAST, false, ipa, overlay);
+            cx = startX + 1;
         }
-        if ((flags(x - 1, y - 1, overlay) & WALL_WEST) != 0) {
-          return true;
+        if (startY > destY) {
+            myY = checkBlockingDistance(startX, startY, WALL_NORTH, true, ipa, overlay);
+            newY = checkBlockingDistance(startX, startY - 1, WALL_SOUTH, false, ipa, overlay);
+            cy = startY - 1;
+        } else if (startY < destY) {
+            myY = checkBlockingDistance(startX, startY, WALL_SOUTH, true, ipa, overlay);
+            newY = checkBlockingDistance(startX, startY + 1, WALL_NORTH, false, ipa, overlay);
+            cy = startY + 1;
         }
-      }
-      m = flags(x, y - 1, overlay);
-      if ((m & (FULL_BLOCK_A | FULL_BLOCK_C)) != 0) {
-        if ((flags(x - 1, y, overlay) & WALL_NORTH) != 0) {
-          return true;
+        if (myX && myY) {
+            return false;
         }
-        return (flags(x - 1, y - 1, overlay) & WALL_SOUTH) != 0;
-      }
-      return false;
-    }
-    if (xn == x + 1 && yn == y - 1) { // server "northwest"
-      int m = flags(x + 1, y, overlay);
-      if ((m & (FULL_BLOCK_B | FULL_BLOCK_C)) != 0) {
-        if ((flags(x, y - 1, overlay) & WALL_WEST) != 0) {
-          return true;
+        if (myX && startY == destY) {
+            return false;
         }
-        if ((flags(x + 1, y + 1, overlay) & WALL_EAST) != 0) {
-          return true; // sic: server reads (x+1, y+1)
+        if (myY && startX == destX) {
+            return false;
         }
-      }
-      m = flags(x, y - 1, overlay);
-      if ((m & (FULL_BLOCK_B | FULL_BLOCK_C)) != 0) {
-        if ((flags(x + 1, y, overlay) & WALL_NORTH) != 0) {
-          return true;
+        if (newX && newY) {
+            return false;
         }
-        return (flags(x + 1, y - 1, overlay) & WALL_SOUTH) != 0;
-      }
-      return false;
-    }
-    if (xn == x - 1 && yn == y + 1) { // server "southeast"
-      int m = flags(x - 1, y, overlay);
-      if ((m & (FULL_BLOCK_B | FULL_BLOCK_C)) != 0) {
-        if ((flags(x, y + 1, overlay) & WALL_EAST) != 0) {
-          return true;
+        if (cx > startX) {
+            newX = checkBlockingDistance(cx, cy, WALL_EAST, false, ipa, overlay);
+        } else if (cx < startX) {
+            newX = checkBlockingDistance(cx, cy, WALL_WEST, false, ipa, overlay);
         }
-        if ((flags(x - 1, y + 1, overlay) & WALL_WEST) != 0) {
-          return true;
+        if (cy > startY) {
+            newY = checkBlockingDistance(cx, cy, WALL_NORTH, false, ipa, overlay);
+        } else if (cy < startY) {
+            newY = checkBlockingDistance(cx, cy, WALL_SOUTH, false, ipa, overlay);
         }
-      }
-      m = flags(x, y + 1, overlay);
-      if ((m & (FULL_BLOCK_B | FULL_BLOCK_C)) != 0) {
-        if ((flags(x - 1, y, overlay) & WALL_SOUTH) != 0) {
-          return true;
+        if (newX && newY) {
+            return false;
         }
-        return (flags(x - 1, y + 1, overlay) & WALL_NORTH) != 0;
-      }
-      return false;
-    }
-    if (xn == x + 1 && yn == y + 1) { // server "southwest"
-      int m = flags(x + 1, y, overlay);
-      if ((m & (FULL_BLOCK_A | FULL_BLOCK_C)) != 0) {
-        if ((flags(x, y + 1, overlay) & WALL_WEST) != 0) {
-          return true;
+        if (newX && startY == cy) {
+            return false;
         }
-        if ((flags(x + 1, y + 1, overlay) & WALL_EAST) != 0) {
-          return true;
+        if (newY && startX == cx) {
+            return false;
         }
-      }
-      m = flags(x, y + 1, overlay);
-      if ((m & (FULL_BLOCK_A | FULL_BLOCK_C)) != 0) {
-        if ((flags(x + 1, y, overlay) & WALL_SOUTH) != 0) {
-          return true;
+        if (myX && newX) {
+            return false;
         }
-        return (flags(x + 1, y + 1, overlay) & WALL_NORTH) != 0;
-      }
-      return false;
-    }
-    return false;
-  }
-
-  /**
-   * Can the player engage (talk/attack/click) a target one tile away at {@code (tx, ty)} from
-   * {@code (fx, fy)}? This is the <b>object-reach</b> adjacency (≈ the server's {@code Mob.canReach}):
-   * like {@link #canStep} but does NOT reject targets that sit on a fully-blocked tile — fishing
-   * spots, trees, ladders, anvils, ranges, furnaces all sit on impassable scenery the player walks UP
-   * TO, not ONTO.
-   *
-   * <p><b>Not line-of-sight.</b> Beyond the source/target corner walls it also honours the server's
-   * {@code diagonalWallBlocksDiagonalMovement} rule (a diagonal wall on either orthogonal flank of a
-   * diagonal step blocks the engage), but it does NOT run the full diagonal corner-clip pass-through
-   * ({@link #diagonalPassThroughBlocked}, which also reacts to FULL_BLOCK_C scenery flanks). So it is
-   * <em>not</em> a faithful {@code PathValidation.checkAdjacentDistance} and must not be used for LOS
-   * gating ({@link #checkPath} uses {@link #canStep} for that — see its note).
-   *
-   * <p>Skipping the fully-blocked-target check is critical: gating engagement on
-   * {@code canStep} forces a caller's engagement walk to pathfind to an impassable destination,
-   * which exhausts the 1M-node cap and burns the 50ms watchdog budget.
-   */
-  public boolean canEngage(int fx, int fy, int tx, int ty, WallOverlay overlay) {
-    if (!inBounds(tx, ty)) {
-      return false;
-    }
-    int dx = tx - fx, dy = ty - fy;
-    if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
-      return false;
-    }
-    if (dx == 0 && dy == 0) {
-      return true;
-    }
-    int from = flags(fx, fy, overlay);
-    // Int branches, not `switch (dx + "," + dy)` — this backs Bot.canReach,
-    // which per-tick pickers call across many candidates; the String
-    // concat allocated on every call (same fix as canStep's hot path).
-    if (dy == 0) {
-      if (dx == 1) {
-        return (from & WALL_WEST) == 0;
-      }
-      return (from & WALL_EAST) == 0; // dx == -1
-    }
-    if (dx == 0) {
-      if (dy == 1) {
-        return (from & WALL_SOUTH) == 0;
-      }
-      return (from & WALL_NORTH) == 0; // dy == -1
-    }
-    int to = flags(tx, ty, overlay);
-    // Server checkAdjacentDistance's diagonalWallBlocksDiagonalMovement (the bit -2 check):
-    // a DIAGONAL WALL (FULL_BLOCK_A/B) on either orthogonal flank tile — (tx, fy) or (fx, ty) —
-    // blocks the diagonal engage, even when the source and target tiles are themselves clear.
-    // This check is independent of the source/target corner walls below and runs for every server
-    // engage gate (melee, talk, object, ranged) regardless of ignoreProjectileAllowed/wantDiagCheck.
-    // FULL_BLOCK_C (plain solid scenery) is deliberately NOT included — the server's bit -2 ignores
-    // it, preserving the authentic "squeeze past scenery to attack" quirk. Omitting this was the
-    // canReach false-positive that pinned CombatTrainer at (164,306) spam-attacking a zombie on
-    // (165,305): the NE diagonal is flanked by a diagonal wall at (164,305) that the server honours
-    // but canEngage did not. (canStep already rejects it via diagonalPassThroughBlocked.)
-    if (((flags(tx, fy, overlay) | flags(fx, ty, overlay)) & (FULL_BLOCK_A | FULL_BLOCK_B)) != 0) {
-      return false;
-    }
-    if (dx == 1 && dy == -1) {
-      return (from & (WALL_WEST | WALL_NORTH)) == 0 && (to & (WALL_SOUTH | WALL_EAST)) == 0;
-    }
-    if (dx == 1) { // dy == 1
-      return (from & (WALL_WEST | WALL_SOUTH)) == 0 && (to & (WALL_NORTH | WALL_EAST)) == 0;
-    }
-    if (dy == -1) { // dx == -1
-      return (from & (WALL_EAST | WALL_NORTH)) == 0 && (to & (WALL_SOUTH | WALL_WEST)) == 0;
-    }
-    // dx == -1, dy == 1
-    return (from & (WALL_EAST | WALL_SOUTH)) == 0 && (to & (WALL_NORTH | WALL_WEST)) == 0;
-  }
-
-  /**
-   * Faithful mirror of the server's SCENERY engagement gate — {@code Mob.canReach} plus the
-   * {@code finishedPath() && Mob.canReachDiagonal} fallback — against an object footprint rect
-   * {@code [minX..maxX]×[minY..maxY]}: standing inside the rect, or on a cardinally/diagonally
-   * adjacent tile whose specific WALL masks are clear. WALL MASKS ONLY: no full-block tests and no
-   * diagonal-flank rule — those belong to {@code PathValidation.checkAdjacentDistance} (movement,
-   * mirrored by {@link #canEngage}), which {@code atObject} never consults. The two gates genuinely
-   * differ: a landscape-blocked footprint tile (a swamp) is engageable diagonally on the server
-   * while {@code canEngage} refuses it (verified live on a swamp tile: entry (714,3419) op on the
-   * (715,3418) placement fires — clause "player NW of tile, its SOUTH|EAST walls clear").
-   * Engagement primitives fire from a standstill, so the server's finishedPath precondition on the
-   * diagonal clauses always holds for callers of this check.
-   */
-  public boolean canReachScenery(int px, int py, int minX, int maxX, int minY, int maxY,
-      WallOverlay overlay) {
-    if (px >= minX && px <= maxX && py >= minY && py <= maxY) {
-      return true; // standing on the footprint
-    }
-    // Mob.canReach: the three cardinal clauses (there is deliberately NO py+1 clause here — the
-    // server's known "no player-N-of-object" asymmetry; the diagonal fallback's first clause
-    // patches it below, exactly as the server does).
-    if (minX <= px - 1 && maxX >= px - 1 && minY <= py && maxY >= py
-        && (flags(px - 1, py, overlay) & WALL_WEST) == 0) {
-      return true;
-    }
-    if (px + 1 >= minX && px + 1 <= maxX && minY <= py && maxY >= py
-        && (flags(px + 1, py, overlay) & WALL_EAST) == 0) {
-      return true;
-    }
-    if (minX <= px && maxX >= px && py - 1 >= minY && maxY >= py - 1
-        && (flags(px, py - 1, overlay) & WALL_SOUTH) == 0) {
-      return true;
-    }
-    // Mob.canReachDiagonal, clause for clause.
-    if (minX <= px && px <= maxX && minY <= py + 1 && maxY >= py + 1
-        && (flags(px, py + 1, overlay) & WALL_NORTH) == 0) {
-      return true;
-    }
-    if (minX <= px - 1 && maxX >= px - 1 && minY <= py - 1 && maxY >= py - 1
-        && (flags(px - 1, py - 1, overlay) & (WALL_SOUTH | WALL_WEST)) == 0) {
-      return true;
-    }
-    if (px + 1 >= minX && px + 1 <= maxX && py - 1 >= minY && maxY >= py - 1
-        && (flags(px + 1, py - 1, overlay) & (WALL_SOUTH | WALL_EAST)) == 0) {
-      return true;
-    }
-    if (minX <= px - 1 && maxX >= px - 1 && minY <= py + 1 && maxY >= py + 1
-        && (flags(px - 1, py + 1, overlay) & (WALL_NORTH | WALL_WEST)) == 0) {
-      return true;
-    }
-    if (px + 1 >= minX && px + 1 <= maxX && py + 1 >= minY && maxY >= py + 1
-        && (flags(px + 1, py + 1, overlay) & (WALL_NORTH | WALL_EAST)) == 0) {
-      return true;
-    }
-    return false;
-  }
-
-  /**
-   * Straight-line, wall-aware line of sight between two tiles — the bot mirror of the server's
-   * {@code PathValidation.checkPath}, which gates non-walking interactions that need a clear line:
-   * trading, ranged, magic, dueling. Steps from {@code (fromX, fromY)} toward {@code (toX, toY)} one
-   * tile at a time (diagonal-toward, exactly the server's fill loop) and rejects the first step
-   * {@link #checkProjectileStep} blocks. Returns true for a zero-length line (same tile).
-   *
-   * <p><b>This is the PROJECTILE check, not the walking check.</b> The server uses a different
-   * per-step gate here than for movement: {@code checkAdjacentDistance} (via {@code
-   * checkBlockingDistance}), NOT {@code checkAdjacent}. The two diverge in two ways that
-   * {@link #checkProjectileStep} reproduces and {@link #canStep} (walking) does not:
-   * <ul>
-   *   <li>a {@link #projectileAllowed} tile (1×1 scenery like an anvil, signs, railings, gates,
-   *       fences, tables, doorType-1 boundaries…) is <em>clear</em> for line of sight even though it
-   *       blocks walking — this is why a trade across an anvil works in both directions on the
-   *       server but {@code canStep} would falsely wall one direction;</li>
-   *   <li>the diagonal rule differs — {@code checkAdjacentDistance} uses the {@code bit==-2}
-   *       diagonal-wall test and does <em>not</em> run {@code checkDiagonalPassThroughCollisions}.</li>
-   * </ul>
-   * Using {@code canStep} here (as this method once did) reported lines blocked that the server
-   * allows — a trader stopping a tile short of a furnace/anvil operator, the request bouncing forever.
-   *
-   * <p>Pass the door-honest <b>LOS overlay</b> (not the walker overlay): the server treats a closed
-   * door as a wall here, so a check that read the walker overlay — which omits openable doors so A*
-   * can route through them — would wrongly report a clear line through a shut door.
-   */
-  public boolean checkPath(int fromX, int fromY, int toX, int toY, WallOverlay overlay) {
-    int curX = fromX, curY = fromY;
-    int diffX = toX - fromX;
-    int diffY = toY - fromY;
-    int max = Math.max(Math.abs(diffX), Math.abs(diffY));
-    for (int i = 0; i < max; i++) {
-      if (diffX > 0) {
-        diffX--;
-      } else if (diffX < 0) {
-        diffX++;
-      }
-      if (diffY > 0) {
-        diffY--;
-      } else if (diffY < 0) {
-        diffY++;
-      }
-      int nextX = toX - diffX;
-      int nextY = toY - diffY;
-      if (!checkProjectileStep(curX, curY, nextX, nextY, overlay)) {
-        return false;
-      }
-      curX = nextX;
-      curY = nextY;
-    }
-    return true;
-  }
-
-  /**
-   * Projectile/line-of-sight adjacency — literal port of server
-   * {@code PathValidation.checkAdjacentDistance(world, cur, next, ignoreProjectileAllowed=false,
-   * wantDiagCheck=true)}, the per-step gate {@code PathValidation.checkPath} uses for trade / ranged /
-   * magic / duel. Distinct from {@link #canStep} (the walking gate, server {@code checkAdjacent}): it
-   * honours {@link #projectileAllowed} and uses the projectile diagonal rule. {@code (startX,startY)}
-   * and {@code (destX,destY)} must be 4- or 8-adjacent.
-   */
-  private boolean checkProjectileStep(int startX, int startY, int destX, int destY,
-      WallOverlay overlay) {
-    int cx = startX, cy = startY; // server `coords`
-    boolean myX = false, myY = false, newX = false, newY = false;
-    if (startX > destX) {
-      myX = projBlocked(startX, startY, WALL_EAST, true, overlay);
-      newX = projBlocked(startX - 1, startY, WALL_WEST, false, overlay);
-      cx = startX - 1;
-    } else if (startX < destX) {
-      myX = projBlocked(startX, startY, WALL_WEST, true, overlay);
-      newX = projBlocked(startX + 1, startY, WALL_EAST, false, overlay);
-      cx = startX + 1;
-    }
-    if (startY > destY) {
-      myY = projBlocked(startX, startY, WALL_NORTH, true, overlay);
-      newY = projBlocked(startX, startY - 1, WALL_SOUTH, false, overlay);
-      cy = startY - 1;
-    } else if (startY < destY) {
-      myY = projBlocked(startX, startY, WALL_SOUTH, true, overlay);
-      newY = projBlocked(startX, startY + 1, WALL_NORTH, false, overlay);
-      cy = startY + 1;
-    }
-    if (myX && myY) {
-      return false;
-    }
-    if (myX && startY == destY) {
-      return false;
-    }
-    if (myY && startX == destX) {
-      return false;
-    }
-    if (newX && newY) {
-      return false;
-    }
-    // Re-test new X/Y walls at the destination-side tile (server recomputes at `coords`).
-    if (cx > startX) {
-      newX = projBlocked(cx, cy, WALL_EAST, false, overlay);
-    } else if (cx < startX) {
-      newX = projBlocked(cx, cy, WALL_WEST, false, overlay);
-    }
-    if (cy > startY) {
-      newY = projBlocked(cx, cy, WALL_NORTH, false, overlay);
-    } else if (cy < startY) {
-      newY = projBlocked(cx, cy, WALL_SOUTH, false, overlay);
-    }
-    if (newX && newY) {
-      return false;
-    }
-    if (newX && startY == cy) {
-      return false;
-    }
-    if (newY && startX == cx) {
-      return false;
-    }
-    if (myX && newX) {
-      return false;
-    }
-    if (myY && newY) {
-      return false;
-    }
-    // Diagonal corner-wall pair on the destination tile (wantDiagCheck=true → the wall-pair bit).
-    boolean diagonalBlocked = false;
-    if (startX + 1 == destX && startY + 1 == destY) {
-      diagonalBlocked = projBlocked(startX + 1, startY + 1, WALL_NORTH | WALL_EAST, false, overlay);
-    } else if (startX + 1 == destX && startY - 1 == destY) {
-      diagonalBlocked = projBlocked(startX + 1, startY - 1, WALL_SOUTH | WALL_EAST, false, overlay);
-    } else if (startX - 1 == destX && startY + 1 == destY) {
-      diagonalBlocked = projBlocked(startX - 1, startY + 1, WALL_NORTH | WALL_WEST, false, overlay);
-    } else if (startX - 1 == destX && startY - 1 == destY) {
-      diagonalBlocked = projBlocked(startX - 1, startY - 1, WALL_SOUTH | WALL_WEST, false, overlay);
-    }
-    if (diagonalBlocked) {
-      return false;
-    }
-    // Diagonal-wall-blocks-diagonal-movement: bit -2 = ONLY the diagonal full-blocks (A/B), full
-    // block C ignored (server PathValidation.java:232-245).
-    int xDiff = destX - startX, yDiff = destY - startY;
-    if (Math.abs(xDiff) == 1 && Math.abs(yDiff) == 1) {
-      if (projBlocked(startX + xDiff, startY, -2, false, overlay)
-          || projBlocked(startX, startY + yDiff, -2, false, overlay)) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  /**
-   * Server {@code checkBlockingDistance(world, x, y, bit, isCurrentTile, ignoreProjectileAllowed =
-   * false)}: a {@link #projectileAllowed} tile never blocks; otherwise apply {@link #isBlockingMask}
-   * to the static+overlay flags.
-   */
-  private boolean projBlocked(int x, int y, int bit, boolean isCurrentTile, WallOverlay overlay) {
-    if (projectileAllowed(x, y)) {
-      return false;
-    }
-    return isBlockingMask(flags(x, y, overlay), bit, isCurrentTile);
-  }
-
-  /**
-   * Server {@code PathValidation.isBlocking}. {@code bit > -1} checks the given wall bit(s); a non-
-   * current tile is also blocked by {@code FULL_BLOCK_A}/{@code _B} always and by {@code _C} unless
-   * {@code bit <= -2} (the diagonal-only probe).
-   */
-  private static boolean isBlockingMask(int objectValue, int bit, boolean isCurrentTile) {
-    if (bit > -1 && (objectValue & bit) != 0) {
-      return true;
-    }
-    if (!isCurrentTile && (objectValue & FULL_BLOCK_A) != 0) {
-      return true;
-    }
-    if (!isCurrentTile && (objectValue & FULL_BLOCK_B) != 0) {
-      return true;
-    }
-    return bit > -2 && !isCurrentTile && (objectValue & FULL_BLOCK_C) != 0;
-  }
-
-  /**
-   * Can a player standing at {@code (fx, fy)} interact with fully-blocked scenery occupying
-   * {@code (tx, ty)} — a furnace, range, ladder, tree, fishing spot? True iff the tiles are
-   * <em>cardinally</em> adjacent and the shared edge carries no wall in either tile's flag
-   * representation ({@link #canEngage} both directions: the from-side arm is the server's
-   * {@code PathValidation.checkAdjacentDistance}, the object-side arm is the wall mask
-   * {@code Mob.canReach} consults).
-   *
-   * <p>This is the goal predicate for pathing to blocked scenery — the
-   * planner substitutes the original tile with interactable neighbours, and the walker's arrival
-   * check accepts exactly the same tiles. A tile that is merely Chebyshev-1 away does NOT qualify:
-   * a diagonal, or a cardinal on the far side of a building wall, cannot fire the action (the
-   * classic failure: scenery in a room corner, and a radius-style arrival check "arriving" outside
-   * the building).
-   *
-   * <p>The N-of-object cardinal (smaller y) IS accepted even though the
-   * server's {@code Mob.canReach} lacks that case — a caller's engagement walk-pair covers
-   * it at the cost of one extra tick (see openrsc_canreach_asymmetry); callers rank it below
-   * W/E/S.
-   */
-  public boolean canInteract(int fx, int fy, int tx, int ty, WallOverlay overlay) {
-    int dx = tx - fx, dy = ty - fy;
-    if (dx * dx + dy * dy != 1) {
-      return false; // cardinal adjacency only
-    }
-    return canEngage(fx, fy, tx, ty, overlay)
-           && canEngage(tx, ty, fx, fy, overlay);
-  }
-
-  // ===================================================================
-  // Point / Area overloads — the geometry-typed face of the wall-aware
-  // primitives above. Thin delegations so scripts and the pathfinder can
-  // speak openrsc.gamedata.geometry types instead of loose int pairs.
-  //
-  // Every wall-consulting method takes an EXPLICIT WallOverlay — there is
-  // deliberately no overlay-defaulting convenience overload. A hidden
-  // null overlay silently drops the dynamic layer (closed doors), giving
-  // static-only answers where the caller expected "right now"; that trap
-  // is worth a few extra characters at every call site. Pass the bot's
-  // live overlay for current topology (static + dynamic), or null to
-  // deliberately opt into static-only (e.g. the pathfinder base graph).
-  // Only inBounds — pure geometry, no walls — has no overlay parameter.
-  // ===================================================================
-
-  /**
-   * {@link #inBounds(int, int)} for a {@link Point}. Pure geometry — no wall topology, no overlay.
-   */
-  public boolean inBounds(Point p) {
-    return inBounds(p.x(), p.y());
-  }
-
-  /**
-   * {@link #fullyBlocked(int, int, WallOverlay)} for a {@link Point}. Pass the live overlay for
-   * current blockage (static + dynamic), or {@code null} for static-only.
-   */
-  public boolean fullyBlocked(Point p, WallOverlay overlay) {
-    return fullyBlocked(p.x(), p.y(), overlay);
-  }
-
-  /**
-   * True if {@code p} is in bounds and not {@link #fullyBlocked(Point, WallOverlay) fully blocked} —
-   * a tile the bot could stand on (walls gate movement <em>between</em> tiles, not the tile itself).
-   * Pass the live overlay for current state, or {@code null} for static-only.
-   */
-  public boolean walkable(Point p, WallOverlay overlay) {
-    return inBounds(p) && !fullyBlocked(p, overlay);
-  }
-
-  /**
-   * {@link #canStep(int, int, int, int, WallOverlay)} ({@code from} → {@code to}).
-   */
-  public boolean canStep(Point from, Point to, WallOverlay overlay) {
-    return canStep(from.x(), from.y(), to.x(), to.y(), overlay);
-  }
-
-  /**
-   * {@link #canEngage(int, int, int, int, WallOverlay)} ({@code from} → {@code to}).
-   */
-  public boolean canEngage(Point from, Point to, WallOverlay overlay) {
-    return canEngage(from.x(), from.y(), to.x(), to.y(), overlay);
-  }
-
-  /**
-   * {@link #canInteract(int, int, int, int, WallOverlay)} ({@code from} → {@code to}).
-   */
-  public boolean canInteract(Point from, Point to, WallOverlay overlay) {
-    return canInteract(from.x(), from.y(), to.x(), to.y(), overlay);
-  }
-
-  /**
-   * The tiles reachable in one step from {@code from} — its walkable 8-neighbours that
-   * {@link #canStep} accepts (wall- and corner-clip-aware). The "where can I step from here"
-   * primitive. Order is cardinals (N, E, S, W) then diagonals. Pass the bot's live overlay for
-   * current topology (static + dynamic), or {@code null} for static-only.
-   */
-  public List<Point> steppableNeighbours(Point from, WallOverlay overlay) {
-    List<Point> out = new ArrayList<>(8);
-    for (Point n : from.neighbours()) {
-      if (canStep(from.x(), from.y(), n.x(), n.y(), overlay)) {
-        out.add(n);
-      }
-    }
-    return out;
-  }
-
-  /**
-   * The tiles a player can interact with an object from, given the tile region the object occupies —
-   * the wall-aware "click/use/talk works from here" set the server's {@code Mob.atObject}
-   * rect-membership {@code canReach} accepts. <b>Works for an object of any size:</b> pass a
-   * {@link Point} for a 1×1 ladder/furnace or a {@link Rect} ({@code bot.footprintOf(obj)} /
-   * {@code obj.footprint(defs)}) for a 2×2 staircase — the {@link Area} parameter takes either, so a
-   * caller need not special-case size.
-   *
-   * <p>This is the wall-aware filter of {@link Area#surroundingTiles()} (plus, for wall sceneries,
-   * the walkable interior). It mirrors {@code LadderTransport.enumerateEntriesRect}: every walkable
-   * tile inside the rect (wall sceneries you stand on top of), plus every walkable ring tile that
-   * can {@link #canEngage} its clamped-nearest rect tile (blocked sceneries you stand beside). For a
-   * fully-blocked footprint the inside tiles drop out and only the engageable ring survives, so a
-   * furnace/ladder/staircase yields exactly the tiles a click fires from; for a 1×1 object this
-   * reduces to the proven single-tile {@code enumerateEntries} (anchor-if-walkable + the 8 neighbours
-   * that {@code canEngage} it). Returns the tiles in row-major ring scan order; rank them with
-   * {@code Bot.travelCost} to pick where to stand.
-   *
-   * <p>Pass the bot's live overlay for current topology (static + dynamic) — a closed door on the
-   * footprint edge then drops the tile behind it; pass {@code null} to deliberately enumerate against
-   * static topology only (the pathfinder's entry enumeration does this, since dynamic walls only add
-   * blockage and a static-clear side is reachable once the walker opens the door en route).
-   */
-  public List<Point> interactableTiles(Area area, WallOverlay overlay) {
-    int minX = area.minX(), minY = area.minY(), maxX = area.maxX(), maxY = area.maxY();
-    List<Point> out = new ArrayList<>(2 * (area.width() + area.height()) + area.tileCount());
-    for (int ny = minY - 1; ny <= maxY + 1; ny++) {
-      for (int nx = minX - 1; nx <= maxX + 1; nx++) {
-        if (!inBounds(nx, ny) || fullyBlocked(nx, ny, overlay)) {
-          continue;
+        if (myY && newY) {
+            return false;
         }
-        boolean inside = nx >= minX && nx <= maxX && ny >= minY && ny <= maxY;
-        if (inside) {
-          out.add(new Point(nx, ny));
-          continue;
+        boolean diagonalBlocked = false;
+        if (startX + 1 == destX && startY + 1 == destY) {
+            diagonalBlocked = checkBlockingDistance(
+                    startX + 1, startY + 1, wantDiagCheck ? WALL_NORTH | WALL_EAST : -1, false, ipa, overlay);
+        } else if (startX + 1 == destX && startY - 1 == destY) {
+            diagonalBlocked = checkBlockingDistance(
+                    startX + 1, startY - 1, wantDiagCheck ? WALL_SOUTH | WALL_EAST : -1, false, ipa, overlay);
+        } else if (startX - 1 == destX && startY + 1 == destY) {
+            diagonalBlocked = checkBlockingDistance(
+                    startX - 1, startY + 1, wantDiagCheck ? WALL_NORTH | WALL_WEST : -1, false, ipa, overlay);
+        } else if (startX - 1 == destX && startY - 1 == destY) {
+            diagonalBlocked = checkBlockingDistance(
+                    startX - 1, startY - 1, wantDiagCheck ? WALL_SOUTH | WALL_WEST : -1, false, ipa, overlay);
         }
-        int cx = Math.max(minX, Math.min(maxX, nx));
-        int cy = Math.max(minY, Math.min(maxY, ny));
-        if (canEngage(nx, ny, cx, cy, overlay)) {
-          out.add(new Point(nx, ny));
+        if (diagonalBlocked) {
+            return false;
         }
-      }
+        int xDiff = destX - startX, yDiff = destY - startY;
+        if (Math.abs(xDiff) == 1 && Math.abs(yDiff) == 1) {
+            if (checkBlockingDistance(startX + xDiff, startY, -2, false, ipa, overlay)
+                    || checkBlockingDistance(startX, startY + yDiff, -2, false, ipa, overlay)) {
+                return false;
+            }
+        }
+        return true;
     }
-    return out;
-  }
 
-  public int width() {
-    return WIDTH;
-  }
-
-  public int height() {
-    return HEIGHT;
-  }
-
-  /**
-   * Raw {@code groundTexture} byte; index into the 256-entry biome palette.
-   */
-  public int groundTexture(int x, int absY) {
-    if (!inBounds(x, absY)) {
-      return 0;
+    // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/PathValidation.java#L251
+    private boolean checkBlockingDistance(
+            int x, int y, int bit, boolean isCurrentTile, boolean ignoreProjectileAllowed, LocalOverlay overlay) {
+        int f = flags(x, y, overlay);
+        if (!ignoreProjectileAllowed && (projectileAllowed(x, y) || (f & PROJECTILE_PASS) != 0)) {
+            return false;
+        }
+        return isBlockingMask(f, bit, isCurrentTile);
     }
-    return groundTexture[absY * WIDTH + x] & 0xFF;
-  }
 
-  /**
-   * Raw {@code groundOverlay} byte (1-based TileDefs id; 0 = none).
-   */
-  public int groundOverlay(int x, int absY) {
-    if (!inBounds(x, absY)) {
-      return 0;
+    private static int[] grow(int[] a) {
+        int[] b = new int[a.length * 2];
+        System.arraycopy(a, 0, b, 0, a.length);
+        return b;
     }
-    return groundOverlay[absY * WIDTH + x] & 0xFF;
-  }
 
-  /**
-   * Raw {@code roofTexture} byte from the landscape archive. Used by the web UI's renderer only —
-   * pathfinding deliberately does NOT gate F1+ walkability on it: the server permits walking
-   * upper-floor void (proven by {@code ServerAcceptsVoidWalkIT}), so a roof gate would be more
-   * restrictive than the server.
-   */
-  public int roofTexture(int x, int absY) {
-    if (!inBounds(x, absY)) {
-      return 0;
+    private static boolean isLandscapeWallProjectilePass(int rawWallId) {
+        return PROJECTILE_CLIP_ALLOWED_WALL_IDS.contains(rawWallId);
     }
-    return roofTexture[absY * WIDTH + x] & 0xFF;
-  }
+
+    /**
+     * Whether the server gives a scenery def's tiles projectile clip: any 1x1 def but a tree or a
+     * chest, and any def whose name is on the server's list.
+     *
+     * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/world/World.java#L572">World.isProjectileClipAllowed</a>
+     */
+    public static boolean isSceneryProjectileClipAllowed(ObjectDef def) {
+        String name = def.name() == null ? "" : def.name();
+        if (!name.equalsIgnoreCase("tree")
+                && def.width() == 1
+                && def.height() == 1
+                && !name.equalsIgnoreCase("chest")) {
+            return true;
+        }
+        return isNameProjectileClipAllowed(name);
+    }
+
+    private static boolean isNameProjectileClipAllowed(String name) {
+        return name != null && PROJECTILE_CLIP_ALLOWED_NAMES.contains(name.toLowerCase(Locale.ROOT));
+    }
+
+    private static boolean occupied(TileOccupancy mob, int x, int y) {
+        return mob != null && mob.blockedAt(x, y);
+    }
+
+    // PathValidation.isBlocking: bit -1 tests full blocks only, -2 only the diagonal ones.
+    // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/PathValidation.java#L267
+    private static boolean isBlockingMask(int objectValue, int bit, boolean isCurrentTile) {
+        if (bit > -1 && (objectValue & bit) != 0) {
+            return true;
+        }
+        if (!isCurrentTile && (objectValue & FULL_BLOCK_A) != 0) {
+            return true;
+        }
+        if (!isCurrentTile && (objectValue & FULL_BLOCK_B) != 0) {
+            return true;
+        }
+        return bit > -2 && !isCurrentTile && (objectValue & FULL_BLOCK_C) != 0;
+    }
+
+    public boolean canStep(int fx, int fy, int tx, int ty, Overlays o, TileOccupancy mob) {
+        return canStep(fx, fy, tx, ty, o.walkOverlay(), mob);
+    }
+
+    public boolean canStep(int fx, int fy, int tx, int ty, Overlays o) {
+        return canStep(fx, fy, tx, ty, o.walkOverlay(), null);
+    }
+
+    public boolean fullyBlocked(int x, int y, Overlays o) {
+        return fullyBlocked(x, y, o.walkOverlay());
+    }
+
+    public boolean canReachMob(int fx, int fy, int tx, int ty, Overlays o) {
+        return canReachMob(fx, fy, tx, ty, o.losOverlay());
+    }
+
+    public boolean canEngage(int fx, int fy, Targetable t, Overlays o) {
+        return canEngage(fx, fy, t, o.losOverlay());
+    }
+
+    public boolean checkPath(int fromX, int fromY, int toX, int toY, Overlays o) {
+        return checkPath(fromX, fromY, toX, toY, o.losOverlay());
+    }
+
+    public List<Point> engageTiles(Targetable t, Overlays o) {
+        return engageTiles(t, o.losOverlay());
+    }
+
+    public List<Point> engageTilesAround(Rect footprint, Overlays o) {
+        return engageTilesAround(footprint, o.losOverlay());
+    }
+
+    /**
+     * {@code dest}, unless it is a {@link Point} or a {@link Rect} of at most 64 tiles every one of
+     * which is fully blocked as built, such as a scenery's own footprint: then the
+     * {@link #engageTilesAround} ring as one {@link Dest#anyOf}, or {@code null} when that ring is empty.
+     */
+    public Dest blockedGoalRing(Dest dest, Overlays o) {
+        Rect rect = dest instanceof Rect r ? r : dest instanceof Point p ? Rect.of(p, p) : null;
+        if (rect == null || !everyTileBlocked(rect)) {
+            return dest;
+        }
+        List<Point> ring = engageTilesAround(rect, o);
+        return ring.isEmpty() ? null : Dest.anyOf(ring.toArray(new Area[0]));
+    }
+
+    private boolean everyTileBlocked(Rect r) {
+        if ((long) (r.maxX() - r.minX() + 1) * (r.maxY() - r.minY() + 1) > 64) {
+            return false;
+        }
+        for (int y = r.minY(); y <= r.maxY(); y++) {
+            for (int x = r.minX(); x <= r.maxX(); x++) {
+                if (inBounds(x, y) && !fullyBlocked(x, y)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    public boolean resolvesFrom(int fx, int fy, int tx, int ty, int range, Overlays o) {
+        return resolvesFrom(fx, fy, tx, ty, range, o.losOverlay());
+    }
+
+    public List<Point> rangeTiles(int tx, int ty, int range, Overlays o) {
+        return rangeTiles(tx, ty, range, o.losOverlay());
+    }
 }

@@ -16,12 +16,13 @@ import com.openrsc.client.model.Sector;
 @FunctionalInterface
 public interface SectorProvider {
 
-  /**
-   * @param height the floor (0..3)
-   * @param sectionX sector X index (world tile / 48)
-   * @param sectionY sector Y index
-   * @return the sector, or {@code null} if that section is empty/absent (the
-   *     world then substitutes a blank sector, matching the ZIP path)
-   */
-  Sector getSection(int height, int sectionX, int sectionY);
+    /**
+     * Returns the sector, or {@code null} if that section is empty/absent (the world then
+     * substitutes a blank sector, matching the ZIP path).
+     *
+     * @param height the floor (0..3)
+     * @param sectionX sector X index (world tile / 48)
+     * @param sectionY sector Y index
+     */
+    Sector getSection(int height, int sectionX, int sectionY);
 }

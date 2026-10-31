@@ -13,7 +13,7 @@ package orsc.graphics.two;
  */
 public final class HeadlessSurface extends GraphicsController {
 
-  public HeadlessSurface(int width, int height, int spriteCount) {
-    super(width, height, spriteCount);
-  }
+    public HeadlessSurface(int width, int height, int spriteCount) {
+        super(width, height, spriteCount);
+    }
 }

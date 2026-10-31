@@ -1,105 +1,140 @@
 package openrsc.maprender.bake;
 
-import com.openrsc.client.entityhandling.EntityHandler;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.function.Consumer;
+import openrsc.bot.render.WorldRenderer;
 import openrsc.gamedata.DataViews;
-import openrsc.gamedata.ItemDefs;
-import openrsc.gamedata.NpcDefs;
-import openrsc.gamedata.NpcLocs;
-import openrsc.gamedata.SceneryLocs;
 import openrsc.gamedata.ServerConf;
 import openrsc.gamedata.WorldProfile;
+import openrsc.gamedata.defs.BoundaryLocs;
+import openrsc.gamedata.defs.ItemDefs;
+import openrsc.gamedata.defs.NpcDefs;
+import openrsc.gamedata.defs.NpcLocs;
+import openrsc.gamedata.defs.SceneryLocs;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
- * Bakes the static JSON the viewer fetches from endpoints OUTSIDE
- * {@code /api/world3d/*} — scenery placements + atlas, the NPC spawn table, and
- * the wearables map. The derivations come from {@link DataViews}, the exact same
- * code the live server controllers use, so the baked files are byte-identical to
- * the live endpoints:
- *
- * <ul>
- *   <li>{@code /api/map/scenery.json}       — {@link DataViews#scenery}</li>
- *   <li>{@code /api/map/scenery-atlas.json} + {@code .png} — the sprite atlas</li>
- *   <li>{@code /api/npc-spawns}             — {@link DataViews#spawns}</li>
- *   <li>{@code /api/items/wearables}        — {@link DataViews#wearables}</li>
- * </ul>
+ * Writes the world data the viewer reads beside the mesh, as {@link DataViews} derives it:
+ * {@code scenery.json}, {@code boundaries.json}, {@code npc-spawns.json}, {@code npc-defs.json} and
+ * {@code wearables.json} under {@code <siteRoot>/api/world/}, with {@code npc-drops.json} where the
+ * world has drop tables, and the scenery atlas's index as
+ * {@code <siteRoot>/api/map/scenery-atlas.json}. The atlas image is baked only to make the index and
+ * is not written.
  */
 public final class AuxDataBaker {
 
-  public static void export(String clientCacheDir, Path siteRoot, Consumer<String> log)
-      throws Exception {
-    export(clientCacheDir, siteRoot, log, WorldProfile.resolve(ServerConf.resolve()));
-  }
+    public static void export(String clientCacheDir, Path siteRoot, Consumer<String> log, WorldProfile world)
+            throws Exception {
+        WorldRenderer.configureCache(clientCacheDir);
 
-  /** As {@link #export(String, Path, Consumer)} for an explicit world. */
-  public static void export(String clientCacheDir, Path siteRoot, Consumer<String> log,
-      WorldProfile world) throws Exception {
-    // The scenery atlas renders sprites, which needs the client defs loaded
-    // (idempotent when the world-mesh bake already loaded them this JVM).
-    openrsc.bot.render.WorldRenderer.configureCache(clientCacheDir);
+        var conf = ServerConf.resolve();
 
-    var conf = ServerConf.resolve();
+        List<SceneryLocs.Loc> scenery = new ArrayList<>();
+        for (Path p : world.sceneryLocs(conf)) {
+            scenery.addAll(SceneryLocs.load(p));
+        }
+        List<NpcLocs.Spawn> loadedSpawns = new ArrayList<>();
+        for (Path p : world.npcLocs(conf)) {
+            loadedSpawns.addAll(NpcLocs.load(p));
+        }
+        List<NpcLocs.Spawn> spawns = world.applyNpcFixups(loadedSpawns);
+        List<BoundaryLocs.Loc> boundaries = new ArrayList<>();
+        for (Path p : world.boundaryLocs(conf)) {
+            boundaries.addAll(BoundaryLocs.load(p));
+        }
+        NpcDefs npcDefs =
+                NpcDefs.load(conf.defs().resolve("NpcDefs.json"), conf.defs().resolve("NpcDefsCustom.json"));
+        ItemDefs itemDefs =
+                ItemDefs.load(conf.defs().resolve("ItemDefs.json"), conf.defs().resolve("ItemDefsCustom.json"));
 
-    // Scenery + npc spawns are per-world (WorldProfile mirrors WorldPopulator's file set, order
-    // and post-load spawn fixups), so a Cabbage bake carries its Runecraft/Harvesting/CustomQuest
-    // content and an authentic bake does not.
-    List<SceneryLocs.Loc> scenery = new ArrayList<>();
-    for (Path p : world.sceneryLocs(conf)) {
-      scenery.addAll(SceneryLocs.load(p));
+        Path api = siteRoot.resolve("api");
+        Path worldDir = api.resolve("world");
+        Path map = api.resolve("map");
+        Files.createDirectories(worldDir);
+        Files.createDirectories(map);
+
+        BakeJson.MAPPER.writeValue(worldDir.resolve("scenery.json").toFile(), DataViews.scenery(scenery));
+        log.accept("scenery.json: " + scenery.size() + " placements");
+
+        BakeJson.MAPPER.writeValue(worldDir.resolve("boundaries.json").toFile(), DataViews.boundaries(boundaries));
+        log.accept("boundaries.json: " + boundaries.size() + " placements");
+
+        List<DataViews.SpawnDto> spawnDtos = DataViews.spawns(spawns, npcDefs);
+        BakeJson.MAPPER.writeValue(worldDir.resolve("npc-spawns.json").toFile(), spawnDtos);
+        long named = spawnDtos.stream().filter(s -> s.name() != null).count();
+        log.accept("npc-spawns.json: " + spawns.size() + " spawns (" + named + " named)");
+
+        List<DataViews.NpcDefDto> defDtos = DataViews.npcDefs(npcDefs, DataViews.npcRespawnScale(conf, world));
+        BakeJson.MAPPER.writeValue(worldDir.resolve("npc-defs.json").toFile(), defDtos);
+        log.accept("npc-defs.json: " + defDtos.size() + " defs");
+
+        writeDrops(world, itemDefs, worldDir, log);
+
+        var wearables = DataViews.wearables(itemDefs);
+        BakeJson.MAPPER.writeValue(worldDir.resolve("wearables.json").toFile(), wearables);
+        log.accept("wearables.json: " + wearables.size() + " appearance sprites");
+
+        Path atlasWork = Files.createTempDirectory("scenery-atlas");
+        try {
+            SceneryAtlasBaker.bake(clientCacheDir, scenery, atlasWork);
+            Path index = SceneryAtlasBaker.atlasJson(atlasWork);
+            if (Files.isRegularFile(index)) {
+                Files.copy(index, map.resolve("scenery-atlas.json"), StandardCopyOption.REPLACE_EXISTING);
+                log.accept("scenery-atlas.json ok");
+            } else {
+                log.accept("scenery-atlas.json SKIPPED (atlas not produced)");
+            }
+        } finally {
+            try (var files = Files.list(atlasWork)) {
+                for (Path p : (Iterable<Path>) files::iterator) {
+                    Files.deleteIfExists(p);
+                }
+            }
+            Files.deleteIfExists(atlasWork);
+        }
     }
-    List<NpcLocs.Spawn> loadedSpawns = new ArrayList<>();
-    for (Path p : world.npcLocs(conf)) {
-      loadedSpawns.addAll(NpcLocs.load(p));
+
+    /**
+     * Writes {@code npc-drops.json}: the world's drop tables as {@code npc-drops.<world>.json} beside
+     * this class holds them, with {@code values}, the base price of every item they name. Nothing is
+     * written for a world with no tables.
+     */
+    static void writeDrops(WorldProfile world, ItemDefs itemDefs, Path worldDir, Consumer<String> log)
+            throws IOException {
+        String resource = "npc-drops." + world.name() + ".json";
+        try (var in = AuxDataBaker.class.getResourceAsStream(resource)) {
+            if (in == null) {
+                log.accept("npc-drops.json SKIPPED (no " + resource + ")");
+                return;
+            }
+            var drops = (ObjectNode) BakeJson.MAPPER.readTree(in);
+            var values = drops.putObject("values");
+            Set<Integer> items = new TreeSet<>();
+            for (String section : new String[] {"npcs", "tables"}) {
+                drops.path(section)
+                        .forEach(list -> list.forEach(e -> {
+                            if (e.has("item")) {
+                                items.add(e.get("item").asInt());
+                            }
+                        }));
+            }
+            for (int id : items) {
+                var def = id >= 0 && id < itemDefs.size() ? itemDefs.get(id) : null;
+                if (def != null) {
+                    values.put(String.valueOf(id), def.basePrice());
+                }
+            }
+            BakeJson.MAPPER.writeValue(worldDir.resolve("npc-drops.json").toFile(), drops);
+            log.accept("npc-drops.json: " + drops.path("npcs").size() + " npcs, " + items.size() + " items");
+        }
     }
-    List<NpcLocs.Spawn> spawns = world.applyNpcFixups(loadedSpawns);
-    NpcDefs npcDefs = NpcDefs.load(conf.defs().resolve("NpcDefs.json"),
-        conf.defs().resolve("NpcDefsCustom.json"));
-    ItemDefs itemDefs = ItemDefs.load(conf.defs().resolve("ItemDefs.json"),
-        conf.defs().resolve("ItemDefsCustom.json"));
 
-    Path map = siteRoot.resolve("api").resolve("map");
-    Path apiRoot = siteRoot.resolve("api");
-    Files.createDirectories(map);
-    Files.createDirectories(apiRoot.resolve("items"));
-
-    // ---- /api/map/scenery.json ----
-    BakeJson.MAPPER.writeValue(map.resolve("scenery.json").toFile(), DataViews.scenery(scenery));
-    log.accept("scenery.json: " + scenery.size() + " placements");
-
-    // ---- /api/map/scenery-atlas.{json,png} ----
-    SceneryAtlasBaker.bake(clientCacheDir, scenery, map);
-    copyIfPresent(SceneryAtlasBaker.atlasJson(map), map.resolve("scenery-atlas.json"), log,
-        "scenery-atlas.json");
-    copyIfPresent(SceneryAtlasBaker.atlasPng(map), map.resolve("scenery-atlas.png"), log,
-        "scenery-atlas.png");
-
-    // ---- /api/npc-spawns ----
-    List<DataViews.SpawnDto> spawnDtos = DataViews.spawns(spawns, npcDefs);
-    BakeJson.MAPPER.writeValue(apiRoot.resolve("npc-spawns").toFile(), spawnDtos);
-    long named = spawnDtos.stream().filter(s -> s.name() != null).count();
-    log.accept("npc-spawns: " + spawns.size() + " spawns (" + named + " named)");
-
-    // ---- /api/items/wearables ----
-    var wearables = DataViews.wearables(itemDefs);
-    BakeJson.MAPPER.writeValue(apiRoot.resolve("items").resolve("wearables").toFile(), wearables);
-    log.accept("wearables: " + wearables.size() + " appearance sprites");
-  }
-
-  private static void copyIfPresent(Path src, Path dst, Consumer<String> log, String label)
-      throws IOException {
-    if (src != null && Files.isRegularFile(src)) {
-      Files.copy(src, dst, StandardCopyOption.REPLACE_EXISTING);
-      log.accept(label + " ok");
-    } else {
-      log.accept(label + " SKIPPED (atlas not produced)");
-    }
-  }
-
-  private AuxDataBaker() {}
+    private AuxDataBaker() {}
 }

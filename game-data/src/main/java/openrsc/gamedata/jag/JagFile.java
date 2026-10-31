@@ -1,40 +1,26 @@
 package openrsc.gamedata.jag;
 
 /**
- * Sequential byte reader over a decompressed {@link JagArchive} entry. Port of the server's
- * {@code com.openrsc.server.io.JContentFile} — same big-endian, sign conventions so the sector
- * decoder reproduces the server's bytes exactly.
+ * A read cursor over one unpacked {@link JagArchive} entry, starting at offset 0. Reading past the
+ * end throws {@link ArrayIndexOutOfBoundsException}. Not thread-safe.
+ *
+ * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/io/JContentFile.java#L10">JContentFile</a>
  */
 public final class JagFile {
 
-  private final byte[] data;
-  private int pos;
+    private final byte[] data;
+    private int pos;
 
-  public JagFile(byte[] data) {
-    this.data = data;
-  }
+    /** Reads {@code data} in place; the array is not copied. */
+    public JagFile(byte[] data) {
+        this.data = data;
+    }
 
-  public void skip(int amount) {
-    pos += amount;
-  }
+    public byte readByte() {
+        return data[pos++];
+    }
 
-  public int tell() {
-    return pos;
-  }
-
-  public byte readByte() {
-    return data[pos++];
-  }
-
-  public int readUnsignedByte() {
-    return data[pos++] & 0xFF;
-  }
-
-  public int readUnsignedShort() {
-    return (readUnsignedByte() << 8) | readUnsignedByte();
-  }
-
-  public int remaining() {
-    return data.length - pos;
-  }
+    public int readUnsignedByte() {
+        return data[pos++] & 0xFF;
+    }
 }
