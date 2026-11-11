@@ -20,6 +20,7 @@ import openrsc.bot.api.packets.UseItemOnObjectPacket;
 import openrsc.bot.api.packets.UseWornItemOnBoundaryPacket;
 import openrsc.bot.api.packets.WornItemCommandPacket;
 import openrsc.gamedata.ServerData;
+import openrsc.gamedata.geometry.Point;
 import openrsc.nav.transports.EngageSpec;
 import openrsc.nav.walk.Yield;
 
@@ -37,7 +38,7 @@ final class TransportClick {
      */
     record Click(@Nullable Packet packet, @Nullable String missing) {}
 
-    static Click of(EngageSpec spec, Inventory pack, ServerData defs, List<? extends Yield.Sighting> npcs) {
+    static Click of(EngageSpec spec, Inventory pack, ServerData defs, List<? extends Yield.Sighting> npcs, Point from) {
         EngageSpec.Action action = spec.action();
         if (action instanceof EngageSpec.Action.Bespoke b) {
             return new Click(null, "a scripted crossing (" + b.script() + ")");
@@ -77,21 +78,16 @@ final class TransportClick {
                 };
             }
             case EngageSpec.Target.Npcs n -> {
-                for (Yield.Sighting s : npcs) {
-                    for (int index : n.serverIndexes()) {
-                        if (s.serverIndex() == index) {
-                            if (action instanceof EngageSpec.Action.NpcCommand cmd) {
-                                yield new Click(
-                                        cmd.command() == 1
-                                                ? new NpcCommand1Packet(index)
-                                                : new NpcCommand2Packet(index),
-                                        null);
-                            }
-                            yield new Click(new TalkToNpcPacket(index), null);
-                        }
-                    }
+                Yield.Sighting npc = nearest(n, npcs, from);
+                if (npc == null) {
+                    yield new Click(null, null);
                 }
-                yield new Click(null, null);
+                int index = npc.serverIndex();
+                yield new Click(
+                        action instanceof EngageSpec.Action.NpcCommand cmd
+                                ? (cmd.command() == 1 ? new NpcCommand1Packet(index) : new NpcCommand2Packet(index))
+                                : new TalkToNpcPacket(index),
+                        null);
             }
             case EngageSpec.Target.Self self ->
                 switch (action) {
@@ -101,6 +97,38 @@ final class TransportClick {
                     default -> new Click(null, action + " on ourselves");
                 };
         };
+    }
+
+    // The nearest NPC of the target's spawns, else the nearest of its ids: a target may name only ids.
+    private static Yield.@Nullable Sighting nearest(
+            EngageSpec.Target.Npcs target, List<? extends Yield.Sighting> npcs, Point from) {
+        Yield.Sighting spawned = null;
+        Yield.Sighting same = null;
+        for (Yield.Sighting s : npcs) {
+            if (among(s.serverIndex(), target.serverIndexes())) {
+                spawned = nearer(spawned, s, from);
+            } else if (among(s.id(), target.npcIds())) {
+                same = nearer(same, s, from);
+            }
+        }
+        return spawned != null ? spawned : same;
+    }
+
+    private static Yield.Sighting nearer(Yield.@Nullable Sighting best, Yield.Sighting s, Point from) {
+        return best == null || distance(from, s) < distance(from, best) ? s : best;
+    }
+
+    private static int distance(Point from, Yield.Sighting s) {
+        return Point.chebyshev(from.x(), from.y(), s.x(), s.z());
+    }
+
+    private static boolean among(int v, int[] set) {
+        for (int x : set) {
+            if (x == v) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private interface BySlot {

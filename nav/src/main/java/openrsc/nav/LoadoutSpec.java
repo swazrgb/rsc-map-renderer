@@ -448,6 +448,11 @@ public record LoadoutSpec(
         return anything && !banksUnnamed;
     }
 
+    /** This loadout as a stop leaves the pack: what {@link #banksUnnamed} accepts is deposited there. */
+    public LoadoutSpec afterABank() {
+        return banksUnnamed ? new LoadoutSpec(requirements, bankWhenFull, false, reserve, false) : this;
+    }
+
     /** Whether a band names {@code item}, or {@link #anything} takes it. */
     public boolean claims(int item) {
         return anything || named(item);

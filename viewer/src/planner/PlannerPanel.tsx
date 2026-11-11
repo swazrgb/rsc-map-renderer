@@ -3,6 +3,7 @@ import {memo, useEffect, useMemo, useState} from "react";
 import type {
     ItemNames,
     PlanCacheValues,
+    PlanLoadoutInput,
     PlanPackItem,
     PlannerCacheKey,
     PlannerHost,
@@ -29,13 +30,23 @@ import {
     snapDown,
 } from "./plannerModel";
 import {FloatingWindow} from "../FloatingWindow";
-import {Info, LoadoutTable, loadoutOf, type LoadoutRows, OpeningList, type PlannerRow, rowKey} from "./LoadoutTable";
+import {
+    Info,
+    type Loadout,
+    LoadoutTable,
+    loadoutOf,
+    type LoadoutRows,
+    OpeningList,
+    type PlannerRow,
+    rowKey,
+} from "./LoadoutTable";
 import "./planner.css";
 
 /**
  * Everything the planner's editor holds. `levels` are the skills the gates read; attack, strength,
  * defense and hits are synthesized from `combatLevel`. `cache` holds the player-cache values the
- * account is known to have, by key; a key left out is unknown.
+ * account is known to have, by key; a key left out is unknown. `asLoadout` is the loadout of a plan as a
+ * named account, which brings its own levels, items, quests and cache.
  */
 export interface PlannerRequestState extends LoadoutRows {
     levels: Levels;
@@ -45,11 +56,14 @@ export interface PlannerRequestState extends LoadoutRows {
     quests: Record<number, number>;
     cache: Record<string, boolean | number>;
     policy: NavPolicy;
+    asLoadout: Loadout;
 }
 
-const DEFAULT_POLICY: NavPolicy = {
-    // Off, unlike nav's default: the plain shortest walk is the baseline a plan is compared against.
-    danger: "OFF",
+const NO_LOADOUT: Loadout = {rows: [], arrive: {}, equip: {}, keepRest: true};
+
+/** nav's default policy: danger avoided for weak accounts, a berth for every aggressive NPC, no teleports. */
+export const DEFAULT_POLICY: NavPolicy = {
+    danger: "WEAK_ACCOUNTS",
     teleportSpells: false,
     teleportJewellery: false,
     costOverrides: {},
@@ -67,10 +81,6 @@ const POLICY_FLAGS: Partial<
         }
     >
 > = {
-    danger: {
-        get: (p) => p.danger === "ON",
-        set: (p, on) => ({...p, danger: on ? "ON" : "OFF"}),
-    },
     berth: {
         get: (p) => p.berth.berthByDefault,
         set: (p, on) => ({...p, berth: {berthByDefault: on, ids: [], indexes: []}}),
@@ -85,7 +95,16 @@ const POLICY_FLAGS: Partial<
     },
 };
 
-/** `raw` over the default policy; also reads an `avoidDanger` boolean in place of `danger`. */
+const DANGER_CHOICES: {value: NavPolicy["danger"]; label: string; title: string}[] = [
+    {value: "OFF", label: "off", title: "the shortest walk, past every aggressive NPC"},
+    {value: "WEAK_ACCOUNTS", label: "def ≤ 40", title: "only for an account whose base Defense is at most 40"},
+    {value: "ON", label: "always", title: "around aggressive NPCs, whatever the account"},
+];
+
+/**
+ * `raw` over the default policy; also reads an `avoidDanger` boolean in place of `danger`, and takes the
+ * default's danger for one it does not know.
+ */
 export function policyOf(raw: unknown): NavPolicy {
     if (typeof raw !== "object" || raw == null) return DEFAULT_POLICY;
     const o = raw as Partial<NavPolicy> & {avoidDanger?: boolean};
@@ -93,9 +112,32 @@ export function policyOf(raw: unknown): NavPolicy {
     if (o.danger == null && typeof o.avoidDanger === "boolean") {
         out.danger = o.avoidDanger ? "ON" : "OFF";
     }
+    if (!DANGER_CHOICES.some((c) => c.value === out.danger)) out.danger = DEFAULT_POLICY.danger;
     delete (out as {avoidDanger?: boolean}).avoidDanger;
     out.berth = {...DEFAULT_POLICY.berth, ...(o.berth ?? {})};
     return out;
+}
+
+/** Whether `a` and `b` route alike. */
+export function samePolicy(a: NavPolicy, b: NavPolicy): boolean {
+    return policyKey(policyOf(a)) === policyKey(policyOf(b));
+}
+
+function policyKey(p: NavPolicy): string {
+    const costs = Object.entries(p.costOverrides).sort(([x], [y]) => x.localeCompare(y));
+    const ids = [...p.berth.ids].sort((x, y) => x - y);
+    const indexes = [...p.berth.indexes].sort((x, y) => x - y);
+    return JSON.stringify([
+        p.danger,
+        p.teleportSpells,
+        p.teleportJewellery,
+        p.assumeAllEligible,
+        p.avoidSkulled,
+        p.berth.berthByDefault,
+        ids,
+        indexes,
+        costs,
+    ]);
 }
 
 // The rows every editor starts with, each with a little banked so the first plan has a reason to bank:
@@ -123,7 +165,7 @@ function isStandingRow(row: PlannerRow, inputs: PlannerInputs | null): boolean {
     return defaultRows(inputs).some((r) => rowKey(r) === key);
 }
 
-export function freshState(inputs: PlannerInputs | null): PlannerRequestState {
+export function freshState(inputs: PlannerInputs | null, policy: NavPolicy = DEFAULT_POLICY): PlannerRequestState {
     const levels = freshLevels(inputs);
     const rows = defaultRows(inputs);
     const bank: Record<string, number> = {};
@@ -140,7 +182,8 @@ export function freshState(inputs: PlannerInputs | null): PlannerRequestState {
         equip: {},
         quests: {},
         cache: {},
-        policy: DEFAULT_POLICY,
+        policy,
+        asLoadout: NO_LOADOUT,
     };
 }
 
@@ -236,13 +279,37 @@ export function toPlanRequest(
             bank,
             cache: cacheValuesOf(state.cache),
         },
-        loadout: loadoutOf(state),
+        loadout: as ? asLoadoutOf(state) : loadoutOf(state),
         policy: policyOf(state.policy),
     };
 }
 
+/** The loadout of a plan as a named account, which a walk of that account takes too. */
+export function asLoadoutOf(state: PlannerRequestState): PlanLoadoutInput {
+    const loadout = state.asLoadout;
+    return loadoutOf(loadout, loadout.keepRest);
+}
+
 /** Whether the host can answer: ready, still starting, or failed with a reason. */
 export type PlannerHostState = "ready" | "loading" | {failed: string};
+
+/**
+ * The selected bot, which the panel can plan as, from where it stands, and walk to the end. `tile` is null while
+ * unknown, `walkingTo` null while it is not on a walk from the map and left out where the page cannot tell,
+ * `walkNote` how its last such walk ended, and `error` why the last walk or stop was refused. `pack` is what it
+ * carries, worn items included, and `bank` its bank as last seen, null before it has been.
+ */
+export interface PlannerBot {
+    name: string;
+    tile: {x: number; z: number} | null;
+    walkingTo?: {x: number; z: number} | null;
+    walkNote: string | null;
+    error: string | null;
+    pack: readonly {id: number; amount: number}[];
+    bank: readonly {id: number; amount: number}[] | null;
+    walk: (to: {x: number; z: number}, policy: NavPolicy, loadout: PlanLoadoutInput) => void;
+    stop: () => void;
+}
 
 /** A named account the editor can be filled from; `value` is passed to `onCopyFrom`. */
 export interface PlannerCopySource {
@@ -255,7 +322,9 @@ export interface PlannerCopySource {
  * `pickTarget` the endpoint singled out for the next one. `follow` and `onFollowChange` offer the
  * camera-follow checkbox when given. `onCopyFrom` takes `"fresh"`, `"maxed"` or a copy source's
  * `value`. Without `onReachable` the reachable toggle is not offered; with it, it receives the
- * walking components reachable from the start while the toggle is on, and null otherwise.
+ * walking components reachable from the start while the toggle is on, and null otherwise. With a `bot`,
+ * `asBot` plans as it: from its tile, with its own account, `start` being where it stood when last still. With
+ * `onSetDefaultPolicy`, the routing section offers to make its policy `defaultPolicy`.
  */
 export interface PlannerPanelProps {
     host: PlannerHost;
@@ -285,14 +354,20 @@ export interface PlannerPanelProps {
     onCopyFrom: (choice: string) => void;
     onClose: () => void;
     onReachable?: (ids: ReadonlySet<number> | null) => void;
+    bot?: PlannerBot | null;
+    asBot?: boolean;
+    onAsBotChange?: (asBot: boolean) => void;
+    defaultPolicy?: NavPolicy;
+    onSetDefaultPolicy?: (policy: NavPolicy) => void;
 }
 
 // The reachable toggle's answer, asked again whenever the start or the account changes while on.
 function useReachable(props: PlannerPanelProps, on: boolean) {
     const {host, start, state, onReachable} = props;
+    const as = props.bot && props.asBot ? props.bot.name : null;
     const ask = useMemo(
-        () => (onReachable && on && start ? {host, start, state} : null),
-        [host, start, state, on, onReachable],
+        () => (onReachable && on && start ? {host, start, state, as} : null),
+        [host, start, state, as, on, onReachable],
     );
     const [answer, setAnswer] = useState<{
         ask: NonNullable<typeof ask>;
@@ -307,7 +382,7 @@ function useReachable(props: PlannerPanelProps, on: boolean) {
             return;
         }
         let alive = true;
-        ask.host.reachable(toPlanRequest(ask.state, ask.start, ask.start)).then(
+        ask.host.reachable(toPlanRequest(ask.state, ask.start, ask.start, ask.as)).then(
             (r) => {
                 if (!alive) return;
                 setAnswer({ask, info: {count: r.reachable.length, total: r.components, ms: r.ms}, error: null});
@@ -344,6 +419,9 @@ export const PlannerPanel = memo(function PlannerPanel(props: PlannerPanelProps)
 
     const set = (patch: Partial<PlannerRequestState>) => onStateChange({...state, ...patch});
     const nameOf = (id: number) => itemDefs?.[String(id)] ?? `item#${id}`;
+    const bot = props.bot ?? null;
+    const as = bot && props.asBot ? bot.name : null;
+    const policy = policyOf(state.policy);
     const blocked = blockedRows(plan, state.rows);
 
     const gateSkills = useMemo(() => (inputs?.skills ?? []).filter((s) => s.breakpoints.length > 0), [inputs]);
@@ -371,37 +449,72 @@ export const PlannerPanel = memo(function PlannerPanel(props: PlannerPanelProps)
                     </div>
                 ) : (
                     <>
+                        {bot && (
+                            <div className="planner-row planner-mode">
+                                <span>plan for</span>
+                                <span className="planner-seg planner-seg-wide">
+                                    <button
+                                        type="button"
+                                        className={as ? "active" : ""}
+                                        title={`${bot.name} as it is: its position, levels, items, quests and bank`}
+                                        onClick={() => props.onAsBotChange?.(true)}
+                                    >
+                                        {bot.name}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className={as ? "" : "active"}
+                                        title="an account set up by hand"
+                                        onClick={() => props.onAsBotChange?.(false)}
+                                    >
+                                        custom
+                                    </button>
+                                </span>
+                            </div>
+                        )}
                         {/* A one-time copy: picking fills the editor and the select returns to "plan as". */}
-                        <select
-                            className="planner-copy"
-                            value=""
-                            onChange={(e) => {
-                                if (e.target.value) props.onCopyFrom(e.target.value);
-                                e.target.value = "";
-                            }}
-                        >
-                            <option value="">plan as…</option>
-                            <option value="fresh">a fresh account</option>
-                            <option value="maxed">a maxed account</option>
-                            {copySources.length > 0 && (
-                                <optgroup label="copy from an account">
-                                    {copySources.map((s) => (
-                                        <option key={s.value} value={s.value}>
-                                            {s.label}
-                                        </option>
-                                    ))}
-                                </optgroup>
-                            )}
-                        </select>
+                        {!as && (
+                            <select
+                                className="planner-copy"
+                                value=""
+                                onChange={(e) => {
+                                    if (e.target.value) props.onCopyFrom(e.target.value);
+                                    e.target.value = "";
+                                }}
+                            >
+                                <option value="">plan as…</option>
+                                <option value="fresh">a fresh account</option>
+                                <option value="maxed">a maxed account</option>
+                                {copySources.length > 0 && (
+                                    <optgroup label="copy from an account">
+                                        {copySources.map((s) => (
+                                            <option key={s.value} value={s.value}>
+                                                {s.label}
+                                            </option>
+                                        ))}
+                                    </optgroup>
+                                )}
+                            </select>
+                        )}
 
                         <div className="planner-ends">
-                            <Endpoint
-                                which="start"
-                                tile={start}
-                                armed={props.pickTarget === "start" || (picking && !props.pickTarget && !start)}
-                                onArm={() => props.onArmEndpoint("start")}
-                                onCommit={(t) => props.onSetEndpoint("start", t)}
-                            />
+                            {as ? (
+                                <div className="planner-end" title={`where ${as} stands now`}>
+                                    <span className="path-label path-label-start">start</span>
+                                    <span className="planner-end-tile">
+                                        {bot?.tile ? `${bot.tile.x}, ${bot.tile.z}` : "—"}{" "}
+                                        <span className="planner-end-note">current position</span>
+                                    </span>
+                                </div>
+                            ) : (
+                                <Endpoint
+                                    which="start"
+                                    tile={start}
+                                    armed={props.pickTarget === "start" || (picking && !props.pickTarget && !start)}
+                                    onArm={() => props.onArmEndpoint("start")}
+                                    onCommit={(t) => props.onSetEndpoint("start", t)}
+                                />
+                            )}
                             <Endpoint
                                 which="end"
                                 tile={end}
@@ -423,13 +536,15 @@ export const PlannerPanel = memo(function PlannerPanel(props: PlannerPanelProps)
                                         follow
                                     </label>
                                 )}
-                                <button
-                                    type="button"
-                                    className={`planner-act-pick${picking ? " active" : ""}`}
-                                    onClick={props.onClearRoute}
-                                >
-                                    pick
-                                </button>
+                                {!as && (
+                                    <button
+                                        type="button"
+                                        className={`planner-act-pick${picking ? " active" : ""}`}
+                                        onClick={props.onClearRoute}
+                                    >
+                                        pick
+                                    </button>
+                                )}
                                 <button
                                     type="button"
                                     className="planner-act-replan"
@@ -461,6 +576,8 @@ export const PlannerPanel = memo(function PlannerPanel(props: PlannerPanelProps)
                             </div>
                         </div>
 
+                        {as && bot && <BotWalk bot={bot} end={end} policy={policy} loadout={asLoadoutOf(state)} />}
+
                         <Result
                             host={props.host}
                             plan={plan}
@@ -469,244 +586,291 @@ export const PlannerPanel = memo(function PlannerPanel(props: PlannerPanelProps)
                             nameOf={nameOf}
                             onHoverStep={props.onHoverStep}
                             onFocusStep={props.onFocusStep}
-                            accountRequest={start && end ? toPlanRequest(state, start, end) : null}
+                            accountRequest={start && end ? toPlanRequest(state, start, end, as) : null}
+                            idle={as ? null : "pick a start and an end tile"}
                         />
 
-                        <details className="planner-section" open>
-                            <summary>levels</summary>
-                            <div className="planner-row">
-                                <span>combat</span>
-                                <LevelSlider
-                                    min={3}
-                                    max={123}
-                                    live={[combatFloor, 123]}
-                                    value={Math.max(state.combatLevel, combatFloor)}
-                                    onChange={(v) =>
-                                        set({
-                                            combatLevel: Math.max(combatFloor, v),
-                                        })
-                                    }
-                                />
-                                <button
-                                    type="button"
-                                    className="planner-val"
-                                    title={state.combatLevel < 123 ? "set to 123" : `set to ${combatFloor}`}
-                                    onClick={() =>
-                                        set({
-                                            combatLevel: state.combatLevel < 123 ? 123 : combatFloor,
-                                        })
-                                    }
-                                >
-                                    {Math.max(state.combatLevel, combatFloor)}
-                                </button>
-                                <Info
-                                    title="combat level"
-                                    lines={[
-                                        "no gate reads it directly — it picks the danger rung, so it " +
-                                            "decides which aggressive NPCs the route steers around",
-                                        `its floor (${combatFloor}) follows from the levels below`,
-                                    ]}
-                                />
-                            </div>
-                            {gateSkills.map((s) => {
-                                const stops = sliderStops(s.breakpoints);
-                                const level = state.levels[s.skill] ?? SKILL_MIN;
-                                const at = snapDown(level, stops);
-                                const next = nextStop(level, stops);
-                                const gain = next == null ? null : s.breakpoints.find((b) => b.at === next);
-                                return (
-                                    <div
-                                        key={s.skill}
-                                        className={`planner-row${
-                                            blocked.skills.has(s.skill) ? " planner-item-blocked" : ""
-                                        }`}
-                                    >
-                                        <span>{skillLabel(s.skill)}</span>
+                        {as && bot ? (
+                            <BotLoadout
+                                bot={bot}
+                                loadout={state.asLoadout}
+                                onChange={(asLoadout) => set({asLoadout})}
+                                inputs={inputs}
+                                itemDefs={itemDefs}
+                                wearableItems={props.wearableItems}
+                                onFocus={props.onFocusStep}
+                            />
+                        ) : (
+                            <>
+                                <details className="planner-section" open>
+                                    <summary>levels</summary>
+                                    <div className="planner-row">
+                                        <span>combat</span>
                                         <LevelSlider
-                                            min={SKILL_MIN}
-                                            max={SKILL_MAX}
-                                            value={level}
-                                            stops={stops}
-                                            live={[s.breakpoints[0].at, s.breakpoints[s.breakpoints.length - 1].at]}
+                                            min={3}
+                                            max={123}
+                                            live={[combatFloor, 123]}
+                                            value={Math.max(state.combatLevel, combatFloor)}
                                             onChange={(v) =>
                                                 set({
-                                                    levels: {
-                                                        ...state.levels,
-                                                        [s.skill]: snapNearest(v, stops),
-                                                    },
+                                                    combatLevel: Math.max(combatFloor, v),
                                                 })
                                             }
                                         />
                                         <button
                                             type="button"
                                             className="planner-val"
-                                            title={level < SKILL_MAX ? `set to ${SKILL_MAX}` : `set to ${SKILL_MIN}`}
+                                            title={state.combatLevel < 123 ? "set to 123" : `set to ${combatFloor}`}
                                             onClick={() =>
                                                 set({
-                                                    levels: {
-                                                        ...state.levels,
-                                                        [s.skill]: level < SKILL_MAX ? SKILL_MAX : SKILL_MIN,
-                                                    },
+                                                    combatLevel: state.combatLevel < 123 ? 123 : combatFloor,
                                                 })
                                             }
                                         >
-                                            {level}
+                                            {Math.max(state.combatLevel, combatFloor)}
                                         </button>
-                                        <Info title={gain ? usableLabel(gain.transports) : "all transports usable"}>
-                                            {gain && (
-                                                <OpeningList
-                                                    list={gain.opens}
-                                                    total={gain.transports}
-                                                    onFocus={props.onFocusStep}
-                                                />
-                                            )}
-                                            {at !== level && <div className="planner-tip-note">counts as {at}</div>}
-                                        </Info>
+                                        <Info
+                                            title="combat level"
+                                            lines={[
+                                                "no gate reads it directly — it picks the danger rung, so it " +
+                                                    "decides which aggressive NPCs the route steers around",
+                                                `its floor (${combatFloor}) follows from the levels below`,
+                                            ]}
+                                        />
                                     </div>
-                                );
-                            })}
-                        </details>
+                                    {gateSkills.map((s) => {
+                                        const stops = sliderStops(s.breakpoints);
+                                        const level = state.levels[s.skill] ?? SKILL_MIN;
+                                        const at = snapDown(level, stops);
+                                        const next = nextStop(level, stops);
+                                        const gain = next == null ? null : s.breakpoints.find((b) => b.at === next);
+                                        return (
+                                            <div
+                                                key={s.skill}
+                                                className={`planner-row${
+                                                    blocked.skills.has(s.skill) ? " planner-item-blocked" : ""
+                                                }`}
+                                            >
+                                                <span>{skillLabel(s.skill)}</span>
+                                                <LevelSlider
+                                                    min={SKILL_MIN}
+                                                    max={SKILL_MAX}
+                                                    value={level}
+                                                    stops={stops}
+                                                    live={[
+                                                        s.breakpoints[0].at,
+                                                        s.breakpoints[s.breakpoints.length - 1].at,
+                                                    ]}
+                                                    onChange={(v) =>
+                                                        set({
+                                                            levels: {
+                                                                ...state.levels,
+                                                                [s.skill]: snapNearest(v, stops),
+                                                            },
+                                                        })
+                                                    }
+                                                />
+                                                <button
+                                                    type="button"
+                                                    className="planner-val"
+                                                    title={
+                                                        level < SKILL_MAX
+                                                            ? `set to ${SKILL_MAX}`
+                                                            : `set to ${SKILL_MIN}`
+                                                    }
+                                                    onClick={() =>
+                                                        set({
+                                                            levels: {
+                                                                ...state.levels,
+                                                                [s.skill]: level < SKILL_MAX ? SKILL_MAX : SKILL_MIN,
+                                                            },
+                                                        })
+                                                    }
+                                                >
+                                                    {level}
+                                                </button>
+                                                <Info
+                                                    title={
+                                                        gain ? usableLabel(gain.transports) : "all transports usable"
+                                                    }
+                                                >
+                                                    {gain && (
+                                                        <OpeningList
+                                                            list={gain.opens}
+                                                            total={gain.transports}
+                                                            onFocus={props.onFocusStep}
+                                                        />
+                                                    )}
+                                                    {at !== level && (
+                                                        <div className="planner-tip-note">counts as {at}</div>
+                                                    )}
+                                                </Info>
+                                            </div>
+                                        );
+                                    })}
+                                </details>
 
-                        <details className="planner-section" open>
-                            <summary>items</summary>
-                            <LoadoutTable
-                                inputs={inputs}
-                                itemDefs={itemDefs}
-                                wearableItems={props.wearableItems}
-                                state={state}
-                                onChange={set}
-                                columns={[
-                                    {
-                                        label: "pack",
-                                        title: "carried now",
-                                        value: (key) => state.inventory[key] ?? 0,
-                                        onChange: (key, n) => set({inventory: {...state.inventory, [key]: n}}),
-                                    },
-                                    {
-                                        label: "bank",
-                                        title: "owned, but banked",
-                                        value: (key) => state.bank[key] ?? 0,
-                                        onChange: (key, n) => set({bank: {...state.bank, [key]: n}}),
-                                    },
-                                ]}
-                                removable={(row) => !isStandingRow(row, inputs)}
-                                blocked={blocked.rows}
-                                onAdd={(row) => ({inventory: {...state.inventory, [rowKey(row)]: 1}})}
-                                onFocus={props.onFocusStep}
-                            />
-                        </details>
+                                <details className="planner-section" open>
+                                    <summary>items</summary>
+                                    <LoadoutTable
+                                        inputs={inputs}
+                                        itemDefs={itemDefs}
+                                        wearableItems={props.wearableItems}
+                                        state={state}
+                                        onChange={set}
+                                        columns={[
+                                            {
+                                                label: "pack",
+                                                title: "carried now",
+                                                value: (key) => state.inventory[key] ?? 0,
+                                                onChange: (key, n) => set({inventory: {...state.inventory, [key]: n}}),
+                                            },
+                                            {
+                                                label: "bank",
+                                                title: "owned, but banked",
+                                                value: (key) => state.bank[key] ?? 0,
+                                                onChange: (key, n) => set({bank: {...state.bank, [key]: n}}),
+                                            },
+                                        ]}
+                                        removable={(row) => !isStandingRow(row, inputs)}
+                                        blocked={blocked.rows}
+                                        onAdd={(row) => ({inventory: {...state.inventory, [rowKey(row)]: 1}})}
+                                        onFocus={props.onFocusStep}
+                                    />
+                                </details>
 
-                        {/* Opened when a plan blames a quest, so the highlighted row is not hidden. */}
-                        <details className="planner-section" open={blocked.quests.size > 0 || undefined}>
-                            <summary>quests ({Object.values(state.quests).filter((s) => s !== 0).length} set)</summary>
-                            {inputs.quests.map((q) => {
-                                const stages = questStages(q);
-                                const numbered = stages.filter((s) => s !== -1);
-                                // Complete is -1 on the wire; on the slider it sits one past the highest stage.
-                                const donePos = (numbered.length ? Math.max(...numbered) : 0) + 1;
-                                const positions = [...numbered, donePos];
-                                const stage = state.quests[q.id] ?? 0;
-                                return (
-                                    <div
-                                        key={q.id}
-                                        className={`planner-quest${
-                                            blocked.quests.has(q.id) ? " planner-item-blocked" : ""
-                                        }`}
-                                    >
-                                        <span>
-                                            {q.name}{" "}
-                                            <Info title={`${q.name} · ${q.transports} transports`}>
-                                                {q.atLeast.map((t) => (
-                                                    <OpeningList
-                                                        key={`ge${t.at}`}
-                                                        list={t.opens}
-                                                        total={t.transports}
-                                                        prefix={`stage ≥ ${t.at} · `}
-                                                        onFocus={props.onFocusStep}
-                                                    />
-                                                ))}
-                                                {q.exact.map((t) => (
-                                                    <OpeningList
-                                                        key={`eq${t.at}`}
-                                                        list={t.opens}
-                                                        total={t.transports}
-                                                        prefix={`stage ${t.at} exactly · `}
-                                                        onFocus={props.onFocusStep}
-                                                    />
-                                                ))}
-                                                {q.done && (
-                                                    <OpeningList
-                                                        list={q.done.opens}
-                                                        total={q.done.transports}
-                                                        prefix="done · "
-                                                        onFocus={props.onFocusStep}
-                                                    />
-                                                )}
-                                            </Info>
-                                        </span>
-                                        <LevelSlider
-                                            min={0}
-                                            max={donePos}
-                                            value={stage === -1 ? donePos : stage}
-                                            stops={positions}
-                                            onChange={(p) => {
-                                                const at = snapNearest(p, positions);
-                                                set({
-                                                    quests: {
-                                                        ...state.quests,
-                                                        [q.id]: at === donePos ? -1 : at,
-                                                    },
-                                                });
+                                {/* Opened when a plan blames a quest, so the highlighted row is not hidden. */}
+                                <details className="planner-section" open={blocked.quests.size > 0 || undefined}>
+                                    <summary>
+                                        quests ({Object.values(state.quests).filter((s) => s !== 0).length} set)
+                                    </summary>
+                                    {inputs.quests.map((q) => {
+                                        const stages = questStages(q);
+                                        const numbered = stages.filter((s) => s !== -1);
+                                        // Complete is -1 on the wire; on the slider it sits one past the highest stage.
+                                        const donePos = (numbered.length ? Math.max(...numbered) : 0) + 1;
+                                        const positions = [...numbered, donePos];
+                                        const stage = state.quests[q.id] ?? 0;
+                                        return (
+                                            <div
+                                                key={q.id}
+                                                className={`planner-quest${
+                                                    blocked.quests.has(q.id) ? " planner-item-blocked" : ""
+                                                }`}
+                                            >
+                                                <span>
+                                                    {q.name}{" "}
+                                                    <Info title={`${q.name} · ${q.transports} transports`}>
+                                                        {q.atLeast.map((t) => (
+                                                            <OpeningList
+                                                                key={`ge${t.at}`}
+                                                                list={t.opens}
+                                                                total={t.transports}
+                                                                prefix={`stage ≥ ${t.at} · `}
+                                                                onFocus={props.onFocusStep}
+                                                            />
+                                                        ))}
+                                                        {q.exact.map((t) => (
+                                                            <OpeningList
+                                                                key={`eq${t.at}`}
+                                                                list={t.opens}
+                                                                total={t.transports}
+                                                                prefix={`stage ${t.at} exactly · `}
+                                                                onFocus={props.onFocusStep}
+                                                            />
+                                                        ))}
+                                                        {q.done && (
+                                                            <OpeningList
+                                                                list={q.done.opens}
+                                                                total={q.done.transports}
+                                                                prefix="done · "
+                                                                onFocus={props.onFocusStep}
+                                                            />
+                                                        )}
+                                                    </Info>
+                                                </span>
+                                                <LevelSlider
+                                                    min={0}
+                                                    max={donePos}
+                                                    value={stage === -1 ? donePos : stage}
+                                                    stops={positions}
+                                                    onChange={(p) => {
+                                                        const at = snapNearest(p, positions);
+                                                        set({
+                                                            quests: {
+                                                                ...state.quests,
+                                                                [q.id]: at === donePos ? -1 : at,
+                                                            },
+                                                        });
+                                                    }}
+                                                />
+                                                <button
+                                                    type="button"
+                                                    className="planner-quest-val"
+                                                    title={stage === -1 ? "back to not started" : "mark done"}
+                                                    onClick={() =>
+                                                        set({
+                                                            quests: {
+                                                                ...state.quests,
+                                                                [q.id]: stage === -1 ? 0 : -1,
+                                                            },
+                                                        })
+                                                    }
+                                                >
+                                                    {stageLabel(stage)}
+                                                </button>
+                                            </div>
+                                        );
+                                    })}
+                                </details>
+
+                                <details className="planner-section" open={blocked.cache.size > 0 || undefined}>
+                                    <summary>player cache ({Object.keys(state.cache).length} known)</summary>
+                                    <div className="planner-tip-note">unknown values let their gates through</div>
+                                    {inputs.cache.map((entry) => (
+                                        <CacheRow
+                                            key={entry.key}
+                                            entry={entry}
+                                            value={state.cache[entry.key]}
+                                            blocked={blocked.cache.has(entry.key)}
+                                            onFocus={props.onFocusStep}
+                                            onChange={(v) => {
+                                                const cache = Object.fromEntries(
+                                                    Object.entries(state.cache).filter(([k]) => k !== entry.key),
+                                                );
+                                                if (v !== undefined) cache[entry.key] = v;
+                                                set({cache});
                                             }}
                                         />
-                                        <button
-                                            type="button"
-                                            className="planner-quest-val"
-                                            title={stage === -1 ? "back to not started" : "mark done"}
-                                            onClick={() =>
-                                                set({
-                                                    quests: {
-                                                        ...state.quests,
-                                                        [q.id]: stage === -1 ? 0 : -1,
-                                                    },
-                                                })
-                                            }
-                                        >
-                                            {stageLabel(stage)}
-                                        </button>
-                                    </div>
-                                );
-                            })}
-                        </details>
-
-                        <details className="planner-section" open={blocked.cache.size > 0 || undefined}>
-                            <summary>player cache ({Object.keys(state.cache).length} known)</summary>
-                            <div className="planner-tip-note">unknown values let their gates through</div>
-                            {inputs.cache.map((entry) => (
-                                <CacheRow
-                                    key={entry.key}
-                                    entry={entry}
-                                    value={state.cache[entry.key]}
-                                    blocked={blocked.cache.has(entry.key)}
-                                    onFocus={props.onFocusStep}
-                                    onChange={(v) => {
-                                        const cache = Object.fromEntries(
-                                            Object.entries(state.cache).filter(([k]) => k !== entry.key),
-                                        );
-                                        if (v !== undefined) cache[entry.key] = v;
-                                        set({cache});
-                                    }}
-                                />
-                            ))}
-                        </details>
+                                    ))}
+                                </details>
+                            </>
+                        )}
 
                         <details className="planner-section" open>
                             <summary>routing</summary>
+                            <div className="planner-row planner-danger">
+                                <span>
+                                    {inputs.policy.find((f) => f.key === "danger")?.label ?? "avoid danger zones"}
+                                </span>
+                                <span className="planner-seg planner-seg-wide">
+                                    {DANGER_CHOICES.map((c) => (
+                                        <button
+                                            key={c.value}
+                                            type="button"
+                                            className={policy.danger === c.value ? "active" : ""}
+                                            title={c.title}
+                                            onClick={() => set({policy: {...policy, danger: c.value}})}
+                                        >
+                                            {c.label}
+                                        </button>
+                                    ))}
+                                </span>
+                            </div>
                             <div className="planner-checks">
                                 {inputs.policy.map((flag) => {
                                     const knob = POLICY_FLAGS[flag.key];
                                     if (!knob) return null;
-                                    const policy = policyOf(state.policy);
                                     return (
                                         <label key={flag.key} className="planner-check">
                                             <input
@@ -723,6 +887,14 @@ export const PlannerPanel = memo(function PlannerPanel(props: PlannerPanelProps)
                                     );
                                 })}
                             </div>
+                            {props.defaultPolicy && props.onSetDefaultPolicy && (
+                                <DefaultPolicy
+                                    policy={policy}
+                                    defaultPolicy={props.defaultPolicy}
+                                    onSetDefault={props.onSetDefaultPolicy}
+                                    onUseDefault={(p) => set({policy: p})}
+                                />
+                            )}
                         </details>
                     </>
                 )}
@@ -800,6 +972,182 @@ function CacheRow({
                     />
                 ))}
             </Info>
+        </div>
+    );
+}
+
+// A bot's loadout: what to arrive with, beside what it carries and what its bank holds.
+function BotLoadout(props: {
+    bot: PlannerBot;
+    loadout: Loadout;
+    onChange: (loadout: Loadout) => void;
+    inputs: PlannerInputs;
+    itemDefs: ItemNames | null;
+    wearableItems?: ReadonlySet<number> | null;
+    onFocus: (tile: {x: number; z: number}) => void;
+}) {
+    const {bot, loadout, onChange} = props;
+    const carried = useMemo(() => amounts(bot.pack), [bot.pack]);
+    const banked = useMemo(() => (bot.bank ? amounts(bot.bank) : null), [bot.bank]);
+    // The planner leaves out what the bot cannot make up from its pack and bank.
+    const short = useMemo(() => {
+        const out = new Set<string>();
+        for (const row of loadout.rows) {
+            const key = rowKey(row);
+            const want = loadout.arrive[key] ?? 0;
+            if (want > 0 && (carried.get(key) ?? 0) + (banked?.get(key) ?? 0) < want) out.add(key);
+        }
+        return out;
+    }, [loadout, carried, banked]);
+    const shortNames = loadout.rows
+        .filter((row) => short.has(rowKey(row)))
+        .map((row) => props.itemDefs?.[String(row.id)] ?? `item#${row.id}`);
+    const suggest = useMemo(() => {
+        const out = new Map<number, string>();
+        for (const [key, n] of carried) out.set(Number(key.slice(1)), `carried ${n}`);
+        for (const [key, n] of banked ?? []) {
+            const id = Number(key.slice(1));
+            const note = out.get(id);
+            out.set(id, note ? `${note} · banked ${n}` : `banked ${n}`);
+        }
+        return out;
+    }, [carried, banked]);
+    return (
+        <details className="planner-section" open>
+            <summary>loadout</summary>
+            <label className="planner-check">
+                <input
+                    type="checkbox"
+                    checked={loadout.keepRest}
+                    onChange={(e) => onChange({...loadout, keepRest: e.target.checked})}
+                />
+                keep other items
+                <Info
+                    title="keep other items"
+                    lines={[
+                        "on: what the loadout does not name stays in the pack",
+                        "off: it is deposited at the first bank on the way",
+                    ]}
+                />
+            </label>
+            {banked == null ? (
+                <div className="planner-bank-unknown">
+                    <span className="planner-tip-note">bank contents unknown</span>
+                    <Info lines={["open a bank to populate"]} />
+                </div>
+            ) : (
+                banked.size === 0 && <div className="planner-tip-note">bank empty</div>
+            )}
+            <LoadoutTable
+                inputs={props.inputs}
+                itemDefs={props.itemDefs}
+                wearableItems={props.wearableItems}
+                state={loadout}
+                onChange={(patch) => onChange({...loadout, ...patch})}
+                columns={[
+                    {label: "carried", title: "in the pack now, worn included", value: (k) => carried.get(k) ?? 0},
+                    {
+                        label: "bank",
+                        title: "in the bank, as last seen",
+                        value: (k) => (banked ? (banked.get(k) ?? 0) : null),
+                    },
+                ]}
+                blocked={short}
+                suggest={suggest}
+                onFocus={props.onFocus}
+            />
+            {shortNames.length > 0 && (
+                <div className="planner-tip-note planner-short">
+                    not enough carried or banked, so left out of the plan: {shortNames.join(", ")}
+                </div>
+            )}
+        </details>
+    );
+}
+
+// Amounts by row key, summing an item's stacks.
+function amounts(items: readonly {id: number; amount: number}[]): Map<string, number> {
+    const out = new Map<string, number>();
+    for (const it of items) {
+        const key = rowKey({kind: "item", id: it.id});
+        out.set(key, (out.get(key) ?? 0) + it.amount);
+    }
+    return out;
+}
+
+// The bot's walk to the end: walk, or stop while it walks, and how the walk stands or ended.
+function BotWalk(props: {
+    bot: PlannerBot;
+    end: {x: number; z: number} | null;
+    policy: NavPolicy;
+    loadout: PlanLoadoutInput;
+}) {
+    const {bot, end, policy, loadout} = props;
+    const to = bot.walkingTo;
+    let status = "";
+    if (bot.error) status = bot.error;
+    else if (to) status = `walking to ${to.x}, ${to.z}`;
+    else if (bot.walkNote) status = `last walk: ${bot.walkNote}`;
+    if (!end && !to && !status) return null;
+    const walkButton = (
+        <button
+            type="button"
+            className="planner-act-walk"
+            disabled={!end || !bot.tile}
+            title={`walk ${bot.name} there with the loadout and routing below`}
+            onClick={() => end && bot.walk(end, policy, loadout)}
+        >
+            {end ? `walk to ${end.x}, ${end.z}` : "walk"}
+        </button>
+    );
+    const stopButton = (
+        <button type="button" className="planner-act-stop" onClick={bot.stop}>
+            stop walking
+        </button>
+    );
+    if (to === undefined) {
+        return (
+            <div className="planner-walk">
+                {walkButton}
+                {stopButton}
+                <span className={`planner-walk-status${bot.error ? " planner-walk-failed" : ""}`}>{status}</span>
+            </div>
+        );
+    }
+    return (
+        <div className="planner-walk">
+            {to ? stopButton : walkButton}
+            <span className={`planner-walk-status${bot.error ? " planner-walk-failed" : ""}`}>{status}</span>
+        </div>
+    );
+}
+
+// Whether the routing is the page's default, and the buttons to make it so or to take the default.
+function DefaultPolicy(props: {
+    policy: NavPolicy;
+    defaultPolicy: NavPolicy;
+    onSetDefault: (policy: NavPolicy) => void;
+    onUseDefault: (policy: NavPolicy) => void;
+}) {
+    const same = samePolicy(props.policy, props.defaultPolicy);
+    return (
+        <div className="planner-default">
+            {same ? (
+                <span className="planner-tip-note">default</span>
+            ) : (
+                <>
+                    <button type="button" onClick={() => props.onSetDefault(props.policy)}>
+                        save as default
+                    </button>
+                    <button type="button" onClick={() => props.onUseDefault(props.defaultPolicy)}>
+                        reset to default
+                    </button>
+                </>
+            )}
+            <Info
+                title="default routing"
+                lines={["right-click actions use it, and the planner starts from it", "saved in this browser"]}
+            />
         </div>
     );
 }
@@ -978,11 +1326,13 @@ function Result(props: {
     onHoverStep: (tile: {x: number; z: number} | null) => void;
     onFocusStep: (tile: {x: number; z: number}) => void;
     accountRequest: PlanRequest | null;
+    idle: string | null;
 }) {
     const {plan, nameOf} = props;
     if (props.error) return <div className="planner-result err">error: {props.error}</div>;
     if (!plan) {
-        return <div className="planner-result">{props.loading ? "planning…" : "pick a start and an end tile"}</div>;
+        if (!props.loading && props.idle == null) return null;
+        return <div className="planner-result">{props.loading ? "planning…" : props.idle}</div>;
     }
     if (!plan.found) {
         const why = plan.why;

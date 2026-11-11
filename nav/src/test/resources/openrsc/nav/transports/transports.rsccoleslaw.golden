@@ -3023,6 +3023,12 @@ COAL_TRUCKS_LOG_BALANCE_W_E | (595, 458) -> (598, 458) | cost=45 | gate=agility 
 CRAFTING_CAPE_CRAFTING_GUILD | (region: wilderness depth < 30, no blocked zone) -> (347, 599) | cost=60 | gate=teleport jewellery allowed and carrying ≤0 Ana in a barrel and carrying ≤0 Plague sample and carrying ≥1 Crafting cape | spends=[] | engage=command (rub) item 1384 — self
 CROMPERTY_TELEPORT_BLOCK_HANDELMORT_MANSION | (545, 576) -> (560, 588) | cost=200 | gate=Tribal Totem at stage ≥ 2 or done | spends=[] | engage=interact with npc [333] and answer 3 menus
 CROMPERTY_TELEPORT_BLOCK_RPDT_DEPOT | (545, 576) -> (558, 617) | cost=200 | gate=not (Tribal Totem at stage ≥ 2 or done) | spends=[] | engage=interact with npc [333] and answer 3 menus
+DEATHS_BED_PORTAL_TO_DEATH_ISLAND | (115, 533) -> (975, 169) | cost=80 | gate=(cache mice_to_meet_you = 13 or cache mice_to_meet_you = -1) and cache mice.off=on | spends=[] | engage=interact with scenery 15 @(116,534) and answer 1 menus
+DEATHS_BED_PORTAL_TO_DEATH_ISLAND | (115, 534) -> (975, 169) | cost=80 | gate=(cache mice_to_meet_you = 13 or cache mice_to_meet_you = -1) and cache mice.off=on | spends=[] | engage=interact with scenery 15 @(116,534) and answer 1 menus
+DEATHS_BED_PORTAL_TO_DEATH_ISLAND | (115, 535) -> (975, 169) | cost=80 | gate=(cache mice_to_meet_you = 13 or cache mice_to_meet_you = -1) and cache mice.off=on | spends=[] | engage=interact with scenery 15 @(116,534) and answer 1 menus
+DEATHS_BED_PORTAL_TO_DEATH_ISLAND | (116, 533) -> (975, 169) | cost=80 | gate=(cache mice_to_meet_you = 13 or cache mice_to_meet_you = -1) and cache mice.off=on | spends=[] | engage=interact with scenery 15 @(116,534) and answer 1 menus
+DEATHS_BED_PORTAL_TO_DEATH_ISLAND | (117, 533) -> (975, 169) | cost=80 | gate=(cache mice_to_meet_you = 13 or cache mice_to_meet_you = -1) and cache mice.off=on | spends=[] | engage=interact with scenery 15 @(116,534) and answer 1 menus
+DEATH_VARROCK_TO_DEATH_ISLAND | (115, 533) -> (975, 169) | cost=200 | gate=(cache mice_to_meet_you = 13 or cache mice_to_meet_you = -1) and cache mice.off=off | spends=[] | engage=interact with npc [817] and answer 1 menus
 DIGSITE_BIG_CAVE_ROPE | (18, 3337) -> (25, 515) | cost=30 | gate=always | spends=[] | engage=interact with scenery 1098 @(19,3338)
 DIGSITE_BIG_CAVE_ROPE | (18, 3385) -> (25, 515) | cost=30 | gate=always | spends=[] | engage=interact with scenery 1098 @(19,3386)
 DIGSITE_BIG_CAVE_ROPE | (19, 3337) -> (25, 515) | cost=30 | gate=always | spends=[] | engage=interact with scenery 1098 @(19,3338)

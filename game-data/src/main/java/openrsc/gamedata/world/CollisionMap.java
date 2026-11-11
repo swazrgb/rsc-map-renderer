@@ -55,12 +55,6 @@ public final class CollisionMap {
      */
     public static final int TRADE_RANGE = 4;
 
-    /**
-     * Changes whenever a change to the step rules can change which steps are legal, so step data
-     * kept outside the process can be recognised as stale.
-     */
-    public static final int STEP_RULES_VERSION = 1;
-
     private static final Logger LOG = LoggerFactory.getLogger(CollisionMap.class);
 
     /**

@@ -5,7 +5,7 @@ public class MutableStats {
 
     private final int[] levels = new int[Skill.COUNT];
     private final int[] baseLevels = new int[Skill.COUNT];
-    private final int[] xp = new int[Skill.COUNT];
+    private final long[] xp = new long[Skill.COUNT];
     private int serverSkillCount = Skill.COUNT;
     private Stats snapshot;
 
@@ -28,14 +28,14 @@ public class MutableStats {
     }
 
     /** Sets every skill from arrays indexed by skill id; entries past {@link Skill#COUNT} are ignored. */
-    public void setAll(int[] levels, int[] baseLevels, int[] xp) {
+    public void setAll(int[] levels, int[] baseLevels, long[] xp) {
         snapshot = null;
         System.arraycopy(levels, 0, this.levels, 0, Math.min(levels.length, this.levels.length));
         System.arraycopy(baseLevels, 0, this.baseLevels, 0, Math.min(baseLevels.length, this.baseLevels.length));
         System.arraycopy(xp, 0, this.xp, 0, Math.min(xp.length, this.xp.length));
     }
 
-    public void setSkill(int skill, int level, int baseLevel, int xp) {
+    public void setSkill(int skill, int level, int baseLevel, long xp) {
         if (skill < 0 || skill >= this.levels.length) {
             return;
         }
@@ -56,7 +56,7 @@ public class MutableStats {
         this.baseLevels[skill] = baseLevel;
     }
 
-    public void setXp(int skill, int xp) {
+    public void setXp(int skill, long xp) {
         if (skill < 0 || skill >= this.xp.length) {
             return;
         }

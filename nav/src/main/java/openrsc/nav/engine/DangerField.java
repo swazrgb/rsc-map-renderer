@@ -12,9 +12,6 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
  */
 final class DangerField {
 
-    /** Bumped when a change here can change a persisted plane: a charge, a matrix, a signature. */
-    static final int PLANE_VERSION = 2;
-
     private static final int SCALE_BITS = 11;
 
     private final DangerMap map;

@@ -5,10 +5,13 @@ plugins {
 
 dependencies {
     api(project(":game-data"))
+    api(project(":nav"))
     api(libs.slf4j.api)
     api(libs.jackson.databind)
     api(libs.commons.compress)
     runtimeOnly(libs.logback.classic)
+    testImplementation(libs.junit.jupiter)
+    testImplementation(testFixtures(project(":nav")))
 }
 
 // The command-line tool as one self-contained jar, apart from the module's own jar.

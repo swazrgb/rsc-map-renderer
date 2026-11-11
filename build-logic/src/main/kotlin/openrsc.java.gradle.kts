@@ -49,6 +49,8 @@ tasks.withType<JavaCompile>().configureEach {
     // at once: under -Werror, Error Prone stops at its first.
     val werror = (System.getProperty("openrsc.werror") ?: "true").toBoolean()
     options.compilerArgs.addAll(listOfNotNull("-Werror".takeIf { werror }, "-Xlint:deprecation,unchecked", "-Xmaxwarns", "100000"))
+    // Spring binds request parameters by the method's parameter names.
+    options.compilerArgs.add("-parameters")
 
     options.errorprone {
         // Error Prone needs this on JDK 21 and later.

@@ -45,7 +45,7 @@ public final class ServerDataSnapshot {
 
     private static final int MAGIC = 0x52534344;
     /** Raised with every change to the layout; {@link #read} refuses any other version. */
-    private static final int VERSION = 10;
+    private static final int VERSION = 11;
 
     private static final List<String> DEFS_XML =
             List.of("DoorDef.xml", "TileDef.xml", "GameObjectDef.xml", ExtraDefs.SPELL_FILE);
@@ -411,6 +411,7 @@ public final class ServerDataSnapshot {
         out.writeBoolean(r.formFittingChainmail());
         out.writeBoolean(r.combatOdyssey());
         out.writeBoolean(r.kbdRareDropTable());
+        out.writeInt(r.aggroRange());
     }
 
     private static ServerRules readRules(Reader in) {
@@ -453,7 +454,8 @@ public final class ServerDataSnapshot {
                 in.bool(),
                 in.bool(),
                 in.bool(),
-                in.bool());
+                in.bool(),
+                in.i32());
     }
 
     private static XmlTree tree(Map<String, XmlTree> docs, String name) {

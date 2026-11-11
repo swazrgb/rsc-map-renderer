@@ -6,9 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import openrsc.gamedata.geometry.Point;
 import openrsc.nav.NavPolicy;
-import openrsc.nav.Pathfinder;
 import openrsc.nav.RealDefs;
-import openrsc.nav.cache.CaffeineNavCaches;
 import openrsc.nav.probe.NavProbe;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -19,7 +17,7 @@ class GnomeFenceWalkTest {
     void walksIntoVillageFromOutsideTheFence(String world) {
         var env = world.equals("uranium") ? RealDefs.serverData() : RealDefs.serverData(world);
         assertTrue(env.collisionMap().fullyBlocked(634, 705), "second fence flank is blocked scenery");
-        var pf = Pathfinder.load(env, new CaffeineNavCaches(RealDefs.CACHE_BUDGET));
+        var pf = world.equals("uranium") ? RealDefs.pathfinder() : RealDefs.pathfinder(world);
         var walk = NavProbe.planBetween(
                 pf,
                 639,

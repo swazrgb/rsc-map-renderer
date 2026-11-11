@@ -43,8 +43,7 @@ import openrsc.gamedata.geometry.Point;
 import openrsc.gamedata.world.CollisionMap;
 import openrsc.nav.Pathfinder;
 import openrsc.nav.Transport;
-import openrsc.nav.cache.BoundedNavCaches;
-import openrsc.nav.cache.NavCacheBudget;
+import openrsc.nav.cache.NavCaches;
 import openrsc.nav.planner.BobMapCampGenerator;
 import openrsc.nav.planner.PathfinderAccount;
 import openrsc.nav.planner.PathfinderInputs;
@@ -69,11 +68,6 @@ import org.teavm.jso.typedarrays.Int8Array;
  * then {@link #buildPathfinder}; an export that needs either answers an error before it.
  */
 public final class NavWeb {
-
-    private static final long MB = 1L << 20;
-
-    /** Cache limits for a browser tab, a quarter to a sixth of {@link NavCacheBudget#DEFAULTS}. */
-    private static final NavCacheBudget BUDGET = new NavCacheBudget(64 * MB, 16 * MB, 256 * MB);
 
     private static ServerData world;
     private static Pathfinder pathfinder;
@@ -118,7 +112,7 @@ public final class NavWeb {
             }
             long t0 = System.currentTimeMillis();
             if (pathfinder == null) {
-                pathfinder = Pathfinder.load(world, new BoundedNavCaches(BUDGET));
+                pathfinder = Pathfinder.load(world, NavCaches.none());
             }
             return "{\"buildMs\":" + (System.currentTimeMillis() - t0) + ",\"transports\":"
                     + pathfinder.transports().size() + "}";

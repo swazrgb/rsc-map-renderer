@@ -36,6 +36,15 @@ public interface Planner {
      */
     PlanResult plan(PlanRequest request);
 
+    /**
+     * Reads {@code policy} as {@link #plan} would, without planning: an implementation that reads cost overrides throws
+     * what {@code plan} would for them. Reads nothing by default.
+     *
+     * @throws IllegalArgumentException when its cost overrides name no transport or bank, or price a bank stop out of
+     *     range
+     */
+    default void check(NavPolicy policy) {}
+
     /** The gate of the transport a {@link Route.Hop} names; null for a name this planner did not emit. */
     @Nullable
     Prereq gateOf(String transport);

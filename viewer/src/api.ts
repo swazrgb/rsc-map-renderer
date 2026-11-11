@@ -266,6 +266,13 @@ export interface WorldMeshManifest {
 /** The world of a bake that does not name one. */
 const UNSTAMPED_WORLD = "uranium";
 
+/** A carried stack armed for "Use … with": its item, its name, and whether it is that item's bank notes. */
+export interface UsedItem {
+    id: number;
+    name: string;
+    noted: boolean;
+}
+
 /** The interactions a host's `sendInteract` may be asked for. */
 export type InteractAction =
     | "object"
@@ -411,6 +418,7 @@ interface ViewerHost {
         id?: number,
         dir?: number,
         item?: number,
+        noted?: boolean,
     ): Promise<void>;
 }
 
@@ -433,6 +441,7 @@ export async function sendInteract(
     id = 0,
     dir = 0,
     item = 0,
+    noted = false,
 ): Promise<void> {
-    if (host.sendInteract) return host.sendInteract(username, action, x, z, id, dir, item);
+    if (host.sendInteract) return host.sendInteract(username, action, x, z, id, dir, item, noted);
 }

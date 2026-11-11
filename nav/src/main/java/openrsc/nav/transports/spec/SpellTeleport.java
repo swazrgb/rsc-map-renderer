@@ -25,6 +25,9 @@ public record SpellTeleport(
     /** A cast's cost, in the planner's units of 10 per walked tile. */
     public static final int COST = 50;
 
+    /** What a cast's runes weigh ({@link Transport#price}): two hundred walked tiles. */
+    public static final int PRICE = 2000;
+
     public static SpellTeleport spell(int spellId, int magicLevel, Map<Integer, Integer> runes, int destX, int destZ) {
         return new SpellTeleport(spellId, magicLevel, runes, destX, destZ, COST, -1, null);
     }
@@ -48,8 +51,8 @@ public record SpellTeleport(
 
     @Override
     public List<Transport> expand(ServerData env, String id) {
-        return List.of(
-                new SpellTransport(spellId, magicLevel, runes, destX, destZ, cost, requiresQuestComplete, scrollKey)
-                        .withPlacement(id));
+        return List.of(new SpellTransport(
+                        spellId, magicLevel, runes, destX, destZ, cost, PRICE, requiresQuestComplete, scrollKey)
+                .withPlacement(id));
     }
 }

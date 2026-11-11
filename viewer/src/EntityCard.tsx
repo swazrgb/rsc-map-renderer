@@ -18,6 +18,7 @@ export interface PickedEntity {
     inCombat: boolean;
     /** A player's appearance token. */
     appearance?: string | null;
+    skulled?: boolean;
 }
 
 /** One labelled line of a card; a click copies `value`. */

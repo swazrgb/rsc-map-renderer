@@ -442,7 +442,8 @@ public final class PathfinderPlans {
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/container/Inventory.java#L30
     private static final int PACK_SLOTS = 30;
 
-    private static LoadoutSpec loadoutOf(LoadoutInput in) {
+    /** The loadout {@code in} asks for; a null one is {@link LoadoutSpec#any()}. */
+    public static LoadoutSpec loadoutOf(LoadoutInput in) {
         boolean keepRest = in == null || in.keepEverythingElse() == null || in.keepEverythingElse();
         boolean bankWhenFull = in != null && Boolean.TRUE.equals(in.bankWhenFull());
         List<Want> wants = in == null || in.wants() == null ? List.of() : in.wants();

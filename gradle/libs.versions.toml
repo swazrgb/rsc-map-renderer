@@ -3,21 +3,20 @@
 [versions]
 spring-boot = "4.0.6"
 fastutil = "8.5.15"
-caffeine = "3.2.3"
 commons-compress = "1.28.0"
 jetbrains-annotations = "26.0.2"
 error-prone = "2.50.0"
 # Error Prone Support is built against one Error Prone version: keep the two paired.
 error-prone-support = "0.30.0"
-jmh = "1.37"
 # TeaVM 0.15.0 reads class files up to Java 25, so every module a TeaVM build reaches compiles at 25.
 teavm = "0.15.0"
 
 [libraries]
 spring-boot-bom = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "spring-boot" }
+spring-boot-starter-web = { module = "org.springframework.boot:spring-boot-starter-web" }
+spring-boot-starter-websocket = { module = "org.springframework.boot:spring-boot-starter-websocket" }
 
 fastutil-core = { module = "it.unimi.dsi:fastutil-core", version.ref = "fastutil" }
-caffeine = { module = "com.github.ben-manes.caffeine:caffeine", version.ref = "caffeine" }
 commons-compress = { module = "org.apache.commons:commons-compress", version.ref = "commons-compress" }
 
 jetbrains-annotations = { module = "org.jetbrains:annotations", version.ref = "jetbrains-annotations" }
@@ -28,14 +27,13 @@ errorprone-contrib = { module = "tech.picnic.error-prone-support:error-prone-con
 slf4j-api = { module = "org.slf4j:slf4j-api" }
 logback-classic = { module = "ch.qos.logback:logback-classic" }
 jackson-databind = { module = "tools.jackson.core:jackson-databind" }
+jackson-dataformat-yaml = { module = "tools.jackson.dataformat:jackson-dataformat-yaml" }
 jackson-annotations = { module = "com.fasterxml.jackson.core:jackson-annotations" }
+netty-buffer = { module = "io.netty:netty-buffer" }
 
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
 # Gradle's test executor needs the launcher on the test runtime classpath.
 junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
-
-jmh-core = { module = "org.openjdk.jmh:jmh-core", version.ref = "jmh" }
-jmh-generator = { module = "org.openjdk.jmh:jmh-generator-annprocess", version.ref = "jmh" }
 
 teavm-classlib = { module = "org.teavm:teavm-classlib", version.ref = "teavm" }
 teavm-jso = { module = "org.teavm:teavm-jso", version.ref = "teavm" }
@@ -43,6 +41,7 @@ teavm-extension-spi = { module = "org.teavm:teavm-extension-spi", version.ref = 
 
 # For build-logic's own classpath.
 gradle-errorprone = { module = "net.ltgt.gradle:gradle-errorprone-plugin", version = "5.1.1" }
+gradle-node = { module = "com.github.node-gradle:gradle-node-plugin", version = "7.1.0" }
 
 [plugins]
 shadow = { id = "com.gradleup.shadow", version = "9.6.1" }

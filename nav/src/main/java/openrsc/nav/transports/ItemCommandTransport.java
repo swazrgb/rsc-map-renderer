@@ -24,6 +24,7 @@ public final class ItemCommandTransport implements Transport, DeclarativeTranspo
     private final Set<Point> entrySet;
     private final Point to;
     private final int cost;
+    private final int price;
     private final Prereq prereq;
     private final List<String[]> menus;
     private final List<Consumed> consumes;
@@ -31,8 +32,10 @@ public final class ItemCommandTransport implements Transport, DeclarativeTranspo
 
     private String note;
 
-    public static ItemCommandTransport teleport(int itemId, Point to, int cost, Prereq prereq, List<String[]> menus) {
-        return new ItemCommandTransport(itemId, true, List.of(), to, cost, prereq, menus, List.of());
+    /** Fired anywhere in {@link TeleportRegion#ITEMS}, at {@code price} a use ({@link Transport#price}). */
+    public static ItemCommandTransport teleport(
+            int itemId, Point to, int cost, int price, Prereq prereq, List<String[]> menus) {
+        return new ItemCommandTransport(itemId, true, List.of(), to, cost, price, prereq, menus, List.of());
     }
 
     /** Fired only from {@code entries}, spending {@code consumes} on each use; throws when {@code entries} are empty. */
@@ -47,7 +50,7 @@ public final class ItemCommandTransport implements Transport, DeclarativeTranspo
         if (entries.isEmpty()) {
             throw new IllegalArgumentException("a place-bound item use needs at least one entry tile");
         }
-        return new ItemCommandTransport(itemId, false, entries, to, cost, prereq, menus, consumes);
+        return new ItemCommandTransport(itemId, false, entries, to, cost, 0, prereq, menus, consumes);
     }
 
     private ItemCommandTransport(
@@ -56,6 +59,7 @@ public final class ItemCommandTransport implements Transport, DeclarativeTranspo
             List<Point> entries,
             Point to,
             int cost,
+            int price,
             Prereq prereq,
             List<String[]> menus,
             List<Consumed> consumes) {
@@ -65,6 +69,7 @@ public final class ItemCommandTransport implements Transport, DeclarativeTranspo
         this.entrySet = new HashSet<>(entries);
         this.to = to;
         this.cost = cost;
+        this.price = price;
         this.prereq = prereq;
         this.menus = List.copyOf(menus);
         this.consumes = List.copyOf(consumes);
@@ -103,6 +108,11 @@ public final class ItemCommandTransport implements Transport, DeclarativeTranspo
     @Override
     public int cost() {
         return cost;
+    }
+
+    @Override
+    public int price() {
+        return price;
     }
 
     public ItemCommandTransport withNote(String note) {

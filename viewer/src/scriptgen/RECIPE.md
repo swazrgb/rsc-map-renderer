@@ -73,8 +73,9 @@ all of it, and never before the first update after it starts or logs in:
 
 - APOS: a player position update (its `onPlayerCoord` hook) has been handled since the last
   decision, and the client's socket input has nothing left to read.
-- IdleRSC, which has no hook: the camper wraps the client's socket input, counts each player
-  position update read, and decides once the client finds nothing left to read.
+- IdleRSC: its `ServerTickCallback` has counted an update since the last decision, and the
+  client's socket input, which the camper wraps, has nothing left to read. The callback runs once
+  the client has applied the update's NPCs, which its scenery, walls and ground items follow.
 - Plutonium, whose packets reach the script through a queue it cannot see: 20 ms after
   `on_server_tick`. The server writes a tick's packets back to back.
 
@@ -148,18 +149,20 @@ the same way. Starting a route forgets the tiles the long-distance walker had no
 
 With no such step, the camper walks with the client's own long-distance walker (APOS's
 `PathWalker`, IdleRSC's web walker, Plutonium's long paths, which open no doors) to the route's
-step or landing nearest the player on the same floor that the walker has a path to; when the walker
-has none, it tries the next nearest. With none left, it stops. Once it has a path, the walk is the
-walker's: the camper keeps it going every tick and does not judge it. The walker never holds up a
+step or landing nearest the player on the same floor, other than the player's own tile, that the
+walker has a path to; when the walker has none, it tries the next nearest. With none left, it
+stops. Once it has a path, the walk is the walker's: the camper keeps it going every tick and does
+not judge it. When the walker stops with the route still out of reach, the camper asks it for a path
+to the same tile again. The walker never holds up a
 tick: it is asked for at most one path a tick, and IdleRSC's web walker is asked for its path, which
 the camper walks node by node itself, letting the walker's own handler cross only a door, ladder or
 other labelled link.
 
 Once started, a route is followed to its last step. A `walk` step is done within 2 tiles of its
-tile; its walk is sent every tick until then. A step that clicks or uses an item on an object or
+tile; its walk is sent every tick until then, while the client's walking reaches the tile. A step that clicks or uses an item on an object or
 wall does so every tick while the object is there. A wall is the one on that side of the tile,
-never another wall on the same tile. A step's item that is not carried stops it, once that step
-is the current one.
+never another wall on the same tile. A step's item that is not in the inventory stops it, once that
+step is the current one: on a world with the equipment tab, a worn item is not.
 
 When the current step cannot be reached (a `walk` step's tile, or any other step's tiles it is used
 from, as for resuming, but whether or not the client has been sent the object) and the last `door`, `gate` or `cut` step before it is shut (someone shut
@@ -230,8 +233,8 @@ their number.
 
 Logged in again after a disconnect, it forgets what it saw in view (a target gone from view then
 did not die) and moves its tick count on by the time it was logged out, so due ticks stay right.
-APOS, which has no login hook, takes a gap of more than 5 seconds between updates for a
-reconnect.
+APOS, which has no login hook, and Plutonium, whose login hook comes after the login's first
+update, take a gap of more than 5 seconds between updates for a reconnect.
 
 The hunted target is the one the last Hunt chose; it stays the hunted target on ticks the camper
 does something else, and is forgotten when camping stops. Due within the next 5 ticks means due 0
@@ -303,7 +306,7 @@ off:
 | `Out of <item>: <carried> carried, <banked> in the bank, min <min>` | The bank cannot make up an item's `min`.                                   |
 | `No room for <item>`                                                | The inventory has no room for an item's `min`.                             |
 | `The bank did not take <deposits or withdrawals>`                   | Deposits or withdrawals still to do 3 ticks after they were sent.          |
-| `Route <name> step <n> needs <item>`                                | The current step's item is not carried.                                    |
+| `Route <name> step <n> needs <item>`                                | The current step's item is not in the inventory.                           |
 | `No way to the route`                                               | The long-distance walker reaches none of the route's tiles, or cannot run. |
 | `Error: <what>`                                                     | Anything the camper did not expect.                                        |
 
@@ -321,10 +324,10 @@ line as the recipe has it, without its comment.
 | `Route <name>: done`                                               | A route reaches its end.                                                                       |
 | `Route <name> step <n> (<step>) for <t> ticks`                     | A step is taking long, every 20 ticks.                                                         |
 | `No path to #<index>'s spawn at <x>,<z>; skipping it for 50 ticks` | A spawn is skipped.                                                                            |
-| `No tick hook: deciding every <tickMs> ms`                         | IdleRSC only, when its hook cannot be set up.                                                  |
+| `No socket hook: deciding on each NPC update`                      | IdleRSC only; it then decides before each update's scenery, walls and ground items are in.     |
 | `No saved recipe is called <name>`                                 | The script's parameters name no saved recipe (APOS and IdleRSC).                               |
 | `No web walker path search: walking with walkTowards`              | IdleRSC only, when it cannot reach its web walker's path search; the walk then holds up ticks. |
-| `No sleep hook: not sleeping`                                      | IdleRSC only, without its tick hook and with a client that does not answer the sleep word.     |
+| `No sleep hook: not sleeping`                                      | IdleRSC only, without its socket hook and with a client that does not answer the sleep word.   |
 
 What is wrong with a recipe, after `line <n>: `:
 

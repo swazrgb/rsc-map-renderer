@@ -377,7 +377,51 @@ public enum NpcRoutes implements TransportDef {
                     ItemId.NIGHTSHADE.id(),
                     questComplete(QuestId.WATCHTOWER),
                     150))),
+
+    /**
+     * Death in his Varrock house, there only while the event runs, takes the player to his farm once
+     * Mice to Meet You has reached it.
+     *
+     * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/custom/minigames/micetomeetyou/Death.java#L330">Death.onTalkNpc</a>
+     * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/database/WorldPopulator.java#L284">WorldPopulator.loadCustomLocs</a>
+     */
+    DEATH_VARROCK_TO_DEATH_ISLAND(onlyIn(
+            feature(WorldProfile.Feature.CUSTOM_QUESTS_LOCS),
+            talk(
+                    npcs(NpcId.DEATH.id()),
+                    at(115, 533),
+                    975,
+                    169,
+                    Prereq.all(deathsFarmReached(), Prereq.fact(Fact.cacheBool(NpcRoutes.MICE_EVENT_OFF, false))),
+                    200,
+                    new String[] {"take me to your farm"}))),
     ;
+
+    /**
+     * The server's cache key for Mice to Meet You's stage: 13 once Death has bought his farm, -1 once
+     * the miniquest is done, unset before it starts.
+     *
+     * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/custom/minigames/micetomeetyou/MiceQuestStates.java#L18">MiceQuestStates</a>
+     */
+    public static final String MICE_TO_MEET_YOU = "mice_to_meet_you";
+
+    /**
+     * An account cache boolean the server does not hold: on while the Mice to Meet You event is off, as
+     * seen from Death's Varrock house standing empty. An account that does not track it passes both the
+     * on and the off gate.
+     */
+    public static final String MICE_EVENT_OFF = "mice.off";
+
+    /**
+     * Mice to Meet You at the stage that unlocks Death Island, or done.
+     *
+     * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/custom/minigames/micetomeetyou/Death.java#L512">Death.bedTeleport</a>
+     */
+    static Prereq deathsFarmReached() {
+        return Prereq.any(
+                Prereq.fact(Fact.cacheIntEquals(NpcRoutes.MICE_TO_MEET_YOU, 13)),
+                Prereq.fact(Fact.cacheIntEquals(NpcRoutes.MICE_TO_MEET_YOU, -1)));
+    }
 
     /**
      * The command's duration; the 1,000 coins gate the teleport rather than price it.

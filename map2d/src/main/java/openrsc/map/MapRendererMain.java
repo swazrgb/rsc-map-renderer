@@ -4,6 +4,7 @@ import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import openrsc.gamedata.ServerConf;
 import openrsc.gamedata.ServerData;
 import openrsc.gamedata.WorldProfile;
@@ -93,8 +94,10 @@ public final class MapRendererMain {
                     env.doorDefs(),
                     env.sceneryLocs(),
                     env.objectDefs(),
+                    List.of(),
                     env.npcLocs(),
-                    env.npcDefs());
+                    env.npcDefs(),
+                    env);
             Path geoPath = outDir.resolve("floor-" + floor + ".geojson");
             Files.write(geoPath, JSON.writeValueAsBytes(geo));
 

@@ -6,4 +6,5 @@ group = "openrsc.build"
 
 dependencies {
     implementation(libs.gradle.errorprone)
+    implementation(libs.gradle.node)
 }

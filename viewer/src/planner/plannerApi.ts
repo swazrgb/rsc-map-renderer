@@ -163,11 +163,12 @@ export interface PlanLoadoutInput {
 }
 
 /**
- * nav's NavPolicy. `danger` routes around aggressive NPCs; `costOverrides` prices transports by name,
- * 2147483647 meaning never take it. `assumeAllEligible` treats every transport as open to the account.
+ * nav's NavPolicy. `danger` routes around aggressive NPCs: always, never, or only for an account whose base
+ * Defense is at most 40 (`WEAK_ACCOUNTS`). `costOverrides` prices transports by name, 2147483647 meaning never
+ * take it. `assumeAllEligible` treats every transport as open to the account.
  */
 export interface NavPolicy {
-    danger: "ON" | "OFF";
+    danger: "ON" | "OFF" | "WEAK_ACCOUNTS";
     teleportSpells: boolean;
     teleportJewellery: boolean;
     costOverrides: Record<string, number>;

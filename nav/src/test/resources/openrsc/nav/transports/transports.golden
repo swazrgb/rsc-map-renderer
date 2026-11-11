@@ -3000,6 +3000,8 @@ COAL_TRUCKS_LOG_BALANCE_W_E | (595, 458) -> (598, 458) | cost=45 | gate=agility 
 CRAFTING_CAPE_CRAFTING_GUILD | (declares nothing)
 CROMPERTY_TELEPORT_BLOCK_HANDELMORT_MANSION | (545, 576) -> (560, 588) | cost=200 | gate=Tribal Totem at stage ≥ 2 or done | spends=[] | engage=interact with npc [333] and answer 3 menus
 CROMPERTY_TELEPORT_BLOCK_RPDT_DEPOT | (545, 576) -> (558, 617) | cost=200 | gate=not (Tribal Totem at stage ≥ 2 or done) | spends=[] | engage=interact with npc [333] and answer 3 menus
+DEATHS_BED_PORTAL_TO_DEATH_ISLAND | (declares nothing)
+DEATH_VARROCK_TO_DEATH_ISLAND | (declares nothing)
 DIGSITE_BIG_CAVE_ROPE | (18, 3337) -> (25, 515) | cost=30 | gate=always | spends=[] | engage=interact with scenery 1098 @(19,3338)
 DIGSITE_BIG_CAVE_ROPE | (18, 3385) -> (25, 515) | cost=30 | gate=always | spends=[] | engage=interact with scenery 1098 @(19,3386)
 DIGSITE_BIG_CAVE_ROPE | (19, 3337) -> (25, 515) | cost=30 | gate=always | spends=[] | engage=interact with scenery 1098 @(19,3338)

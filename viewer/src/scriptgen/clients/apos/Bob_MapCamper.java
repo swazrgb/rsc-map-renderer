@@ -18,7 +18,6 @@ import java.nio.file.attribute.FileTime;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -116,13 +115,13 @@ public final class Bob_MapCamper extends Script {
 
 	/* from the recipe */
 	private boolean parsed;
-	private String world;
 	private long tick_ms = 640L;
 	private Target[] targets = new Target[0];
 	private int camp_x, camp_y, camp_min_x, camp_min_y, camp_max_x, camp_max_y;
 	private int bank_x, bank_y;
 	private int style = -1;
-	private int eat_at;
+	/* hits to eat at; -1 for never */
+	private int eat_at = -1;
 	/* the fatigue in percent to sleep at; -1 for never */
 	private int sleep_at = -1;
 	private int[] food_ids = new int[0];
@@ -149,7 +148,7 @@ public final class Bob_MapCamper extends Script {
 	/* the tick deposits, and withdrawals, still to do were first sent; -1 when none are */
 	private long deposits_tick = -1L, withdrawals_tick = -1L;
 
-	/* the route being followed and its step; route bank stays, at its end, until the bank is near */
+	/* the route being followed and its step; route bank stays, at its end, until the bank is near or open */
 	private Step[] route;
 	private String route_name;
 	private int step;
@@ -195,10 +194,13 @@ public final class Bob_MapCamper extends Script {
 				try {
 					error = start(read(path));
 				} catch (IOException e) {
-					error = "Could not read " + path + ": " + e;
+					error = "Error: " + e;
 				}
-				if (error == null) return;
-				System.out.println(error);
+				if (error != null) {
+					System.out.println(error);
+					setAutoLogin(false);
+				}
+				return;
 			}
 		}
 		show_frame();
@@ -221,14 +223,10 @@ public final class Bob_MapCamper extends Script {
 		System.out.printf("Camping %d spawns around %d,%d; banking at %d,%d%n", targets.length, camp_x, camp_y,
 			bank_x, bank_y);
 		/* after the script selector has made this script the current one */
-		EventQueue.invokeLater(new Runnable() {
-			@Override
-			public void run() {
-				IScriptListener listener = ScriptListener.getInstance();
-				if (listener.hasScript() && listener.getScriptName().equals(Bob_MapCamper.this.toString()) &&
-					!listener.isScriptRunning()) {
-					listener.setScriptRunning(true);
-				}
+		EventQueue.invokeLater(() -> {
+			IScriptListener listener = ScriptListener.getInstance();
+			if (listener.hasScript() && listener.getScriptName().equals(toString()) && !listener.isScriptRunning()) {
+				listener.setScriptRunning(true);
 			}
 		});
 		return null;
@@ -238,7 +236,6 @@ public final class Bob_MapCamper extends Script {
 		start_time = -1L;
 		camp = null;
 		route = null;
-		world = r.world;
 		tick_ms = r.tick_ms;
 		targets = r.targets.toArray(new Target[0]);
 		camp_x = r.camp_x;
@@ -380,12 +377,7 @@ public final class Bob_MapCamper extends Script {
 		} catch (IOException e) {
 			System.out.println("Could not list " + RECIPE_DIR + ": " + e);
 		}
-		Collections.sort(paths, new Comparator<Path>() {
-			@Override
-			public int compare(Path a, Path b) {
-				return Long.compare(modified(b), modified(a));
-			}
-		});
+		paths.sort((a, b) -> Long.compare(modified(b), modified(a)));
 		return paths;
 	}
 
@@ -482,6 +474,8 @@ public final class Bob_MapCamper extends Script {
 			start_xp[i] = getXpForLevel(i);
 		}
 		tick = 0L;
+		pre_attack_tick = -1L;
+		banked_count = new int[loot_ids.length];
 		update_seen = false;
 		update_ms = 0L;
 		started = false;
@@ -491,6 +485,7 @@ public final class Bob_MapCamper extends Script {
 		deposits_tick = withdrawals_tick = -1L;
 		route = null;
 		far_route = null;
+		far_tile = null;
 		far_tried.clear();
 		arrived = false;
 		hunted = null;
@@ -569,28 +564,31 @@ public final class Bob_MapCamper extends Script {
 			standing_warned = false;
 			if (step_aside()) return;
 		}
-		boolean bank_near = tiles(bank_x, bank_y) <= BANK_TILES;
-		if (bank_near && route == route_bank) route = null;
 		/* route bank runs to its end; needing the bank on route camp turns back at once */
 		if (need_bank() || route == route_bank) {
-			if (bank_near || route == route_bank && step >= route.length) {
-				int banker = nearest_banker();
-				if (banker != -1) {
-					talkToNpc(banker);
-				} else if (getX() != bank_x || getY() != bank_y) {
-					walk(bank_x, bank_y);
-				}
-				return;
-			}
-			follow(route_bank, "bank");
+			to_bank();
 			return;
 		}
 		if (!arrived) {
-			follow(route_camp, "camp");
-			if (!arrived) return;
+			if (!follow(route_camp, "camp")) return;
+			route = null;
+			arrived = true;
 		}
 		if (loot()) return;
 		hunt();
+	}
+
+	private void to_bank() {
+		boolean near = tiles(bank_x, bank_y) <= BANK_TILES;
+		if (near) route = null;
+		boolean ended = route == route_bank && step >= route.length;
+		if (!near && !ended && !follow(route_bank, "bank")) return;
+		int banker = nearest_banker();
+		if (banker != -1) {
+			talkToNpc(banker);
+		} else if (getX() != bank_x || getY() != bank_y) {
+			walk(bank_x, bank_y);
+		}
 	}
 
 	/* the client says so, or an NPC fighting stands on the player's tile: the client can say so a tick or two late */
@@ -633,6 +631,8 @@ public final class Bob_MapCamper extends Script {
 	private void stop(String why) {
 		System.out.println(why);
 		stopped = true;
+		/* APOS's Start runs this instance again without init: start afresh */
+		start_time = -1L;
 		setAutoLogin(false);
 		stopScript();
 	}
@@ -788,21 +788,17 @@ public final class Bob_MapCamper extends Script {
 		}
 	}
 
-	/* Follows a route from its step nearest the player through to its last step. */
-	private void follow(Step[] steps, String name) {
+	/* Follows a route from its step nearest the player through to its last step; true once at its end. */
+	private boolean follow(Step[] steps, String name) {
 		if (route != steps || step < route.length && floor_tiles(route[step].x, route[step].y) > RESUME_TILES) {
 			int k = resume(steps);
 			if (k == -1) {
+				route = null;
 				far_walk(steps, name);
-				return;
+				return false;
 			}
 			if (far_tile != null) {
-				walker_call(new Runnable() {
-					@Override
-					public void run() {
-						walker.setPath(null);
-					}
-				});
+				walker_call(() -> walker.setPath(null));
 				far_tile = null;
 			}
 			far_route = null;
@@ -812,11 +808,13 @@ public final class Bob_MapCamper extends Script {
 			step = step_max = k;
 			stall_tick = tick;
 			stall_log_tick = tick + STALL_TICKS + 1;
-			System.out.printf("Route %s: from step %d of %d%n", name, k + 1, steps.length);
+			if (k < steps.length) System.out.printf("Route %s: from step %d of %d%n", name, k + 1, steps.length);
+		} else if (step >= route.length) {
+			return true;
 		}
 		while (step < route.length) {
 			int r = run_step(route[step]);
-			if (stopped) return;
+			if (stopped) return false;
 			if (r == DONE) {
 				step++;
 				if (step > step_max) {
@@ -836,13 +834,10 @@ public final class Bob_MapCamper extends Script {
 					tick - stall_tick);
 				stall_log_tick = tick + STALL_TICKS;
 			}
-			return;
+			return false;
 		}
 		System.out.printf("Route %s: done%n", name);
-		if (steps == route_camp) {
-			route = null;
-			arrived = true;
-		}
+		return true;
 	}
 
 	/* runs a PathWalker call with its console output dropped; false when the walker could not run */
@@ -871,12 +866,7 @@ public final class Bob_MapCamper extends Script {
 	private void far_walk(final Step[] steps, String name) {
 		if (walker == null) {
 			walker = new PathWalker(ex);
-			if (!walker_call(new Runnable() {
-				@Override
-				public void run() {
-					walker.init(null);
-				}
-			})) {
+			if (!walker_call(() -> walker.init(null))) {
 				stop("No way to the route");
 				return;
 			}
@@ -888,12 +878,7 @@ public final class Bob_MapCamper extends Script {
 		}
 		if (far_tile != null) {
 			final boolean[] walking = new boolean[1];
-			if (!walker_call(new Runnable() {
-				@Override
-				public void run() {
-					walking[0] = walker.walkPath();
-				}
-			})) {
+			if (!walker_call(() -> walking[0] = walker.walkPath())) {
 				stop("No way to the route");
 				return;
 			}
@@ -914,13 +899,10 @@ public final class Bob_MapCamper extends Script {
 			far_tried.add(key(t[0], t[1]));
 		}
 		final boolean[] found = new boolean[1];
-		if (!walker_call(new Runnable() {
-			@Override
-			public void run() {
-				PathWalker.Path p = walker.calcPath(getX(), getY(), t[0], t[1]);
-				walker.setPath(p);
-				found[0] = p != null;
-			}
+		if (!walker_call(() -> {
+			PathWalker.Path p = walker.calcPath(getX(), getY(), t[0], t[1]);
+			walker.setPath(p);
+			found[0] = p != null;
 		})) {
 			stop("No way to the route");
 			return;
@@ -933,24 +915,20 @@ public final class Bob_MapCamper extends Script {
 		far_tile = t;
 	}
 
-	/* the route's untried tiles on our floor, steps and landings, nearest first */
+	/* the route's untried tiles on our floor but our own, steps and landings, nearest first */
 	private List<int[]> far_tiles(Step[] steps) {
 		List<int[]> out = new ArrayList<int[]>();
 		for (Step s : steps) {
 			add_far_tile(out, s.x, s.y);
 			if (s.lands()) add_far_tile(out, s.land_x, s.land_y);
 		}
-		Collections.sort(out, new Comparator<int[]>() {
-			@Override
-			public int compare(int[] a, int[] b) {
-				return Integer.compare(tiles(a[0], a[1]), tiles(b[0], b[1]));
-			}
-		});
+		out.sort(Comparator.comparingInt(a -> tiles(a[0], a[1])));
 		return out;
 	}
 
 	private void add_far_tile(List<int[]> out, int x, int y) {
 		if (floor_tiles(x, y) == Integer.MAX_VALUE || far_tried.contains(key(x, y))) return;
+		if (x == getX() && y == getY()) return;
 		for (int[] t : out) {
 			if (t[0] == x && t[1] == y) return;
 		}
@@ -1077,70 +1055,59 @@ public final class Bob_MapCamper extends Script {
 
 	/* DONE, WAIT, or BACK to the shut door before it when the step cannot be reached */
 	private int run_step(Step s) {
+		if (s.kind == Step.WALK ? tiles(s.x, s.y) <= STEP_TILES : s.lands() ? landed(s) : !shut(s)) return DONE;
+		boolean reached = s.kind == Step.WALK ? isReachable(s.x, s.y) : reaches(s);
+		if (!reached && shut_behind()) return BACK;
+		if (s.kind == Step.WALK) {
+			if (reached) walk(s.x, s.y);
+			return WAIT;
+		}
+		int slot = s.uses_item() ? use_slot(s) : -1;
+		if (stopped || !there(s) || approach(s)) return WAIT;
 		switch (s.kind) {
-			case Step.WALK: {
-				if (tiles(s.x, s.y) <= STEP_TILES) return DONE;
-				if (!isReachable(s.x, s.y)) return shut_behind() ? BACK : WAIT;
-				walk(s.x, s.y);
-				return WAIT;
-			}
 			case Step.DOOR:
+				click_wall(s.x, s.y, s.dir, 1);
+				break;
 			case Step.GATE:
-				if (!shut(s)) return DONE;
-				if (!reaches(s) && shut_behind()) return BACK;
-				if (approach(s)) return WAIT;
-				if (s.kind == Step.DOOR) {
+				atObject(s.x, s.y);
+				break;
+			case Step.CUT:
+				if (slot == -1) {
 					click_wall(s.x, s.y, s.dir, 1);
+				} else {
+					use_on_wall(s.x, s.y, s.dir, slot);
+				}
+				break;
+			case Step.OBJ:
+				if (s.cmd == 2) {
+					atObject2(s.x, s.y);
 				} else {
 					atObject(s.x, s.y);
 				}
-				return WAIT;
-			case Step.CUT:
-				if (!shut(s)) return DONE;
-				if (!reaches(s) && shut_behind()) return BACK;
-				if (s.item == 0) {
-					if (!approach(s)) click_wall(s.x, s.y, s.dir, 1);
-				} else {
-					int slot = use_slot(s);
-					if (slot != -1 && !approach(s)) use_on_wall(s.x, s.y, s.dir, slot);
-				}
-				return WAIT;
-			case Step.OBJ:
-				if (landed(s)) return DONE;
-				if (!reaches(s) && shut_behind()) return BACK;
-				if (getObjectIdFromCoords(s.x, s.y) != -1 && !approach(s)) {
-					if (s.cmd == 2) {
-						atObject2(s.x, s.y);
-					} else {
-						atObject(s.x, s.y);
-					}
-				}
-				return WAIT;
+				break;
 			case Step.WALL:
-				if (landed(s)) return DONE;
-				if (!reaches(s) && shut_behind()) return BACK;
-				if (wall_id(s.x, s.y, s.dir) != -1 && !approach(s)) click_wall(s.x, s.y, s.dir, s.cmd);
-				return WAIT;
-			case Step.USEWALL: {
-				if (landed(s)) return DONE;
-				if (!reaches(s) && shut_behind()) return BACK;
-				int slot = use_slot(s);
-				if (slot != -1 && wall_id(s.x, s.y, s.dir) != -1 && !approach(s)) {
-					use_on_wall(s.x, s.y, s.dir, slot);
-				}
-				return WAIT;
-			}
-			case Step.USEOBJ: {
-				if (landed(s)) return DONE;
-				if (!reaches(s) && shut_behind()) return BACK;
-				int slot = use_slot(s);
-				if (slot != -1 && getObjectIdFromCoords(s.x, s.y) != -1 && !approach(s)) {
-					useSlotOnObject(slot, s.x, s.y);
-				}
-				return WAIT;
-			}
+				click_wall(s.x, s.y, s.dir, s.cmd);
+				break;
+			case Step.USEWALL:
+				use_on_wall(s.x, s.y, s.dir, slot);
+				break;
 			default:
-				return WAIT;
+				useSlotOnObject(slot, s.x, s.y);
+		}
+		return WAIT;
+	}
+
+	/* the step's object or wall is in view: for a door, gate or cut, shut */
+	private boolean there(Step s) {
+		switch (s.kind) {
+			case Step.OBJ:
+			case Step.USEOBJ:
+				return getObjectIdFromCoords(s.x, s.y) != -1;
+			case Step.WALL:
+			case Step.USEWALL:
+				return wall_id(s.x, s.y, s.dir) != -1;
+			default:
+				return shut(s);
 		}
 	}
 
@@ -1721,7 +1688,11 @@ public final class Bob_MapCamper extends Script {
 			if (ex.isSleeping() && !stopped) {
 				decide(update_x, update_y);
 			} else {
-				observe(update_x, update_y);
+				try {
+					observe(update_x, update_y);
+				} catch (RuntimeException e) {
+					stop("Error: " + e);
+				}
 			}
 		}
 		if (relog) {
@@ -1989,7 +1960,6 @@ public final class Bob_MapCamper extends Script {
 
 	/* The camp recipe, read line by line. Nothing in here touches the client. */
 	private static final class Recipe {
-		String world;
 		long tick_ms = 640L;
 		final List<Target> targets = new ArrayList<Target>();
 		boolean has_camp;
@@ -1997,7 +1967,7 @@ public final class Bob_MapCamper extends Script {
 		boolean has_bank_line;
 		int bank_x, bank_y;
 		int style = -1;
-		int eat_at;
+		int eat_at = -1;
 		int sleep_at = -1;
 		int sleep_line;
 		int[] food_ids = new int[0];
@@ -2110,35 +2080,32 @@ public final class Bob_MapCamper extends Script {
 					else route_camp = route;
 					open = null;
 				} else if (k.equals("walk")) {
-					args(w, 2);
-					step(Step.WALK, num(w[1]), num(w[2]), 0, 0, 0, 0, 0, 0, line_no, text);
+					int[] a = nums(w, 2);
+					step(Step.WALK, a[0], a[1], 0, 0, 0, 0, 0, 0, line_no, text);
 				} else if (k.equals("door")) {
-					args(w, 4);
-					step(Step.DOOR, num(w[1]), num(w[2]), range("dir", w[3], 0, 3), num(w[4]), 0, 0, 0, 0,
-						line_no, text);
+					int[] a = nums(w, 4);
+					step(Step.DOOR, a[0], a[1], range("dir", a[2], 0, 3), a[3], 0, 0, 0, 0, line_no, text);
 				} else if (k.equals("gate")) {
-					args(w, 3);
-					step(Step.GATE, num(w[1]), num(w[2]), 0, num(w[3]), 0, 0, 0, 0, line_no, text);
+					int[] a = nums(w, 3);
+					step(Step.GATE, a[0], a[1], 0, a[2], 0, 0, 0, 0, line_no, text);
 				} else if (k.equals("obj")) {
-					args(w, 5);
-					step(Step.OBJ, num(w[1]), num(w[2]), 0, 0, range("cmd", w[3], 1, 2), 0, num(w[4]), num(w[5]),
-						line_no, text);
+					int[] a = nums(w, 5);
+					step(Step.OBJ, a[0], a[1], 0, 0, range("cmd", a[2], 1, 2), 0, a[3], a[4], line_no, text);
 				} else if (k.equals("wall")) {
-					args(w, 6);
-					step(Step.WALL, num(w[1]), num(w[2]), range("dir", w[3], 0, 3), 0, range("cmd", w[4], 1, 2), 0,
-						num(w[5]), num(w[6]), line_no, text);
-				} else if (k.equals("cut")) {
-					args(w, 5);
-					step(Step.CUT, num(w[1]), num(w[2]), range("dir", w[3], 0, 3), num(w[4]), 0, num(w[5]), 0, 0,
+					int[] a = nums(w, 6);
+					step(Step.WALL, a[0], a[1], range("dir", a[2], 0, 3), 0, range("cmd", a[3], 1, 2), 0, a[4], a[5],
 						line_no, text);
+				} else if (k.equals("cut")) {
+					int[] a = nums(w, 5);
+					step(Step.CUT, a[0], a[1], range("dir", a[2], 0, 3), a[3], 0, a[4], 0, 0, line_no, text);
 				} else if (k.equals("usewall")) {
-					args(w, 6);
-					step(Step.USEWALL, num(w[1]), num(w[2]), range("dir", w[3], 0, 3), 0, 0,
-						range("itemId", w[4], 1, Integer.MAX_VALUE), num(w[5]), num(w[6]), line_no, text);
+					int[] a = nums(w, 6);
+					step(Step.USEWALL, a[0], a[1], range("dir", a[2], 0, 3), 0, 0, range("itemId", a[3], 1, Integer.MAX_VALUE),
+						a[4], a[5], line_no, text);
 				} else if (k.equals("useobj")) {
-					args(w, 5);
-					step(Step.USEOBJ, num(w[1]), num(w[2]), 0, 0, 0, range("itemId", w[3], 1, Integer.MAX_VALUE),
-						num(w[4]), num(w[5]), line_no, text);
+					int[] a = nums(w, 5);
+					step(Step.USEOBJ, a[0], a[1], 0, 0, 0, range("itemId", a[2], 1, Integer.MAX_VALUE), a[3], a[4], line_no,
+						text);
 				} else {
 					throw new IllegalArgumentException("unknown instruction " + k);
 				}
@@ -2147,8 +2114,7 @@ public final class Bob_MapCamper extends Script {
 			if (SETTINGS.contains(k)) once(k, k, line_no);
 			if (k.equals("world")) {
 				if (w.length != 3) throw new IllegalArgumentException("world takes 1 numbers");
-				tick_ms = range("world", w[2], 1, Integer.MAX_VALUE);
-				world = w[1];
+				tick_ms = range("world", num(w[2]), 1, Integer.MAX_VALUE);
 			} else if (k.equals("target")) {
 				args(w, 9);
 				Target t = new Target(num(w[1]), num(w[2]), num(w[3]), num(w[4]), num(w[5]),
@@ -2173,13 +2139,13 @@ public final class Bob_MapCamper extends Script {
 				has_bank_line = true;
 			} else if (k.equals("style")) {
 				args(w, 1);
-				style = range("style", w[1], 0, 3);
+				style = range("style", num(w[1]), 0, 3);
 			} else if (k.equals("eat")) {
 				args(w, 1);
 				eat_at = num(w[1]);
 			} else if (k.equals("sleep")) {
 				args(w, 1);
-				sleep_at = range("sleep", w[1], 1, 100);
+				sleep_at = range("sleep", num(w[1]), 1, 100);
 				sleep_line = line_no;
 			} else if (k.equals("food")) {
 				food_ids = ids(w);
@@ -2216,6 +2182,12 @@ public final class Bob_MapCamper extends Script {
 			if (w.length - 1 != n) throw new IllegalArgumentException(w[0] + " takes " + n + " numbers");
 		}
 
+		/* the line's n numbers, every one read before any is checked against its range */
+		private static int[] nums(String[] w, int n) {
+			args(w, n);
+			return ids(w);
+		}
+
 		private static int[] ids(String[] w) {
 			int[] ids = new int[w.length - 1];
 			for (int i = 1; i < w.length; i++) {
@@ -2233,8 +2205,7 @@ public final class Bob_MapCamper extends Script {
 			return Integer.parseInt(digits);
 		}
 
-		private static int range(String name, String s, int min, int max) {
-			int n = num(s);
+		private static int range(String name, int n, int min, int max) {
 			if (n < min || n > max) throw new IllegalArgumentException(name + " is " + min + " to " + max);
 			return n;
 		}

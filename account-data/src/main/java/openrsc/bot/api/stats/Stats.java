@@ -4,20 +4,26 @@ import openrsc.bot.api.eligibility.AccountFacts;
 
 /**
  * An account's skills, frozen. Each skill has a current level, which drains and boosts; a base
- * level, which its experience earns; and the experience itself.
+ * level, which its experience earns; and the experience itself, in the server's quarter points: 0 to
+ * {@link #XP_LIMIT}, which a world without an experience cap passes by starting again from 0.
+ *
+ * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/Skills.java#L208-L219">Skills.addExperience</a>
  */
 public final class Stats {
 
     public static final Stats EMPTY = new MutableStats().snapshot();
 
+    /** The most experience a skill holds, in quarter points: the server's unsigned 32 bits. */
+    public static final long XP_LIMIT = 0xFFFF_FFFFL;
+
     private final int[] levels;
     private final int[] baseLevels;
-    private final int[] xp;
+    private final long[] xp;
 
     private final int serverSkillCount;
     private final int combatLevel;
 
-    Stats(int[] levels, int[] baseLevels, int[] xp, int serverSkillCount) {
+    Stats(int[] levels, int[] baseLevels, long[] xp, int serverSkillCount) {
         this.serverSkillCount = serverSkillCount;
         this.levels = levels.clone();
         this.baseLevels = baseLevels.clone();
@@ -38,7 +44,7 @@ public final class Stats {
         return skillId >= 0 && skillId < baseLevels.length ? baseLevels[skillId] : 0;
     }
 
-    public int xp(int skillId) {
+    public long xp(int skillId) {
         return skillId >= 0 && skillId < xp.length ? xp[skillId] : 0;
     }
 
@@ -50,8 +56,17 @@ public final class Stats {
         return baseLevels[skill.id];
     }
 
-    public int xp(Skill skill) {
+    public long xp(Skill skill) {
         return xp[skill.id];
+    }
+
+    /**
+     * The experience gained from {@code before} to {@code after}, both in quarter points: a skill that
+     * passed {@link #XP_LIMIT} and started again from 0 gained what it took to get there, and one that fell
+     * gained a negative amount.
+     */
+    public static long xpGained(long before, long after) {
+        return (int) (after - before);
     }
 
     /**

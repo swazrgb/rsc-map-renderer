@@ -53,7 +53,7 @@ class LocalFieldTest {
     static void load() {
         env = RealDefs.serverData();
         map = env.collisionMap();
-        pf = RealDefs.cachedPathfinder();
+        pf = RealDefs.pathfinder();
     }
 
     @Test

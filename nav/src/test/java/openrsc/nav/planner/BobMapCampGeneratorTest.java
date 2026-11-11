@@ -30,7 +30,7 @@ class BobMapCampGeneratorTest {
     @BeforeAll
     static void build() {
         env = RealDefs.serverData();
-        pathfinder = RealDefs.cachedPathfinder();
+        pathfinder = RealDefs.pathfinder();
     }
 
     @Test

@@ -58,7 +58,7 @@ class RouteFollowerTest {
     static void load() {
         env = RealDefs.serverData();
         map = env.collisionMap();
-        pf = RealDefs.cachedPathfinder();
+        pf = RealDefs.pathfinder();
         dangerOff = NavPolicy.DEFAULT.withDanger(NavPolicy.DangerAvoidance.OFF);
     }
 

@@ -70,6 +70,7 @@ public final class SpellTransport implements Transport, DeclarativeTransport {
     private final Map<Integer, Integer> runes;
     private final int destX, destY;
     private final int cost;
+    private final int price;
     private final int requiresQuestComplete;
     private final String scrollKey;
 
@@ -90,6 +91,7 @@ public final class SpellTransport implements Transport, DeclarativeTransport {
             int destX,
             int destY,
             int cost,
+            int price,
             int requiresQuestComplete,
             String scrollKey) {
         this.spellId = spellId;
@@ -99,6 +101,7 @@ public final class SpellTransport implements Transport, DeclarativeTransport {
         this.destX = destX;
         this.destY = destY;
         this.cost = cost;
+        this.price = price;
         this.requiresQuestComplete = requiresQuestComplete;
         this.scrollKey = scrollKey;
     }
@@ -155,6 +158,11 @@ public final class SpellTransport implements Transport, DeclarativeTransport {
     @Override
     public int cost() {
         return cost;
+    }
+
+    @Override
+    public int price() {
+        return price;
     }
 
     public SpellTransport withPlacement(String id) {

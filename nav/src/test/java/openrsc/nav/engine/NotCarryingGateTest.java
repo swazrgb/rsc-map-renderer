@@ -33,7 +33,7 @@ import org.junit.jupiter.api.Test;
 /** A crossing refused while the pack carries an item: a stop on the way banks the item. */
 class NotCarryingGateTest {
 
-    private static final Point EDGEVILLE_BANK = Point.of(220, 447);
+    private static final Point FALADOR_EAST_BANK = Point.of(285, 570);
     private static final Rect PAST_VARROCK = Rect.of(109, 525, 109, 525);
     private static final int RUM = ItemId.KARAMJA_RUM.id();
     private static final Point PORT_SARIM_DOCK = Point.of(264, 660);
@@ -59,7 +59,7 @@ class NotCarryingGateTest {
                         RealDefs.pathfinder()
                                 .nav()
                                 .plan(new PlanRequest(
-                                        account(slots, bank), EDGEVILLE_BANK, PAST_VARROCK, logs, spells)))
+                                        account(slots, bank), FALADOR_EAST_BANK, PAST_VARROCK, logs, spells)))
                 .route();
         Route.Hop cast = null;
         Route.BankStop stop = null;
@@ -129,6 +129,6 @@ class NotCarryingGateTest {
                 bank,
                 stats.snapshot(),
                 new MutableQuests().snapshot(),
-                EDGEVILLE_BANK);
+                FALADOR_EAST_BANK);
     }
 }

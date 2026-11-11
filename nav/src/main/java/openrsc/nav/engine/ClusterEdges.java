@@ -16,9 +16,6 @@ final class ClusterEdges {
     static final int CENTRE = 4;
     static final int FEASIBLE_MASK = 0x1FF;
 
-    /** Bumped when a change here can change what a persisted leg plane holds. */
-    static final int PLANE_VERSION = 1;
-
     static final int[] DX = {-1, 0, 1, -1, 0, 1, -1, 0, 1};
     static final int[] DY = {-1, -1, -1, 0, 0, 0, 1, 1, 1};
 

@@ -139,6 +139,8 @@ class OverrideCostsTest {
         NavPolicy typo = new NavPolicy(
                 NavPolicy.DangerAvoidance.ON, false, false, Map.of("DOOR_MINNING_GUILD", NavPolicy.PROHIBITIVE), false);
         assertThrows(IllegalArgumentException.class, () -> engine.costsFor(typo, open.clone()));
+        assertThrows(IllegalArgumentException.class, () -> engine.check(typo), "checked without a plan");
+        engine.check(NavPolicy.DEFAULT.prohibit(SpecialDoor.TENT_DOOR_ANVIL.highToLow()));
     }
 
     @Test

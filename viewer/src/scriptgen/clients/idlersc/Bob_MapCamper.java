@@ -3,6 +3,7 @@ package scripting.idlescript;
 import bot.Main;
 import bot.ui.scriptselector.models.Category;
 import bot.ui.scriptselector.models.ScriptInfo;
+import callbacks.ServerTickCallback;
 import callbacks.SleepCallback;
 import com.openrsc.client.entityhandling.EntityHandler;
 import com.openrsc.client.entityhandling.defs.GameObjectDef;
@@ -48,7 +49,9 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.WindowConstants;
+import orsc.Config;
 import orsc.ORSCharacter;
+import orsc.net.Network_Socket;
 
 /**
  * Spawn-camps the NPCs of a camp recipe with melee. While it waits at a spawn whose NPC is not in
@@ -105,6 +108,8 @@ public class Bob_MapCamper extends IdleScript {
   private static final int OP_BANK_CLOSE = 212;
   private static final int OP_ATTACK_NPC = 190;
   private static final int OP_TAKE = 247;
+  private static final int OP_OBJ1 = 136, OP_OBJ2 = 79, OP_USE_OBJ = 115;
+  private static final int OP_WALL1 = 14, OP_WALL2 = 127, OP_USE_WALL = 161;
 
   private static final int WALK = 0;
   private static final int DOOR = 1;
@@ -179,8 +184,9 @@ public class Bob_MapCamper extends IdleScript {
   private boolean stopped;
   private boolean loggedOut;
   private int px, pz;
-  private TickHook hook;
-  private long hookTicks;
+  private InputHook hook;
+  /* ServerTickCallback's count of server updates when the camper last decided */
+  private long decidedTicks;
   /* the server updates the client applied since the last poll; observed together, as one */
   private long applied = 1L;
   private boolean noHook;
@@ -191,6 +197,8 @@ public class Bob_MapCamper extends IdleScript {
   private boolean imageHook, fatigueHook;
   private boolean noSleepLogged;
   private Field inStream, packetLength;
+  /* the client's connection when last polled; each login opens a new one */
+  private Object connection;
   /* when the last update was counted, to move the tick count on over a reconnect */
   private long updateMs;
   private volatile Map<Integer, ORSCharacter> visible = new HashMap<>();
@@ -220,6 +228,9 @@ public class Bob_MapCamper extends IdleScript {
   private boolean webPaths = true;
   private Object webGraph;
   private Method pathSearch, labelHandler;
+  private final Map<String, Method> clientWalks = new HashMap<>();
+  /* the client's walking's path, for reachedTile */
+  private final int[] pathX = new int[8000], pathZ = new int[8000];
 
   /* "deposits" or "withdrawals" while some are still to do, and the tick they were first sent */
   private String batch;
@@ -233,6 +244,7 @@ public class Bob_MapCamper extends IdleScript {
         return 1000;
       }
       startMs = System.currentTimeMillis();
+      decidedTicks = ServerTickCallback.tickCount;
       imageHook = !callsSleepCallback("orsc/PacketHandler.class");
       fatigueHook = !callsSleepCallback("orsc/mudclient.class");
       controller.log(
@@ -317,42 +329,34 @@ public class Bob_MapCamper extends IdleScript {
 
   /*
    * Counts the server updates the client has applied; true on the first poll after a new one, and
-   * never before the first update after the hook went on a new socket. The first update after a
-   * reconnect moves the count on by the time since the last one.
+   * never before the first update after the camper starts or the hook went on a new socket. The
+   * first update after a reconnect moves the count on by the time since the last one.
    */
   private boolean newTick() {
-    TickHook h = installHook();
-    if (h == null) {
-      if (!noHook) return false;
-      long now = (System.currentTimeMillis() - startMs) / tickMs;
-      if (decided && now <= tick) return false;
-      applied = decided ? now - tick : 1L;
-      tick = now;
-      return true;
-    }
-    long ticks = h.ticks;
-    if (h != hook) {
-      hook = h;
-      hookTicks = ticks;
-      return false;
-    }
-    if (ticks == hookTicks) return false;
+    InputHook h = installHook();
+    long ticks = h != null ? h.appliedTicks : noHook ? ServerTickCallback.tickCount : -1L;
+    if (ticks <= decidedTicks) return false;
     long now = System.currentTimeMillis();
-    applied = ticks - hookTicks;
+    applied = ticks - decidedTicks;
     tick += loggedOut && updateMs > 0L ? Math.max(1L, (now - updateMs) / tickMs) : applied;
-    hookTicks = ticks;
+    decidedTicks = ticks;
     updateMs = now;
     return true;
   }
 
   /*
-   * The tick hook on the client's socket input, put there at a packet boundary when the input is
-   * not wrapped yet (each login opens a new socket); null until then. When this IdleRSC lacks the
-   * fields, it says so once and the camper decides every tick length by the clock.
+   * The hook on the client's socket input, put there at a packet boundary when the input is not
+   * wrapped yet; the last one until then. When this IdleRSC lacks the fields, it says so once and
+   * the camper decides on ServerTickCallback's count alone.
    */
-  private TickHook installHook() {
+  private InputHook installHook() {
+    Object stream = stream();
+    if (stream != connection) {
+      if (connection != null) loggedOut = true;
+      connection = stream;
+      hook = null;
+    }
     if (noHook) return null;
-    Object stream = controller.mud.packetHandler.getClientStream();
     try {
       if (inStream == null) {
         inStream = field(stream.getClass(), "inStream");
@@ -360,21 +364,25 @@ public class Bob_MapCamper extends IdleScript {
       }
     } catch (ReflectiveOperationException | RuntimeException e) {
       noHook = true;
-      controller.log("No tick hook: deciding every " + tickMs + " ms", "red");
+      controller.log("No socket hook: deciding on each NPC update", "red");
       return null;
     }
     try {
       Object in = inStream.get(stream);
-      if (in instanceof TickHook && ((TickHook) in).stream == stream) return (TickHook) in;
+      // A camper started again finds the last run's hook still on the socket.
+      if (in instanceof InputHook && ((InputHook) in).stream == stream) {
+        return hook = (InputHook) in;
+      }
       if (!(in instanceof InputStream)
           || packetLength.getInt(stream) != 0
           || ((InputStream) in).available() != 0) {
-        return in == null ? null : hook;
+        return hook;
       }
-      TickHook h = new TickHook((InputStream) in, stream, packetLength, controller, imageHook, fatigueHook);
+      InputHook h =
+          new InputHook((InputStream) in, stream, packetLength, controller, imageHook, fatigueHook);
       inStream.set(stream, h);
-      if (hook != null) loggedOut = true;
-      return h;
+      decidedTicks = ServerTickCallback.tickCount;
+      return hook = h;
     } catch (IllegalAccessException | IOException e) {
       // A socket closing under us: try again on the next poll.
       return hook;
@@ -395,12 +403,14 @@ public class Bob_MapCamper extends IdleScript {
   }
 
   /*
-   * The client's socket input, watched for server updates. The client reads one packet a frame
-   * and handles it before it next asks what is available; so once nothing more is waiting, it has
-   * applied every player position update, one a server tick, that came in before.
+   * The client's socket input, watched for sleep packets and for the client applying all it read.
+   * ServerTickCallback counts an update once the client has applied its NPCs, and the update's
+   * scenery, walls and ground items come after them
+   * https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/GameStateUpdater.java#L78-L84
+   * The client reads one packet a frame and handles it before it next asks what is available; so
+   * once nothing more is waiting, it has applied the whole of every update counted.
    */
-  private static final class TickHook extends FilterInputStream {
-    private static final int OP_PLAYER_COORDS = 191;
+  private static final class InputHook extends FilterInputStream {
     private static final int OP_SLEEP_SCREEN = 117;
     private static final int OP_SLEEP_FATIGUE = 244;
     final Object stream;
@@ -409,16 +419,16 @@ public class Bob_MapCamper extends IdleScript {
     private final boolean imageHook, fatigueHook;
     /* sleep images (byte[]) and sleep fatigues (Integer) read, in order, for the script thread */
     private final List<Object> sleeps = new ArrayList<>();
-    volatile long ticks;
+    /* ServerTickCallback's count when the client last found nothing left to read; -1 before then */
+    volatile long appliedTicks = -1L;
     private int header = 2;
     private int left;
     private boolean opcodeNext;
-    private int updates;
     /* the sleep packet being read: the opcode, then the payload, as the client's packet buffer */
     private byte[] sleepPacket;
     private int sleepRead;
 
-    TickHook(
+    InputHook(
         InputStream in,
         Object stream,
         Field packetLength,
@@ -448,10 +458,8 @@ public class Bob_MapCamper extends IdleScript {
         left = 0;
         opcodeNext = false;
         sleepPacket = null;
-        if (available == 0 && updates > 0) {
-          ticks += updates;
-          updates = 0;
-        }
+        // Read on the client's thread, which counts the updates.
+        if (available == 0) appliedTicks = ServerTickCallback.tickCount;
       }
       return available;
     }
@@ -483,7 +491,6 @@ public class Bob_MapCamper extends IdleScript {
       if (left <= 0) return;
       if (opcodeNext) {
         opcodeNext = false;
-        if (b == OP_PLAYER_COORDS) updates++;
         if (imageHook && b == OP_SLEEP_SCREEN || fatigueHook && b == OP_SLEEP_FATIGUE) {
           sleepPacket = new byte[left];
           sleepRead = 0;
@@ -706,14 +713,14 @@ public class Bob_MapCamper extends IdleScript {
     return false;
   }
 
-  /* Worn in any slot; on Coleslaw a worn item leaves the inventory. */
+  /* Worn in any slot; with the equipment tab a worn item leaves the inventory. */
   private boolean worn(int id) {
-    if (!controller.isAuthentic()) return controller.isItemIdEquipped(id);
+    if (Config.S_WANT_EQUIPMENT_TAB) return controller.isItemIdEquipped(id);
     return wornCount(id) > 0;
   }
 
   private int wornCount(int id) {
-    if (!controller.isAuthentic()) return 0;
+    if (Config.S_WANT_EQUIPMENT_TAB) return 0;
     int[] ids = controller.getInventoryItemIds();
     int count = 0;
     for (int slot = 0; slot < ids.length; slot++) {
@@ -832,7 +839,7 @@ public class Bob_MapCamper extends IdleScript {
     batch = null;
     controller.mud.setShowDialogBank(false);
     send(OP_BANK_CLOSE);
-    controller.mud.packetHandler.getClientStream().finishPacket();
+    stream().finishPacket();
   }
 
   /* False, having stopped, when the batch was first sent 3 ticks ago. */
@@ -910,11 +917,9 @@ public class Bob_MapCamper extends IdleScript {
     if (route != steps) route = null;
     if (route != null && stepIndex < steps.length) {
       advance();
-      if (stepIndex < steps.length && far(steps[stepIndex]) && !resume(steps, false)) {
-        return false;
-      }
+      if (stepIndex < steps.length && far(steps[stepIndex]) && !resume(steps)) return false;
     }
-    if (route == null && !resume(steps, true)) return false;
+    if (route == null && !resume(steps)) return false;
     if (stepIndex >= steps.length) return true;
     take(steps[stepIndex]);
     return false;
@@ -924,7 +929,7 @@ public class Bob_MapCamper extends IdleScript {
    * Resumes the route from its nearest step; with none, walks the long-distance walker toward it.
    * False while the route is not under way.
    */
-  private boolean resume(Step[] steps, boolean starting) {
+  private boolean resume(Step[] steps) {
     int start = nearestStep(steps);
     if (start < 0) {
       route = null;
@@ -935,12 +940,12 @@ public class Bob_MapCamper extends IdleScript {
     farTried.clear();
     route = steps;
     stepIndex = start;
-    if (starting || start > furthest) {
-      furthest = start;
-      furthestTick = tick;
-      stallLogTick = tick;
+    furthest = start;
+    furthestTick = tick;
+    stallLogTick = tick;
+    if (start < steps.length) {
+      controller.log("Route " + routeName() + ": from step " + (start + 1) + " of " + steps.length);
     }
-    controller.log("Route " + routeName() + ": from step " + (start + 1) + " of " + steps.length);
     advance();
     return true;
   }
@@ -1032,9 +1037,11 @@ public class Bob_MapCamper extends IdleScript {
       }
       if (path.size() > 1) {
         WebwalkEdge edge = graph.getEdge(path.get(0), path.get(1));
-        if (edge != null && edge.getLabel().isPresent()) {
-          labelHandler.invoke(walker, edge.getLabel().get());
-          return true;
+        // The handler opens the way; the walker then walks the link itself, as here.
+        if (edge != null
+            && edge.getLabel().isPresent()
+            && !Boolean.TRUE.equals(labelHandler.invoke(walker, edge.getLabel().get()))) {
+          return false;
         }
       }
       WebwalkNode next = path.get(Math.min(1, path.size() - 1));
@@ -1052,7 +1059,7 @@ public class Bob_MapCamper extends IdleScript {
     }
   }
 
-  /* The route's untried steps and landings on the player's floor, nearest first. */
+  /* The route's untried steps and landings on the player's floor but its tile, nearest first. */
   private List<int[]> farTiles(Step[] steps) {
     List<int[]> out = new ArrayList<>();
     for (Step s : steps) {
@@ -1065,6 +1072,7 @@ public class Bob_MapCamper extends IdleScript {
 
   private void addFarTile(List<int[]> out, int x, int z) {
     if (floorTiles(x, z) == Integer.MAX_VALUE || farTried.contains(key(x, z))) return;
+    if (x == px && z == pz) return;
     for (int[] t : out) {
       if (t[0] == x && t[1] == z) return;
     }
@@ -1138,35 +1146,26 @@ public class Bob_MapCamper extends IdleScript {
       if (s.dir == 1) return new int[] {x - 1, z, x, z, 0};
       return new int[] {x, z, x, z, 1};
     }
-    int count = controller.getObjectsCount();
-    int[] ids = controller.getObjectsIds();
-    int[] xs = controller.getObjectsX();
-    int[] zs = controller.getObjectsZ();
-    int[] dirs = (int[]) controller.getMudClientValue("gameObjectInstanceDir");
-    int localX = controller.removeOffsetX(x);
-    int localZ = controller.removeOffsetZ(z);
-    for (int i = 0; i < count; i++) {
-      if (xs[i] != localX || zs[i] != localZ) continue;
-      GameObjectDef def = EntityHandler.getObjectDef(ids[i]);
-      int dir = dirs[i];
-      int w = dir == 0 || dir == 4 ? def.getWidth() : def.getHeight();
-      int h = dir == 0 || dir == 4 ? def.getHeight() : def.getWidth();
-      if (def.getType() != 2 && def.getType() != 3) {
-        return new int[] {x, z, x + w - 1, z + h - 1, 1};
-      }
-      if (dir == 0) {
-        w++;
-        x--;
-      }
-      if (dir == 2) h++;
-      if (dir == 6) {
-        z--;
-        h++;
-      }
-      if (dir == 4) w++;
-      return new int[] {x, z, x + w - 1, z + h - 1, 0};
+    int i = objectIndex(x, z);
+    if (i == -1) return new int[] {x, z, x, z, 1};
+    GameObjectDef def = EntityHandler.getObjectDef(controller.getObjectsIds()[i]);
+    int dir = ((int[]) controller.getMudClientValue("gameObjectInstanceDir"))[i];
+    int w = dir == 0 || dir == 4 ? def.getWidth() : def.getHeight();
+    int h = dir == 0 || dir == 4 ? def.getHeight() : def.getWidth();
+    if (def.getType() != 2 && def.getType() != 3) {
+      return new int[] {x, z, x + w - 1, z + h - 1, 1};
     }
-    return new int[] {x, z, x, z, 1};
+    if (dir == 0) {
+      w++;
+      x--;
+    }
+    if (dir == 2) h++;
+    if (dir == 6) {
+      z--;
+      h++;
+    }
+    if (dir == 4) w++;
+    return new int[] {x, z, x + w - 1, z + h - 1, 0};
   }
 
   /*
@@ -1210,7 +1209,7 @@ public class Bob_MapCamper extends IdleScript {
       stepIndex = door;
       s = route[door];
     }
-    if (tick - furthestTick >= STEP_LOG_TICKS && tick - stallLogTick >= STEP_LOG_TICKS) {
+    if (tick - furthestTick > STEP_LOG_TICKS && tick - stallLogTick >= STEP_LOG_TICKS) {
       stallLogTick = tick;
       controller.log(
           "Route "
@@ -1228,7 +1227,8 @@ public class Bob_MapCamper extends IdleScript {
       walk(s.x, s.z);
       return;
     }
-    if (s.item != 0 && !carries(s.item)) {
+    // With the equipment tab a worn item has no inventory slot to use it from.
+    if (s.item != 0 && controller.getInventoryItemSlotIndex(s.item) == -1) {
       stop(
           "Route "
               + routeName()
@@ -1239,12 +1239,7 @@ public class Bob_MapCamper extends IdleScript {
       return;
     }
     status = "Crossing at " + s.x + "," + s.z;
-    // On Coleslaw a worn item is carried but has no inventory slot to use it from: it waits.
-    if (there(s)
-        && (s.item == 0 || controller.getInventoryItemSlotIndex(s.item) != -1)
-        && !approach(s)) {
-      click(s);
-    }
+    if (there(s) && !approach(s)) click(s);
   }
 
   private String routeName() {
@@ -1268,80 +1263,87 @@ public class Bob_MapCamper extends IdleScript {
   }
 
   private void click(Step s) {
+    int slot = s.item == 0 ? -1 : controller.getInventoryItemSlotIndex(s.item);
     switch (s.kind) {
       case DOOR:
-        clickWall(s.x, s.z, s.dir, 1);
-        break;
       case WALL:
-        clickWall(s.x, s.z, s.dir, s.cmd);
-        break;
       case CUT:
-        if (s.item == 0) {
-          clickWall(s.x, s.z, s.dir, 1);
-        } else {
-          useOnWall(s.x, s.z, s.dir, s.item);
-        }
-        break;
       case USEWALL:
-        useOnWall(s.x, s.z, s.dir, s.item);
-        break;
-      case USEOBJ:
-        controller.useItemIdOnObject(s.x, s.z, s.item);
+        useWall(s, slot != -1 ? OP_USE_WALL : s.cmd == 2 ? OP_WALL2 : OP_WALL1, slot);
         break;
       default:
-        if (s.cmd == 2) {
-          controller.atObject2(s.x, s.z);
-        } else {
-          controller.atObject(s.x, s.z);
-        }
-    }
-  }
-
-  private void clickWall(int x, int z, int dir, int cmd) {
-    if (controller.getWallObjectDirectionAtCoord(x, z) == dir) {
-      if (cmd == 2) {
-        controller.atWallObject2(x, z);
-      } else {
-        controller.atWallObject(x, z);
-      }
-      return;
-    }
-    wallPacket(cmd == 2 ? 127 : 14, x, z, dir, -1);
-  }
-
-  private void useOnWall(int x, int z, int dir, int itemId) {
-    int slot = controller.getInventoryItemSlotIndex(itemId);
-    if (controller.getWallObjectDirectionAtCoord(x, z) == dir) {
-      controller.useItemOnWall(x, z, slot);
-    } else {
-      wallPacket(161, x, z, dir, slot);
+        useObject(s, slot != -1 ? OP_USE_OBJ : s.cmd == 2 ? OP_OBJ2 : OP_OBJ1, slot);
     }
   }
 
   /*
-   * Another wall object on this tile comes first in the client's list, so the controller would act
-   * on that one: walk beside ours and send the packet for it, with the slot used when not -1.
+   * Walks to the step's wall as the stock client does, by its side, then sends the opcode for it,
+   * with the slot when not -1. The controller's wall clicks take the side of the tile's first wall
+   * object, which need not be this one.
    */
-  private void wallPacket(int opcode, int x, int z, int dir, int slot) {
-    int sideX = x;
-    int sideZ = z;
-    if (dir == 0 && pz < z) sideZ = z - 1;
-    if (dir == 1 && px < x) sideX = x - 1;
-    controller.walkToAsync(sideX, sideZ, 0);
+  private void useWall(Step s, int opcode, int slot) {
+    clientWalk("walkToWall", controller.removeOffsetX(s.x), controller.removeOffsetZ(s.z), s.dir);
     send(opcode);
-    controller.mud.packetHandler.getClientStream().bufferBits.putShort(x);
-    controller.mud.packetHandler.getClientStream().bufferBits.putShort(z);
-    controller.mud.packetHandler.getClientStream().bufferBits.putByte(dir);
-    if (slot != -1) controller.mud.packetHandler.getClientStream().bufferBits.putShort(slot);
-    controller.mud.packetHandler.getClientStream().finishPacket();
+    stream().bufferBits.putShort(s.x);
+    stream().bufferBits.putShort(s.z);
+    stream().bufferBits.putByte(s.dir);
+    if (slot != -1) stream().bufferBits.putShort(slot);
+    stream().finishPacket();
+  }
+
+  /*
+   * Walks to the step's object as the stock client does, by its size, turn and type, then sends
+   * the opcode for it, with the slot when not -1. The controller's object clicks walk by the
+   * player's direction from the object rather than the object's turn.
+   */
+  private void useObject(Step s, int opcode, int slot) {
+    int i = objectIndex(s.x, s.z);
+    if (i == -1) return;
+    int[] dirs = (int[]) controller.getMudClientValue("gameObjectInstanceDir");
+    int id = controller.getObjectsIds()[i];
+    clientWalk(
+        "walkToObject",
+        controller.removeOffsetX(s.x),
+        controller.removeOffsetZ(s.z),
+        dirs[i],
+        5126,
+        id);
+    send(opcode);
+    stream().bufferBits.putShort(s.x);
+    stream().bufferBits.putShort(s.z);
+    if (slot != -1) stream().bufferBits.putShort(slot);
+    stream().finishPacket();
+  }
+
+  /* Calls one of the client's walks for a click, which sends the path as the stock client does. */
+  private void clientWalk(String name, int... args) {
+    try {
+      Method walk = clientWalks.get(name);
+      if (walk == null) {
+        Class<?>[] types = new Class<?>[args.length];
+        for (int i = 0; i < args.length; i++) types[i] = int.class;
+        walk = controller.mud.getClass().getDeclaredMethod(name, types);
+        walk.setAccessible(true);
+        clientWalks.put(name, walk);
+      }
+      Object[] values = new Object[args.length];
+      for (int i = 0; i < args.length; i++) values[i] = args[i];
+      walk.invoke(controller.mud, values);
+    } catch (ReflectiveOperationException e) {
+      throw new IllegalStateException("client " + name + ": " + e, e);
+    }
+  }
+
+  private Network_Socket stream() {
+    return controller.mud.packetHandler.getClientStream();
   }
 
   /* Starts a packet once the client has sent the last one. */
   private void send(int opcode) {
-    while (controller.mud.packetHandler.getClientStream().hasFinishedPackets()) {
+    while (stream().hasFinishedPackets()) {
       controller.sleep(1);
     }
-    controller.mud.packetHandler.getClientStream().newPacket(opcode);
+    stream().newPacket(opcode);
   }
 
   private int wallIdAt(int x, int z, int dir) {
@@ -1359,14 +1361,19 @@ public class Bob_MapCamper extends IdleScript {
   }
 
   private int objectIdAt(int x, int z) {
+    int i = objectIndex(x, z);
+    return i == -1 ? -1 : controller.getObjectsIds()[i];
+  }
+
+  /* The object's index in the client's lists; -1 when the client has none on the tile. */
+  private int objectIndex(int x, int z) {
     int count = controller.getObjectsCount();
-    int[] ids = controller.getObjectsIds();
     int[] xs = controller.getObjectsX();
     int[] zs = controller.getObjectsZ();
     int localX = controller.removeOffsetX(x);
     int localZ = controller.removeOffsetZ(z);
     for (int i = 0; i < count; i++) {
-      if (xs[i] == localX && zs[i] == localZ) return ids[i];
+      if (xs[i] == localX && zs[i] == localZ) return i;
     }
     return -1;
   }
@@ -1404,10 +1411,10 @@ public class Bob_MapCamper extends IdleScript {
     status = "Looting";
     if (px != to[0] || pz != to[1]) controller.walkToAsync(to[0], to[1], 0);
     send(OP_TAKE);
-    controller.mud.packetHandler.getClientStream().bufferBits.putShort(xs[best]);
-    controller.mud.packetHandler.getClientStream().bufferBits.putShort(zs[best]);
-    controller.mud.packetHandler.getClientStream().bufferBits.putShort(ids[best]);
-    controller.mud.packetHandler.getClientStream().finishPacket();
+    stream().bufferBits.putShort(xs[best]);
+    stream().bufferBits.putShort(zs[best]);
+    stream().bufferBits.putShort(ids[best]);
+    stream().finishPacket();
     return true;
   }
 
@@ -1567,7 +1574,7 @@ public class Bob_MapCamper extends IdleScript {
    */
   private void sleepFirst() {
     if (sleepAt == -1 || controller.isSleeping() || controller.getFatigue() < sleepAt) return;
-    // Without the tick hook nothing stands in for a missing sleep hook: nothing would wake it.
+    // Without the socket hook nothing stands in for a missing sleep hook: nothing would wake it.
     if (noHook && (imageHook || fatigueHook)) {
       if (!noSleepLogged) controller.log("No sleep hook: not sleeping", "red");
       noSleepLogged = true;
@@ -1579,8 +1586,8 @@ public class Bob_MapCamper extends IdleScript {
   /* An attack with no walk of the client's own before it. */
   private void attackBare(int serverIndex) {
     send(OP_ATTACK_NPC);
-    controller.mud.packetHandler.getClientStream().bufferBits.putShort(serverIndex);
-    controller.mud.packetHandler.getClientStream().finishPacket();
+    stream().bufferBits.putShort(serverIndex);
+    stream().finishPacket();
   }
 
   /*
@@ -1615,8 +1622,6 @@ public class Bob_MapCamper extends IdleScript {
     if (!loaded(x1, z1) || !loaded(x2, z2)) return null;
     int baseX = controller.mud.getMidRegionBaseX();
     int baseZ = controller.mud.getMidRegionBaseZ();
-    int[] pathX = new int[8000];
-    int[] pathZ = new int[8000];
     try {
       int count =
           controller
@@ -1652,15 +1657,10 @@ public class Bob_MapCamper extends IdleScript {
     return null;
   }
 
-  private boolean carries(int id) {
-    return controller.isItemInInventory(id)
-        || (!controller.isAuthentic() && controller.isItemIdEquipped(id));
-  }
-
-  /* On Coleslaw a worn item leaves the inventory; on authentic worlds it stays there. */
+  /* With the equipment tab a worn item leaves the inventory; without it, it stays there. */
   private int carried(Carry c) {
     int count = controller.getInventoryItemCount(c.id);
-    if (!controller.isAuthentic() && controller.isItemIdEquipped(c.id)) count++;
+    if (Config.S_WANT_EQUIPMENT_TAB && controller.isItemIdEquipped(c.id)) count++;
     return count;
   }
 
@@ -1703,11 +1703,11 @@ public class Bob_MapCamper extends IdleScript {
 
   /*
    * Walks to the tile round the block NPCs in view, or, with no way round them, attacks the one in
-   * the way; else walks with the client's walking. True when it attacked.
+   * the way; else walks with the client's walking, when it reaches the tile. True when it attacked.
    */
   private boolean walk(int x, int z) {
     if (wayRound(x, z, x, z, false, true)) return attackedBlocker;
-    controller.walkToAsync(x, z, 0);
+    if (reaches(x, z)) controller.walkToAsync(x, z, 0);
     return false;
   }
 
@@ -1756,7 +1756,8 @@ public class Bob_MapCamper extends IdleScript {
     if (path == null) {
       int[] own = findPath(plain, startX, startZ, destX1, destZ1, destX2, destZ2, beside);
       if (own == null || own[0] == startX && own[1] == startZ) return false;
-      int index = blockerOn(px + Integer.signum(own[0] - startX), pz + Integer.signum(own[1] - startZ));
+      int index =
+          blockerOn(px + Integer.signum(own[0] - startX), pz + Integer.signum(own[1] - startZ));
       if (index == -1) return false;
       attackBare(index);
       attackedBlocker = true;
@@ -1767,27 +1768,14 @@ public class Bob_MapCamper extends IdleScript {
     // The turns from the first to the tile, at most 25 after the first, as the client sends them.
     int firstX = path[0] + minX + baseX;
     int firstZ = path[1] + minZ + baseZ;
-    while (controller.mud.packetHandler.getClientStream().hasFinishedPackets()) {
-      controller.sleep(1);
-    }
-    controller.mud.packetHandler.getClientStream().newPacket(OP_WALK);
-    controller.mud.packetHandler.getClientStream().bufferBits.putShort(firstX);
-    controller.mud.packetHandler.getClientStream().bufferBits.putShort(firstZ);
+    send(OP_WALK);
+    stream().bufferBits.putShort(firstX);
+    stream().bufferBits.putShort(firstZ);
     for (int i = 1; i < path.length / 2 && i <= 25; i++) {
-      controller
-          .mud
-          .packetHandler
-          .getClientStream()
-          .bufferBits
-          .putByte(path[2 * i] + minX + baseX - firstX);
-      controller
-          .mud
-          .packetHandler
-          .getClientStream()
-          .bufferBits
-          .putByte(path[2 * i + 1] + minZ + baseZ - firstZ);
+      stream().bufferBits.putByte(path[2 * i] + minX + baseX - firstX);
+      stream().bufferBits.putByte(path[2 * i + 1] + minZ + baseZ - firstZ);
     }
-    controller.mud.packetHandler.getClientStream().finishPacket();
+    stream().finishPacket();
     return true;
   }
 
@@ -2248,7 +2236,6 @@ public class Bob_MapCamper extends IdleScript {
     campRoute = null;
     Map<String, Integer> seen = new HashMap<>();
     List<Step> steps = null;
-    List<Step> all = new ArrayList<>();
     String routeName = null;
     int routeLine = 0;
     int last = 0;
@@ -2271,7 +2258,6 @@ public class Bob_MapCamper extends IdleScript {
           } else {
             campRoute = array;
           }
-          all.addAll(steps);
           steps = null;
         } else {
           steps.add(step(w, line, text));
@@ -2388,12 +2374,14 @@ public class Bob_MapCamper extends IdleScript {
     if (!seen.containsKey("bank")) throw error(last, "no bank line");
     if (bankRoute == null) throw error(last, "no route bank line");
     if (campRoute == null) throw error(last, "no route camp line");
-    for (Step s : all) {
-      if (s.item == 0) continue;
-      Carry c = carry(s.item);
-      if (c == null || c.min < 1) {
-        throw error(
-            s.line, KINDS[s.kind] + " needs an item line for " + s.item + " with min 1 or more");
+    for (Step[] route : new Step[][] {bankRoute, campRoute}) {
+      for (Step s : route) {
+        if (s.item == 0) continue;
+        Carry c = carry(s.item);
+        if (c == null || c.min < 1) {
+          throw error(
+              s.line, KINDS[s.kind] + " needs an item line for " + s.item + " with min 1 or more");
+        }
       }
     }
     Carry bag = carry(SLEEPING_BAG);

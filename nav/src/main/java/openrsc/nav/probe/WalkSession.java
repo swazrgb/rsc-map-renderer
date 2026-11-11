@@ -103,8 +103,12 @@ public final class WalkSession {
     /** Takes a transport from the tile stood on; the bot comes out at {@code landing}. */
     public record Hop(NavProbe.ProbeStep step, Point landing) implements Move {}
 
-    /** Banks here; the session has already applied the stop to what it holds. */
-    public record Bank(NavProbe.ProbeStep step) implements Move {}
+    /**
+     * Banks here; the session has already applied the stop to what it holds. {@code notes} are the counts of bank
+     * notes the stop leaves with, for each item whose notes it changes, as the step's withdraw and deposit are of the
+     * items themselves.
+     */
+    public record Bank(NavProbe.ProbeStep step, Map<Integer, Long> notes) implements Move {}
 
     /** Equips {@code item}, or takes it off when not {@code on}. */
     public record Wear(int item, boolean on) implements Move {}
@@ -147,6 +151,7 @@ public final class WalkSession {
 
     private Inventory pack;
     private @Nullable List<Point> lastPath;
+    private @Nullable Route lastRoute;
 
     private @Nullable Rect lastTarget;
 
@@ -208,6 +213,11 @@ public final class WalkSession {
         return lastPath;
     }
 
+    /** The route the last tick planned, from the tile stood on then; {@code null} before the first, or when it had none. */
+    public @Nullable Route route() {
+        return lastRoute;
+    }
+
     public int combatLevel() {
         return combatLevel;
     }
@@ -244,6 +254,7 @@ public final class WalkSession {
             hopLanded = null;
         }
         if (pos.equals(goal)) {
+            lastRoute = null;
             return new Arrived();
         }
         AccountFacts facts = base.at(pos.x(), pos.y());
@@ -265,6 +276,7 @@ public final class WalkSession {
         boolean wasFirst = first;
         first = false;
         if (!(r instanceof PlanResult.Planned p)) {
+            lastRoute = null;
             return new Stuck("no route", wasFirst);
         }
         yield.roll(v.npcs(), List.of());
@@ -279,6 +291,7 @@ public final class WalkSession {
             lastPath = null;
         }
         Route route = p.route();
+        lastRoute = route;
         List<Route.Step> steps = route.steps();
         pack = steps.get(0).pack();
         if (steps.get(0) instanceof Route.BankStop stop && stopsMade.contains(NavProbe.stopKey(stop))) {
@@ -343,21 +356,25 @@ public final class WalkSession {
                 stop.manifest().withdraw().forEach((id, n) -> withdraw.put(id.id(), n));
                 Map<Integer, Long> deposit = new LinkedHashMap<>();
                 stop.manifest().deposit().forEach((id, n) -> deposit.put(id.id(), n));
+                Map<Integer, Long> notes = new LinkedHashMap<>();
+                stop.manifest().notes().forEach((id, n) -> notes.put(id.id(), n));
                 base = NavProbe.settled(base, stop);
                 stopsMade.add(NavProbe.stopKey(stop));
                 pack = stop.leaving();
-                return new Bank(new NavProbe.ProbeStep(
-                        pos.x(),
-                        pos.y(),
-                        null,
-                        null,
-                        null,
-                        true,
-                        withdraw,
-                        deposit,
-                        Set.of(),
-                        NavProbe.reasons(route, stop, loadout, byName),
-                        stop.leaving()));
+                return new Bank(
+                        new NavProbe.ProbeStep(
+                                pos.x(),
+                                pos.y(),
+                                null,
+                                null,
+                                null,
+                                true,
+                                withdraw,
+                                deposit,
+                                Set.of(),
+                                NavProbe.reasons(route, stop, loadout, byName),
+                                stop.leaving()),
+                        notes);
             }
             target = Rect.of(at, at);
         } else {
@@ -491,7 +508,7 @@ public final class WalkSession {
             unsent = t == null ? "an unknown crossing" : "a scripted crossing";
             return;
         }
-        TransportClick.Click c = TransportClick.of(d.engageSpec(), holding, pf.serverData(), v.npcs());
+        TransportClick.Click c = TransportClick.of(d.engageSpec(), holding, pf.serverData(), v.npcs(), pos);
         if (c.packet() == null) {
             unsent = c.missing();
             return;

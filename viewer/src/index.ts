@@ -23,14 +23,28 @@ export type {Observer, WorldEntities} from "./api";
 export {REQUIRED_BAKE_VERSION, fetchWorldMeshManifest} from "./api";
 export {RSC_BLACK, randomRscColor, stripRscMarkup, tokenizeRscMarkup} from "./rscMarkup";
 export {RSC_TAB_ALL, RSC_TAB_LABELS, RSC_TAB_PRIVATE, RSC_TYPE_COLOUR, rscTabForType} from "./rscChrome";
-export {PlannerPanel, freshState, maxedState, skillLabel, toPlanRequest} from "./planner/PlannerPanel";
-export type {PlannerCopySource, PlannerRequestState} from "./planner/PlannerPanel";
+export {
+    DEFAULT_POLICY,
+    PlannerPanel,
+    freshState,
+    maxedState,
+    samePolicy,
+    skillLabel,
+    toPlanRequest,
+} from "./planner/PlannerPanel";
+export type {PlannerBot, PlannerCopySource, PlannerRequestState} from "./planner/PlannerPanel";
 export {LoadoutTable, itemRows, loadoutOf, rowKey} from "./planner/LoadoutTable";
 export type {LoadoutRows, PlannerRow} from "./planner/LoadoutTable";
 export * from "./planner/plannerModel";
 export type * from "./planner/plannerApi";
 export {latestSlot} from "./planner/latestSlot";
 export {usePlannerPreview} from "./planner/usePlannerPreview";
+export {usePlannerSession, useSettledTile} from "./planner/usePlannerSession";
+export type {PlannerSessionBot} from "./planner/usePlannerSession";
+export {useDefaultPolicy} from "./planner/useDefaultPolicy";
+export {stateFromAccount} from "./planner/accountState";
+export type {PlannerAccountView} from "./planner/accountState";
+export {fetchPlannerInputs, httpPlannerHost, planRoute} from "./planner/httpPlannerHost";
 export {usePlannerUrlSync} from "./planner/plannerUrl";
 export {routeEndsOverlay} from "./planner/routeEndsOverlay";
 export {ItemIcon, getItemAtlas} from "./ItemIcon";
@@ -46,6 +60,7 @@ export type {
     RoutePoint,
     TrailPoint,
     InteractAction,
+    UsedItem,
     SceneryPlacement,
     SceneryAtlasIndex,
     SceneryAtlasEntry,

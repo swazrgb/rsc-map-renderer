@@ -1,0 +1,32 @@
+# The session proxy's settings. A command-line option of the same name, such as --web for web, overrides one here.
+
+# The world: uranium or coleslaw. The proxy runs only on these two, which allow bots.
+world:
+
+# Where clients connect: a port, or host:port.
+listen: 127.0.0.1:43600
+
+# Where http://host:port/sessions lists the sessions, or off.
+status: 127.0.0.1:43601
+
+# How many seconds a session stays logged in after its last client leaves; 0 keeps it until the server ends it.
+hold: 30
+
+# Where the live map is served, or off. The map has no login: 0.0.0.0:43602 lets everyone on your network see and
+# play every account.
+web: 127.0.0.1:43602
+
+# Names the live map also answers to, besides localhost and IP addresses: those a reverse proxy in front serves it
+# under, such as map.example.com, separated by commas. Anyone who reaches the map by one sees and plays every account.
+hosts:
+
+# The OpenRSC client's Cache folder, which the 3D world is built from. Empty: the one in the OpenRSC checkout.
+# Write a path as it is, without quotes, as in clientCache: C:\Users\me\OpenRSC\Cache
+clientCache:
+
+# Where the 3D world is built to, and kept between runs.
+data: data
+
+# The browser game client's folder, which the live map opens on a bot to play it. Empty: the client folder here,
+# as the release unpacks it, if there is one.
+client:

@@ -50,7 +50,7 @@ export function generate(client: Client, recipe: string): Generated {
                 camper: {name: "Bob_MapCamper.java", text: idleCamper},
                 paste: recipe,
                 steps: [
-                    "Once: save `Bob_MapCamper.java` in `idlersc/app/src/main/java/scripting/idlescript/` and rebuild IdleRSC (`./gradlew build`, or `gradlew.bat build` on Windows).",
+                    "Once: pull the latest IdleRSC, save `Bob_MapCamper.java` in `idlersc/app/src/main/java/scripting/idlescript/` and rebuild IdleRSC (`./gradlew build`, or `gradlew.bat build` on Windows).",
                     "Start `Bob_MapCamper`, paste the recipe into its window and press Start. It keeps the recipe for next time.",
                 ],
             };

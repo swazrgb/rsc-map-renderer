@@ -35,7 +35,7 @@ import org.junit.jupiter.api.Test;
 
 class LoadoutRepairTest {
 
-    private static final Point LUMBRIDGE = Point.of(122, 647);
+    private static final Point MUDSKIPPER_POINT = Point.of(280, 700);
     private static final Point VARROCK = Point.of(120, 504);
     private static final NavPolicy SPELLS_ON =
             new NavPolicy(NavPolicy.DangerAvoidance.OFF, true, false, Map.of(), false);
@@ -66,7 +66,7 @@ class LoadoutRepairTest {
                 Bank.empty(),
                 stats.snapshot(),
                 new MutableQuests().snapshot(),
-                LUMBRIDGE);
+                MUDSKIPPER_POINT);
         MutableInventory pack = new MutableInventory();
         List<LoadoutSpec.Requirement> bands = new ArrayList<>();
         int slot = 0;
@@ -76,7 +76,7 @@ class LoadoutRepairTest {
             bands.add(new LoadoutSpec.Item(c.item(), c.count(), c.count(), c.count(), false));
         }
         mage = new AccountFacts.Snapshot(
-                env, pack.snapshot(), Bank.empty(), stats.snapshot(), new MutableQuests().snapshot(), LUMBRIDGE);
+                env, pack.snapshot(), Bank.empty(), stats.snapshot(), new MutableQuests().snapshot(), MUDSKIPPER_POINT);
         keepTheRunes = new LoadoutSpec(bands);
     }
 
@@ -305,7 +305,7 @@ class LoadoutRepairTest {
     }
 
     private static Route planned(LoadoutSpec loadout, NavPolicy policy) {
-        PlanResult r = pf.nav().plan(new PlanRequest(mage, LUMBRIDGE, VARROCK, loadout, policy));
+        PlanResult r = pf.nav().plan(new PlanRequest(mage, MUDSKIPPER_POINT, VARROCK, loadout, policy));
         return assertInstanceOf(PlanResult.Planned.class, r, "no route under " + loadout)
                 .route();
     }

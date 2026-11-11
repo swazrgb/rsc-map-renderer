@@ -40,6 +40,7 @@ public enum ItemTeleports implements TransportDef {
                     ItemId.AGILITY_CAPE.id(),
                     to(591, 765),
                     60,
+                    0,
                     when(Prereq.fact(SpellTransport.NOT_HOLDING_ANA)),
                     canKillAt(1),
                     note("soft roll: trips 2/255 of uses (ifrandom(2)) for 1 damage and stays put")))),
@@ -54,6 +55,7 @@ public enum ItemTeleports implements TransportDef {
                     ItemId.CRAFTING_CAPE.id(),
                     to(347, 599),
                     60,
+                    0,
                     when(Prereq.all(
                             Prereq.fact(SpellTransport.NOT_HOLDING_ANA),
                             Prereq.fact(SpellTransport.NOT_CARRYING_PLAGUE_SAMPLE)))))),
@@ -70,6 +72,7 @@ public enum ItemTeleports implements TransportDef {
                     ItemId.FISHING_CAPE.id(),
                     to(586, 522),
                     60,
+                    0,
                     when(Prereq.all(
                             Prereq.fact(SpellTransport.NOT_HOLDING_ANA),
                             Prereq.fact(SpellTransport.NOT_CARRYING_PLAGUE_SAMPLE),

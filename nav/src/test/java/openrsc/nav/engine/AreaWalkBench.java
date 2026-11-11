@@ -27,7 +27,7 @@ class AreaWalkBench {
     @Test
     void leadPerTick() {
         ServerData env = RealDefs.serverData();
-        Pathfinder pf = RealDefs.cachedPathfinder();
+        Pathfinder pf = RealDefs.pathfinder();
         List<Point> path = pathInto(env.collisionMap(), START, DRAYNOR);
         AccountFacts facts = NavProbe.onFootFacts(env, START.x(), START.y());
         NavPolicy danger = NavPolicy.DEFAULT;

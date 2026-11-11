@@ -8,7 +8,7 @@ import tseslint from "typescript-eslint";
 
 // Shared with any package that compiles the viewer from source, so they lint it alike.
 export const shared = defineConfig(
-    {ignores: ["dist/", "node/", "node_modules/"]},
+    {ignores: ["dist/", "node/", "node_modules/", "target/"]},
     {
         linterOptions: {
             reportUnusedDisableDirectives: "error",

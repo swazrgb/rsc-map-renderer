@@ -36,7 +36,9 @@ import openrsc.bot.api.quest.QuestId;
 import openrsc.bot.api.stats.Skill;
 import openrsc.gamedata.ServerData;
 import openrsc.gamedata.ServerRules;
+import openrsc.gamedata.WorldProfile;
 import openrsc.gamedata.data.ItemId;
+import openrsc.gamedata.data.SceneryId;
 import openrsc.gamedata.geometry.Point;
 import openrsc.nav.Transport;
 import openrsc.nav.eligibility.EligibilityInputs.Fact;
@@ -573,6 +575,26 @@ public enum QuestObstacles implements TransportDef {
                                     questComplete(QuestId.UNDERGROUND_PASS))),
                             xAtMost(792),
                             canKillAt(5)))))),
+
+    /**
+     * The portal under Death's old bed in his Varrock house, once Mice to Meet You has reached his
+     * farm. The server serves this one bed only with {@code death_island} on and the event off; while
+     * the event runs a coffin stands on its tile instead.
+     *
+     * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/misc/Sleeping.java#L17">Sleeping.onOpLoc</a>
+     * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/custom/minigames/micetomeetyou/Death.java#L507">Death.bedTeleport</a>
+     * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/database/WorldPopulator.java#L227">WorldPopulator.loadCustomLocs</a>
+     */
+    DEATHS_BED_PORTAL_TO_DEATH_ISLAND(onlyIn(
+            world -> world.has(WorldProfile.Feature.DEATH_ISLAND) && !world.has(WorldProfile.Feature.MICE_TO_MEET_YOU),
+            obstacle(
+                    SceneryId.BED_WHITE.id(),
+                    116,
+                    534,
+                    to(975, 169),
+                    QuestObstacles.DEATHS_BED_COST,
+                    when(Prereq.all(NpcRoutes.deathsFarmReached(), cache(NpcRoutes.MICE_EVENT_OFF))),
+                    answers("yes")))),
     ;
 
     /**
@@ -595,6 +617,14 @@ public enum QuestObstacles implements TransportDef {
     }
 
     private static final int COST = 30;
+
+    /**
+     * Two messages, each followed by a 3-tick delay, then the Yes/No menu: about 8 ticks from the click
+     * to the landing.
+     *
+     * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/custom/minigames/micetomeetyou/Death.java#L513">Death.bedTeleport</a>
+     */
+    private static final int DEATHS_BED_COST = 80;
 
     @SuppressWarnings("ImmutableEnumChecker")
     private final TransportSpec spec;

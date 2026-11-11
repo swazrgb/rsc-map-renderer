@@ -4,6 +4,8 @@ import java.util.Set;
 import openrsc.bot.api.ExtendedOnly;
 import openrsc.bot.api.Extension;
 import openrsc.bot.api.Packet;
+import openrsc.bot.api.SentNotes;
+import openrsc.bot.api.SessionTick;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -17,6 +19,10 @@ import org.jetbrains.annotations.NotNull;
  */
 @ExtendedOnly({Extension.EQUIPMENT_TAB, Extension.BANK_PRESETS, Extension.CUSTOM_BANKS})
 public record BankPresetSavePacket(int presetSlot) implements Packet {
+    @Override
+    public void noteSent(@NotNull SentNotes live, @NotNull SessionTick now) {
+        live.notePresetSaved(presetSlot);
+    }
 
     @Override
     public @NotNull Set<Extension> requires() {

@@ -238,35 +238,41 @@ interface ItemMatch {
     note: string;
 }
 
-// Items a gate reads rank first, then any item at all, since a loadout may want an item no gate
-// reads. `filter={null}`: this ranking is the whole filter.
+// Suggested items rank first, then items a gate reads, then any item at all, since a loadout may want
+// an item no gate reads. `filter={null}`: this ranking is the whole filter.
 function ItemSearch(props: {
     inputs: PlannerInputs | null;
     itemDefs: ItemNames | null;
+    suggest?: ReadonlyMap<number, string>;
     search: string;
     onSearch: (s: string) => void;
     onAdd: (row: PlannerRow) => void;
 }) {
-    const {inputs, itemDefs, search} = props;
+    const {inputs, itemDefs, suggest, search} = props;
     const matches = useMemo(() => {
+        const nameOf = (id: number) => itemDefs?.[String(id)] ?? `item#${id}`;
+        const suggested: ItemMatch[] = suggest
+            ? searchItems(
+                  [...suggest.keys()].map((id) => [id, nameOf(id)] as const),
+                  search,
+                  12,
+              ).map((h) => ({row: {kind: "item", id: h.id}, label: h.name, note: suggest.get(h.id) ?? ""}))
+            : [];
         const gates = new Map((inputs?.items ?? []).map((i) => [i.id, i]));
         const gated: ItemMatch[] = searchItems(
             [...gates.values()].map((i) => [i.id, i.name] as const),
             search,
-            12,
-        ).map((h) => ({
-            row: {kind: "item", id: h.id},
-            label: h.name,
-            note: `${gates.get(h.id)?.transports ?? 0} transports`,
-        }));
+            12 - suggested.length,
+            (id) => !suggest?.has(id),
+        ).map((h) => ({row: {kind: "item", id: h.id}, label: h.name, note: ""}));
         const rest: ItemMatch[] = searchItems(
             itemEntries(itemDefs ?? {}),
             search,
-            12 - gated.length,
-            (id) => !gates.has(id),
-        ).map((h) => ({row: {kind: "item", id: h.id}, label: h.name, note: "for a loadout"}));
-        return [...gated, ...rest];
-    }, [inputs, itemDefs, search]);
+            12 - suggested.length - gated.length,
+            (id) => !gates.has(id) && !suggest?.has(id),
+        ).map((h) => ({row: {kind: "item", id: h.id}, label: h.name, note: ""}));
+        return [...suggested, ...gated, ...rest];
+    }, [inputs, itemDefs, suggest, search]);
 
     return (
         <div className="planner-search">
@@ -296,7 +302,7 @@ function ItemSearch(props: {
                                         className="planner-match"
                                         onClick={() => props.onAdd(m.row)}
                                     >
-                                        {m.label} <em>{m.note}</em>
+                                        {m.label} {m.note && <em>{m.note}</em>}
                                     </Autocomplete.Item>
                                 )}
                             </Autocomplete.List>
@@ -316,6 +322,11 @@ export interface LoadoutRows {
     rows: PlannerRow[];
     arrive: Record<string, number>;
     equip: Record<string, boolean | undefined>;
+}
+
+/** A loadout of rows, keeping what they do not name (`keepRest`) or banking it on the way. */
+export interface Loadout extends LoadoutRows {
+    keepRest: boolean;
 }
 
 /**
@@ -342,21 +353,24 @@ function loadoutWants(state: LoadoutRows): PlanWant[] {
     return wants;
 }
 
-/** The rows as a request's loadout. Whatever the rows do not name is banked on the way. */
-export function loadoutOf(state: LoadoutRows): PlanLoadoutInput {
+/** The rows as a request's loadout. Whatever the rows do not name is banked on the way, unless `keepRest`. */
+export function loadoutOf(state: LoadoutRows, keepRest = false): PlanLoadoutInput {
     return {
-        keepEverythingElse: false,
+        keepEverythingElse: keepRest,
         bankWhenFull: false,
         wants: loadoutWants(state),
     };
 }
 
-/** An extra amount column before arrive, such as the account's pack or bank. */
+/**
+ * An extra amount column before arrive, such as the account's pack or bank. Without `onChange` it only shows its
+ * value, a null value as unknown.
+ */
 interface LoadoutColumn {
     label: string;
     title: string;
-    value: (key: string) => number;
-    onChange: (key: string, n: number) => void;
+    value: (key: string) => number | null;
+    onChange?: (key: string, n: number) => void;
 }
 
 /**
@@ -375,6 +389,8 @@ export interface LoadoutTableProps<S extends LoadoutRows> {
     blocked?: ReadonlySet<string>;
     onAdd?: (row: PlannerRow) => Partial<S>;
     onFocus?: (tile: {x: number; z: number}) => void;
+    /** Items the search offers first, with the note each shows, such as the amount banked. */
+    suggest?: ReadonlyMap<number, string>;
 }
 
 /** The items table: name with info tip, the extra columns, arrive and wear, and a search to add a row. */
@@ -429,9 +445,17 @@ export function LoadoutTable<S extends LoadoutRows>(props: LoadoutTableProps<S>)
                             )}
                             {label} {info && <Info title={info.title}>{info.body}</Info>}
                         </span>
-                        {columns.map((c) => (
-                            <Amount key={c.label} value={c.value(key)} onChange={(n) => c.onChange(key, n)} />
-                        ))}
+                        {columns.map((c) => {
+                            const value = c.value(key);
+                            const change = c.onChange;
+                            return change ? (
+                                <Amount key={c.label} value={value ?? 0} onChange={(n) => change(key, n)} />
+                            ) : (
+                                <span key={c.label} className="planner-amount">
+                                    {value ?? "—"}
+                                </span>
+                            );
+                        })}
                         <ArriveAmount
                             value={state.arrive[key] ?? 0}
                             onChange={(n) => onChange({arrive: {...state.arrive, [key]: n}} as Partial<S>)}
@@ -450,6 +474,7 @@ export function LoadoutTable<S extends LoadoutRows>(props: LoadoutTableProps<S>)
             <ItemSearch
                 inputs={inputs}
                 itemDefs={itemDefs}
+                suggest={props.suggest}
                 search={search}
                 onSearch={setSearch}
                 onAdd={(row) => {

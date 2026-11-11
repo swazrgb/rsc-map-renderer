@@ -57,7 +57,10 @@ import openrsc.gamedata.defs.NpcDef;
  * @param kbdRareDropTable whether a King Black Dragon kill also rolls the custom rare table: the
  *     server rolls it with {@code custom_sprites} on and {@code want_openpk_points} off, and builds it
  *     only with {@code want_custom_quests}
+ * @param aggroRange {@code aggro_range}: an aggressive NPC attacks a player within this Chebyshev
+ *     distance, in tiles, unless the NPC's id sets its own
  * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/ServerConfiguration.java#L376">ServerConfiguration.initConfig</a>
+ * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/entity/npc/NpcBehavior.java#L51-L63">NpcBehavior.NpcBehavior</a>
  * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/world/World.java#L147">World.World</a>
  * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/net/rsc/handlers/AttackHandler.java#L103">AttackHandler.process</a>
  * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/entity/npc/Npc.java#L819">Npc.remove</a>
@@ -107,7 +110,8 @@ public record ServerRules(
         boolean strictPoisonedSpearCheck,
         boolean formFittingChainmail,
         boolean combatOdyssey,
-        boolean kbdRareDropTable) {
+        boolean kbdRareDropTable,
+        int aggroRange) {
 
     /** Bank slots on a members world without {@code want_custom_banks}. */
     public static final int MEMBERS_BANK_CAPACITY = 192;
@@ -238,7 +242,8 @@ public record ServerRules(
                 conf.bool("want_combat_odyssey", false),
                 conf.bool("custom_sprites", false)
                         && !conf.bool("want_openpk_points", false)
-                        && conf.bool("want_custom_quests", false));
+                        && conf.bool("want_custom_quests", false),
+                conf.integer("aggro_range", 1));
     }
 
     // The server applies a ceiling only when it is >= 0.

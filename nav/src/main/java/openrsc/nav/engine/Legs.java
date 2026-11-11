@@ -1,16 +1,12 @@
 package openrsc.nav.engine;
 
-import java.lang.foreign.MemorySegment;
-import java.lang.foreign.ValueLayout;
 import java.util.Arrays;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.Supplier;
 import openrsc.gamedata.world.CollisionMap;
 import openrsc.nav.cache.NavCache;
 import openrsc.nav.cache.NavCacheStats;
 import openrsc.nav.cache.NavCaches;
-import openrsc.nav.cache.NavCodec;
 import openrsc.nav.cache.NavStore;
 
 /**
@@ -33,9 +29,6 @@ final class Legs {
      * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/WalkingQueue.java#L79">WalkingQueue.processNextMovement</a>
      */
     static final int STEP_COST = 10;
-
-    /** Bumped when a change here can change what a persisted leg plane holds: sweeps, layout, codec. */
-    static final int PLANE_VERSION = 2;
 
     /** One cluster's walks in one direction under one danger view, for every tile and every node. */
     static final class ClusterLegs {
@@ -140,13 +133,11 @@ final class Legs {
 
     private final AtomicLong sweeps = new AtomicLong();
 
-    /** {@code stamp} is what a persisted plane is computed from; only a store that keeps files asks for it. */
-    Legs(CollisionMap map, ClusterGraph graph, NavCaches caches, Supplier<byte[]> stamp) {
+    Legs(CollisionMap map, ClusterGraph graph, NavCaches caches) {
 
         this.graph = graph;
         this.w = CollisionMap.WIDTH;
-        this.clusterCache = caches.<ClusterKey, ClusterLegs>persisted(
-                NavStore.CLUSTER_LEGS, ClusterLegs::bytes, new PlaneCodec(stamp));
+        this.clusterCache = caches.weighed(NavStore.CLUSTER_LEGS, ClusterLegs::bytes);
         this.retains = caches.retains();
     }
 
@@ -591,69 +582,5 @@ final class Legs {
         return Arrays.copyOf(heap, Math.max(heap.length * 2, needed));
     }
 
-    private record ClusterKey(int cluster, boolean toNodes, int dangerSig) {}
-
-    /**
-     * A plane as a store's file keeps it. The key is 9 bytes: cluster, direction, danger view. The value
-     * is a 16-byte header (xMin, yMin, nodeCount, stride) and then the cells, read back in place.
-     */
-    private record PlaneCodec(Supplier<byte[]> stampSource) implements NavCodec<ClusterKey, ClusterLegs> {
-
-        private static final long HEADER = 16;
-
-        @Override
-        public byte[] stamp() {
-            return stampSource.get();
-        }
-
-        @Override
-        public int keyBytes(ClusterKey key) {
-            return 9;
-        }
-
-        @Override
-        public void writeKey(ClusterKey key, MemorySegment into) {
-            into.set(LegCells.Mapped.INT, 0, key.cluster());
-            into.set(ValueLayout.JAVA_BYTE, 4, (byte) (key.toNodes() ? 1 : 0));
-            into.set(LegCells.Mapped.INT, 5, key.dangerSig());
-        }
-
-        @Override
-        public ClusterKey readKey(MemorySegment from) {
-            return new ClusterKey(
-                    from.get(LegCells.Mapped.INT, 0),
-                    from.get(ValueLayout.JAVA_BYTE, 4) != 0,
-                    from.get(LegCells.Mapped.INT, 5));
-        }
-
-        @Override
-        public long valueBytes(ClusterLegs value) {
-            return HEADER + value.cells.byteSize();
-        }
-
-        @Override
-        public void writeValue(ClusterLegs value, MemorySegment into) {
-            into.set(LegCells.Mapped.INT, 0, value.xMin);
-            into.set(LegCells.Mapped.INT, 4, value.yMin);
-            into.set(LegCells.Mapped.INT, 8, value.nodeCount);
-            into.set(LegCells.Mapped.INT, 12, value.stride);
-            MemorySegment cells =
-                    switch (value.cells) {
-                        case LegCells.OnHeap heap -> MemorySegment.ofArray(heap.values);
-                        case LegCells.Mapped mapped -> mapped.segment;
-                    };
-            MemorySegment.copy(cells, 0, into, HEADER, cells.byteSize());
-        }
-
-        @Override
-        public ClusterLegs readValue(MemorySegment from) {
-            ValueLayout.OfInt i = LegCells.Mapped.INT;
-            return new ClusterLegs(
-                    from.get(i, 0),
-                    from.get(i, 4),
-                    from.get(i, 8),
-                    new LegCells.Mapped(from.asSlice(HEADER)),
-                    from.get(i, 12));
-        }
-    }
+    record ClusterKey(int cluster, boolean toNodes, int dangerSig) {}
 }

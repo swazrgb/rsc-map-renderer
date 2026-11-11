@@ -16,4 +16,6 @@ map-render/
 target-intellij/
 .claude
 
-nav-bench/scratch
+
+/session-proxy.yaml
+/data/

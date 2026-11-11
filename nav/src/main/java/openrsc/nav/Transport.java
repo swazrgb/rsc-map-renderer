@@ -158,6 +158,15 @@ public interface Transport {
     int cost();
 
     /**
+     * The weight one use adds beyond {@link #cost()}, in deci-ticks: what it spends, so a route takes
+     * it only to save that much walking. Never part of a route's reported time. 0, the default, for
+     * one that spends nothing; a negative price counts as 0.
+     */
+    default int price() {
+        return 0;
+    }
+
+    /**
      * The id routes name it by: for a registry transport, its constant, or {@code CONSTANT#arm} when
      * the constant has more than one arm.
      */

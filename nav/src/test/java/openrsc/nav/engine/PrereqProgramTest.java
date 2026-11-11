@@ -8,19 +8,11 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.SplittableRandom;
-import openrsc.bot.api.container.BankSlot;
-import openrsc.bot.api.container.InventorySlot;
-import openrsc.bot.api.container.MutableBank;
-import openrsc.bot.api.container.MutableInventory;
 import openrsc.bot.api.eligibility.AccountFacts;
-import openrsc.bot.api.quest.MutableQuests;
-import openrsc.bot.api.stats.MutableStats;
-import openrsc.bot.api.stats.Skill;
 import openrsc.gamedata.ServerData;
-import openrsc.gamedata.data.ItemId;
-import openrsc.gamedata.geometry.Point;
 import openrsc.nav.NavPolicy;
 import openrsc.nav.Pathfinder;
+import openrsc.nav.RandomAccounts;
 import openrsc.nav.RealDefs;
 import openrsc.nav.Transport;
 import openrsc.nav.eligibility.EligibilityInputs.Fact;
@@ -58,7 +50,8 @@ class PrereqProgramTest {
         int passedCarried = 0;
         int passedBanked = 0;
         for (int a = 0; a < 400; a++) {
-            RouteContext ctx = new RouteContext(account(env, rnd, gateItems, gateQuests), NavPolicy.DEFAULT, env);
+            RouteContext ctx =
+                    new RouteContext(RandomAccounts.of(env, rnd, gateItems, gateQuests), NavPolicy.DEFAULT, env);
             long[] carried = new long[(facts.length + 63) >>> 6];
             for (int i = 0; i < facts.length; i++) {
                 if (facts[i].test(ctx)) {
@@ -119,8 +112,8 @@ class PrereqProgramTest {
         List<String> disagreements = new ArrayList<>();
         int packAnswers = 0;
         for (int a = 0; a < 400; a++) {
-            AccountFacts account = account(env, rnd, gateItems, gateQuests);
-            AccountFacts other = account(env, rnd, gateItems, gateQuests);
+            AccountFacts account = RandomAccounts.of(env, rnd, gateItems, gateQuests);
+            AccountFacts other = RandomAccounts.of(env, rnd, gateItems, gateQuests);
             RouteContext ctx = new RouteContext(account, NavPolicy.DEFAULT, env);
             RouteContext repacked = ctx.withAccount(account.withInventory(other.inventory()));
             for (Fact f : facts) {
@@ -137,45 +130,5 @@ class PrereqProgramTest {
                 disagreements.subList(0, Math.min(10, disagreements.size())),
                 disagreements.size() + " disagreements");
         assertTrue(packAnswers > 0, "no pack ever changed an answer — the check was not exercised");
-    }
-
-    static AccountFacts account(ServerData env, SplittableRandom rnd, int[] gateItems, int[] gateQuests) {
-        MutableStats stats = new MutableStats();
-        for (Skill sk : Skill.values()) {
-            int level = 1 + rnd.nextInt(99);
-            stats.setSkill(sk.ordinal(), level, level, 0);
-        }
-        MutableQuests quests = new MutableQuests();
-        for (int q : gateQuests) {
-            switch (rnd.nextInt(4)) {
-                case 1 -> quests.setStage(q, 1 + rnd.nextInt(9));
-                case 2 -> quests.setStage(q, -1);
-                default -> {}
-            }
-        }
-        MutableInventory inv = new MutableInventory();
-        int slot = 0;
-        inv.setSlot(slot, new InventorySlot(slot, ItemId.COINS.id(), rnd.nextInt(200), false));
-        slot++;
-        for (int id : gateItems) {
-            if (slot < 30 && rnd.nextInt(8) == 0) {
-                int amount = env.isStackable(id) ? 1 + rnd.nextInt(60) : 1;
-                inv.setSlot(slot, new InventorySlot(slot, id, amount, rnd.nextInt(3) == 0));
-                slot++;
-            }
-        }
-        MutableBank bank = new MutableBank();
-        int b = 0;
-        bank.setSlot(b, new BankSlot(b, ItemId.COINS, rnd.nextInt(3000)));
-        b++;
-        for (int id : gateItems) {
-            ItemId known = ItemId.getById(id);
-            if (known != null && rnd.nextInt(3) == 0) {
-                bank.setSlot(b, new BankSlot(b, known, env.isStackable(id) ? 1 + rnd.nextInt(300) : 1));
-                b++;
-            }
-        }
-        Point at = Point.of(50 + rnd.nextInt(850), 50 + rnd.nextInt(850));
-        return new AccountFacts.Snapshot(env, inv.snapshot(), bank.snapshot(), stats.snapshot(), quests.snapshot(), at);
     }
 }

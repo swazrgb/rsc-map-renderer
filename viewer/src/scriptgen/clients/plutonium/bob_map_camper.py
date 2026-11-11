@@ -45,6 +45,9 @@ BANK_TICKS = 3
 # The tick's objects, wall objects and ground items arrive after on_server_tick's NPC update, and
 # Plutonium's event loop may run loop() between them: act this long after the hook, polling fast.
 SETTLE_MS = 20
+# a gap this long between updates is a reconnect: Plutonium's on_load comes after the login's
+# first update
+RELOG_MS = 5000
 POLL_MS = 10
 STEP_LOG_TICKS = 20
 # a walk round the block NPCs searches the box of the player and its tile grown by this
@@ -62,7 +65,6 @@ SOURCE_WEST = 2
 SOURCE_NORTH = 4
 SOURCE_EAST = 8
 SETTING_LINES = ["world", "camp", "bank", "style", "eat", "sleep", "food", "loot", "bury", "block"]
-STEP_KINDS = ["walk", "door", "gate", "obj", "wall", "cut", "usewall", "useobj"]
 # Plutonium does not say how big scenery is: from its own ObjectDefs.json, each object that is
 # not one tile, or that the client walks into rather than beside (type 2 or 3), as id, width,
 # height, and 1 for walked into.
@@ -445,15 +447,12 @@ def parse_recipe(text):
 R = None
 by_sid = {}
 stopped = False
-died = False
-# server updates counted, moved on by the time logged out on a login
+# server updates counted, moved on by the time logged out over a reconnect
 tick = 0
 acted_tick = -1
-# set by the first update after the script starts or logs in; nothing is decided before it
+# set by the first update after the script starts; nothing is decided before it
 updated = False
 hook_ms = 0
-update_ms = 0
-logged_in = False
 # the targets in view this tick, by server index
 in_view = {}
 started = False
@@ -880,17 +879,17 @@ def pre_attack():
 
 
 def on_server_tick(server_tick):
-    global tick, updated, hook_ms, update_ms, logged_in
+    global tick, updated, hook_ms, in_view
     if R is None or stopped:
         return
-    hook_ms = now_ms()
-    if logged_in and update_ms > 0:
-        # Plutonium's own count does not move while logged out
-        tick += max(1, (hook_ms - update_ms) // R.tick_ms)
+    now = now_ms()
+    if hook_ms > 0 and now - hook_ms > RELOG_MS:
+        # what left view while logged out did not die; Plutonium's own count does not move then
+        in_view = {}
+        tick += max(1, (now - hook_ms) // R.tick_ms)
     else:
         tick += 1
-    logged_in = False
-    update_ms = hook_ms
+    hook_ms = now
     try:
         observe()
         updated = True
@@ -904,21 +903,12 @@ def on_server_message(msg):
         standing = True
 
 
-def on_load():
-    # logged in again: what was in view did not die, and nothing is known until the next update
-    global in_view, updated, logged_in
-    in_view = {}
-    updated = False
-    logged_in = True
-
-
 def on_init():
     ensure_recipe()
 
 
 def on_death():
-    global died
-    died = True
+    stop("Died: start it again")
 
 
 def loop():
@@ -926,9 +916,6 @@ def loop():
     if stopped:
         return 1000
     if not ensure_recipe():
-        return 1000
-    if died:
-        stop("Died: start it again")
         return 1000
     # once per server update, after all of it is applied
     if updated and tick != acted_tick and now_ms() - hook_ms >= SETTLE_MS:
@@ -1296,24 +1283,27 @@ def far_reset(name):
 def far_walk(name, steps, x, z):
     """Walks Plutonium's long path to the tile of the route nearest us on our floor that it has a
     path to, one path search a tick, trying the next nearest only when it has none. The walk is
-    the walker's, kept going every tick: its paths open no doors, and one walked to its end with the
-    route still out of reach is asked for again, to the same tile."""
+    the walker's, kept going every tick: its paths open no doors, and one walked to its end, or that
+    cannot be walked on, with the route still out of reach is asked for again, to the same tile;
+    with no path again, or one that cannot be walked either, it tries the next tile."""
     global far
     if far_route != name:
         far_reset(name)
     if far is not None:
         path = far["path"]
         path.process()
-        if not path.complete():
-            path.walk()
+        if not path.complete() and path.walk():
             return False
-        path = calculate_path_to(far["x"], far["z"])
-        if path is None:
+        path = None
+        # Plutonium's search for a path to the player's own tile never ends
+        if x != far["x"] or z != far["z"]:
+            path = calculate_path_to(far["x"], far["z"])
+        if path is not None:
+            path.process()
+        if path is None or not path.walk():
             far = None
             return False
         far["path"] = path
-        path.process()
-        path.walk()
         return False
     left = far_tiles(steps, x, z)
     if len(left) == 0:
@@ -1339,7 +1329,7 @@ def far_tiles(steps, x, z):
             anchors.append([st.land_x, st.land_z])
         for a in anchors:
             key = tile_key(a[0], a[1])
-            if floor_of(a[1]) != floor_of(z) or key in far_tried or key in keys:
+            if floor_of(a[1]) != floor_of(z) or key in far_tried or key in keys or a == [x, z]:
                 continue
             keys.add(key)
             out.append(a)
@@ -1420,15 +1410,20 @@ def landed(st, x, z):
     return tiles(x, z, st.land_x, st.land_z) <= 1
 
 
+def step_item(name, st):
+    # The step's item carried; None for a step that uses none, and None, having stopped, when it
+    # is not carried
+    if not st.uses_item():
+        return None
+    it = get_inventory_item_by_id(st.item)
+    if it is None:
+        stop("Route %s step %d needs %s" % (name, route_pos + 1, item_name(st.item)))
+    return it
+
+
 def do_step(name, steps, x, z):
     # True once the step is done
     st = steps[route_pos]
-    it = None
-    if st.uses_item():
-        it = get_inventory_item_by_id(st.item)
-        if it is None:
-            stop("Route %s step %d needs %s" % (name, route_pos + 1, item_name(st.item)))
-            return False
     if st.kind == "walk":
         if tiles(x, z, st.x, st.z) <= WALK_DONE_TILES:
             return True
@@ -1441,7 +1436,8 @@ def do_step(name, steps, x, z):
             return True
         if not step_reachable(st) and door_behind(steps) >= 0:
             return back_to_door(name, steps, x, z)
-        if approach(st):
+        it = step_item(name, st)
+        if stopped or approach(st):
             return False
         if st.kind == "gate":
             at_object(o)
@@ -1454,6 +1450,9 @@ def do_step(name, steps, x, z):
         return True
     if not step_reachable(st) and door_behind(steps) >= 0:
         return back_to_door(name, steps, x, z)
+    it = step_item(name, st)
+    if stopped:
+        return False
     if st.kind == "obj" or st.kind == "useobj":
         o = get_object_from_coords(st.x, st.z)
     else:

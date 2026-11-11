@@ -561,6 +561,93 @@ span.planner-drop {
     border-left: none;
 }
 
+.planner-seg.planner-seg-wide {
+    display: flex;
+    width: 100%;
+}
+
+:where(.planner) .planner-seg-wide button:first-child {
+    flex: 1;
+}
+
+.planner-mode,
+.planner-danger {
+    grid-template-columns: max-content 1fr;
+    margin-bottom: 3px;
+}
+
+.planner-mode > span:first-child,
+.planner-danger > span:first-child {
+    white-space: nowrap;
+}
+
+.planner-end-note,
+.planner-amount {
+    color: #8b949e;
+}
+
+.planner-amount {
+    text-align: right;
+    padding-right: 4px;
+}
+
+.planner-walk {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 3px 0;
+}
+
+.planner-walk button {
+    padding: 2px 12px;
+}
+
+:where(.planner) button.planner-act-walk:not(:disabled) {
+    background: #238636;
+    border-color: #2ea043;
+    color: #fff;
+}
+
+:where(.planner) button.planner-act-walk:not(:disabled):hover {
+    background: #2ea043;
+}
+
+:where(.planner) button.planner-act-stop {
+    border-color: #f85149;
+    color: #ffc9c9;
+}
+
+.planner-walk-status {
+    flex: 1;
+    min-width: 0;
+    color: #8b949e;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.planner-walk-failed,
+.planner-short {
+    color: #ffc9c9;
+}
+
+.planner-default {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 4px;
+}
+
+.planner-default button {
+    padding: 1px 6px;
+}
+
+.planner-bank-unknown {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
 .planner-checks {
     display: flex;
     flex-direction: column;

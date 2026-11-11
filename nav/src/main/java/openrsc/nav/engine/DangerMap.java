@@ -33,12 +33,6 @@ import openrsc.gamedata.world.Overlays;
  */
 final class DangerMap {
 
-    /**
-     * Bumped when a change to how this class's values are read can change a persisted plane; the values
-     * themselves are hashed by content ({@link #digest}).
-     */
-    static final int PLANE_VERSION = 1;
-
     /** How many tiles past its roam box a spawn's danger reaches. */
     static final int MARGIN = 1;
 
@@ -55,9 +49,9 @@ final class DangerMap {
 
     static final int CLUSTER_CAP = 400;
 
-    private final short[][] baseByCluster;
-    private final short[][] ceilByCluster;
-    private final int[] ladder;
+    final short[][] baseByCluster;
+    final short[][] ceilByCluster;
+    final int[] ladder;
     private final boolean any;
 
     /** Per cluster, the distinct ceilings of its charged tiles, ascending; null where it has none. */
@@ -146,15 +140,6 @@ final class DangerMap {
 
     boolean any() {
         return any;
-    }
-
-    /** Feeds the ladder and both planes into a store stamp. */
-    void digest(java.security.MessageDigest md) {
-        Digests.ints(md, ladder);
-        for (int c = 0; c < baseByCluster.length; c++) {
-            Digests.shorts(md, baseByCluster[c]);
-            Digests.shorts(md, ceilByCluster[c]);
-        }
     }
 
     /** How many thresholds lie at or below {@code combatLevel}: every level on one rung sees the same tiles charged. */

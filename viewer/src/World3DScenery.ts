@@ -121,6 +121,23 @@ export interface ResolvedPlacement {
     model?: number;
 }
 
+// The footprint in tiles, turned by the placement's direction.
+function turnedSize(obj: LibObject, dir: number): {w: number; h: number} {
+    return dir === 0 || dir === 4 ? {w: obj.w, h: obj.h} : {w: obj.h, h: obj.w};
+}
+
+/**
+ * The tile under a placement's centre, where its ground height is read; that tile's cell holds every
+ * terrain corner the read takes, and a footprint wider than a tile can centre in the next cell. Null
+ * for an object the library lacks.
+ */
+export function centreTileOf(lib: ObjectLibrary, pl: ResolvedPlacement): {x: number; z: number} | null {
+    const obj = lib.objects.get(pl.id);
+    if (!obj) return null;
+    const {w, h} = turnedSize(obj, pl.dir);
+    return {x: Math.floor(pl.x + w / 2), z: Math.floor(pl.z + h / 2)};
+}
+
 /**
  * One cell's placements as merged geometries, one per texture and translucency, in three space
  * (x mirrored, y up). `idFor` gives a per-placement pick id, baked into a `pickId` attribute.
@@ -149,9 +166,8 @@ export function assembleCell(
             pg = (pid >> 8) & 255,
             pb = (pid >> 16) & 255,
             pa = (pid >> 24) & 255;
-        // The footprint turns with the direction; the model's anchor is its centre.
-        const w = pl.dir === 0 || pl.dir === 4 ? obj.w : obj.h;
-        const h = pl.dir === 0 || pl.dir === 4 ? obj.h : obj.w;
+        // The model's anchor is its footprint's centre.
+        const {w, h} = turnedSize(obj, pl.dir);
         const cxUnits = (pl.x * 2 + w) * 64;
         const czUnits = (pl.z * 2 + h) * 64;
         const groundY = heightAt(cxUnits / 128 - 0.5, czUnits / 128 - 0.5) + obj.lift;
@@ -208,8 +224,7 @@ export function sceneryHub(
 ): THREE.Vector3 | null {
     const obj = lib.objects.get(pl.id);
     if (!obj) return null;
-    const w = pl.dir === 0 || pl.dir === 4 ? obj.w : obj.h;
-    const h = pl.dir === 0 || pl.dir === 4 ? obj.h : obj.w;
+    const {w, h} = turnedSize(obj, pl.dir);
     const cxUnits = (pl.x * 2 + w) * 64;
     const czUnits = (pl.z * 2 + h) * 64;
     const groundY = heightAt(cxUnits / 128 - 0.5, czUnits / 128 - 0.5) + obj.lift;

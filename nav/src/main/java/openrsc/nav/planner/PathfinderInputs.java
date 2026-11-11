@@ -171,14 +171,16 @@ public final class PathfinderInputs {
                 cache(uses),
                 List.of(
                         new PolicyInput(
-                                "danger", "Avoid danger", NavPolicy.DEFAULT.danger() == NavPolicy.DangerAvoidance.ON),
+                                "danger",
+                                "avoid danger zones",
+                                NavPolicy.DEFAULT.danger() == NavPolicy.DangerAvoidance.ON),
                         new PolicyInput(
                                 "berth",
-                                "Avoid aggressive NPCs",
+                                "avoid aggressive NPCs",
                                 NavPolicy.DEFAULT.berth().berthByDefault()),
-                        new PolicyInput("teleportSpells", "Teleportation spells", NavPolicy.DEFAULT.teleportSpells()),
+                        new PolicyInput("teleportSpells", "teleport spells", NavPolicy.DEFAULT.teleportSpells()),
                         new PolicyInput(
-                                "teleportJewellery", "Teleportation jewellery", NavPolicy.DEFAULT.teleportJewellery())),
+                                "teleportJewellery", "teleport jewellery", NavPolicy.DEFAULT.teleportJewellery())),
                 List.of("combatLevel", "questPoints", "wildernessLevel"));
     }
 

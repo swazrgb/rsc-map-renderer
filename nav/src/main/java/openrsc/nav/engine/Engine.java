@@ -3,7 +3,7 @@ package openrsc.nav.engine;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
 import it.unimi.dsi.fastutil.ints.IntSet;
-import java.security.MessageDigest;
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -72,15 +72,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * The planner over a {@link NavInputs}: routes, estimates and walks priced over a customizable
- * contraction hierarchy of the static map ({@link ClusterGraph}, {@link CchTopology}).
+ * The planner over a {@link NavInputs}: routes, estimates and walks priced over a graph of the static map
+ * ({@link ClusterGraph}) and searched through a {@link Routing}.
  *
  * <p>Every answer is a function of the inputs' static data, the request's {@link AccountFacts} and
  * its {@link NavPolicy}. No overlay or live state is read, so nothing kept ever goes stale: a cache
  * needs only a key that holds everything its answer reads. Durations are deci-ticks
- * ({@link TravelTime}). Choices are made by weight, which is time plus the danger charge and the
- * teleport surcharge ({@link #TELEPORT_WEIGHT}), and on equal weight by time; what is reported is
- * always the chosen route's time.
+ * ({@link TravelTime}). Choices are made by weight, which is time plus the danger charge and each
+ * hop's {@link openrsc.nav.Transport#price}, and on equal weight by time; what is reported is always
+ * the chosen route's time.
  *
  * <p>Thread-safe and never synchronized on a query: every search runs on scratch of its thread,
  * and the stores are concurrent.
@@ -98,16 +98,16 @@ public final class Engine implements Planner {
 
     private final ServerData serverData;
     private final DangerMap dangerMap;
-    private final CollisionMap map;
+    final CollisionMap map;
     private final ClusterGraph graph;
     private final Legs legs;
     private final List<Transport> transports;
-    private final int[] baseCosts;
+    final int[] baseCosts;
     private final int baseCostsHash;
     private final boolean[] allUsable;
 
     private final EligKey allUsableElig;
-    private final String[] names;
+    final String[] names;
     private final String[][][] policyKeys;
     private final Prereq[] uniquePrereqs;
     private final Fact[] distinctFacts;
@@ -125,14 +125,17 @@ public final class Engine implements Planner {
     private final Set<String> bankNames;
 
     private final ConcurrentHashMap<Integer, DangerField> dangerFields = new ConcurrentHashMap<>();
-    private final CchTopology topology;
-    private final NavCache<MetricKey, CchMetric> metrics;
+    private final Routing routing;
+    private final NavCache<MetricKey, Metric> metrics;
+    /** Whether {@link #metrics} keeps what it loads; a class holds its metric weakly when it does. */
+    private final boolean metricsKept;
+
     private final NavCache<LabelKey, Kept> goalLabels;
     private final StaticTargetTables staticTargets;
     private final ThreadLocal<int[]> ownerTl;
-    private final ThreadLocal<CchSearch> searchTl;
-    private final ThreadLocal<CchSearch> batchTl;
-    private final ThreadLocal<CchSearch> bankedTl;
+    private final ThreadLocal<Search> searchTl;
+    private final ThreadLocal<Search> batchTl;
+    private final ThreadLocal<Search> bankedTl;
     private final AtomicReferenceArray<BatchRow> batchRows;
 
     private static final int BATCH_ROWS = 1 << 11;
@@ -142,7 +145,7 @@ public final class Engine implements Planner {
     private final String graphShape;
 
     /**
-     * Builds the graph, the danger map and the hierarchy's topology: seconds on the full map, reported
+     * Builds the graph, the danger map and the routing: seconds on the full map, reported
      * through {@link LoadProgress}.
      *
      * @throws IllegalStateException when two banks share a name, or a bank shares one with a declared
@@ -180,8 +183,7 @@ public final class Engine implements Planner {
         this.allUsable = new boolean[baseCosts.length];
         Arrays.fill(allUsable, true);
         this.allUsableElig = EligKey.of(allUsable);
-        // After the graph, names and costs: a store that keeps planes in a file stamps them from all of these.
-        this.legs = new Legs(map, graph, in.caches(), this::storeStamp);
+        this.legs = new Legs(map, graph, in.caches());
         this.uniquePrereqs = uniq.keySet().toArray(new Prereq[0]);
         LinkedHashMap<Fact, Integer> factNumbers = new LinkedHashMap<>();
         this.prereqPrograms = new int[uniquePrereqs.length][];
@@ -237,7 +239,7 @@ public final class Engine implements Planner {
         }
         long t0 = System.nanoTime();
         // Every field a metric can be customized under: each rung with avoidance on (dangerFor's key), and
-        // with it off nothing is charged and the plain matrices apply. The topology keeps every arc they need.
+        // with it off nothing is charged and the plain matrices apply. The routing keeps every arc they need.
         List<DangerField> fields = new ArrayList<>();
         for (int rung = 0; rung <= dangerMap.rungOf(Integer.MAX_VALUE); rung++) {
             int r = rung;
@@ -247,28 +249,31 @@ public final class Engine implements Planner {
         for (int i = 0; i < gated.length; i++) {
             gated[i] = uniquePrereqs[prereqOf[i]].facts().length != 0;
         }
-        this.topology = CchTopology.build(graph, fields, gated);
-        this.searchTl = ThreadLocal.withInitial(() -> new CchSearch(topology));
-        this.batchTl = ThreadLocal.withInitial(() -> new CchSearch(topology));
-        this.bankedTl = ThreadLocal.withInitial(() -> new CchSearch(topology));
-        this.walkFromTl = ThreadLocal.withInitial(() -> new CchSearch(topology));
+        // Caches that build a routing of their own route with it; any other gets the plain one.
+        Routing.Builder routings = in.caches() instanceof Routing.Builder b ? b : PlainRouting::build;
+        this.routing = routings.build(graph, fields, gated, baseCosts);
+        this.searchTl = ThreadLocal.withInitial(routing::search);
+        this.batchTl = ThreadLocal.withInitial(routing::search);
+        this.bankedTl = ThreadLocal.withInitial(routing::search);
+        this.walkFromTl = ThreadLocal.withInitial(routing::search);
         this.stepMasks = new StepMasks(map);
         this.batchRows = in.caches().retains() ? new AtomicReferenceArray<>(BATCH_ROWS) : null;
-        this.metrics = in.caches().<MetricKey, CchMetric>weighed(NavStore.METRICS, CchMetric::bytes);
+        this.metrics = in.caches().<MetricKey, Metric>weighed(NavStore.METRICS, Metric::bytes);
+        this.metricsKept = in.caches().retains();
         this.goalLabels = in.caches().<LabelKey, Kept>weighed(NavStore.GOAL_LABELS, Kept::bytes);
         this.staticTargets = new StaticTargetTables(map);
-        this.ownerTl = ThreadLocal.withInitial(() -> new int[topology.nodeCount]);
+        this.ownerTl = ThreadLocal.withInitial(() -> new int[routing.nodeCount()]);
         this.graphShape = describeGraphShape();
         LOG.info(
                 "nav: engine loaded — {} transports, {} unique prereqs, {} nodes, {} banks; {}; "
-                        + "hierarchy in {}ms: {}",
+                        + "routing in {}ms: {}",
                 transports.size(),
                 uniquePrereqs.length,
                 graph.totalNodes(),
                 bankNodes.length,
                 graphShape,
                 (System.nanoTime() - t0) / 1_000_000,
-                topology.describe());
+                routing.describe());
     }
 
     ClusterGraph graph() {
@@ -283,8 +288,8 @@ public final class Engine implements Planner {
         return dangerMap;
     }
 
-    CchTopology topology() {
-        return topology;
+    Routing routing() {
+        return routing;
     }
 
     private String describeGraphShape() {
@@ -659,6 +664,13 @@ public final class Engine implements Planner {
         return applied(overridesOf(overrides), canUse, policy);
     }
 
+    @Override
+    public void check(NavPolicy policy) {
+        if (!policy.costOverrides().isEmpty()) {
+            overridesOf(policy.costOverrides());
+        }
+    }
+
     private Overrides overridesOf(Map<String, Integer> overrides) {
         Overrides ov = overridesByMap.get(overrides);
         if (ov == null) {
@@ -831,46 +843,6 @@ public final class Engine implements Planner {
 
     static final int STEP_COST = Legs.STEP_COST;
 
-    /**
-     * The weight a regional teleport carries on top of its cost: a hundred steps of walking, so a
-     * teleport is chosen to save a real walk, not a few ticks of one. Weight only: a route that
-     * teleports reports its true time.
-     */
-    static final int TELEPORT_WEIGHT = 100 * STEP_COST;
-
-    /** Bumped when a change here can change what a persisted leg plane holds. */
-    static final int PLANE_VERSION = 1;
-
-    private byte[] storeStamp;
-
-    /**
-     * What every persisted leg plane is computed from. Data is hashed by content: the collision map, the
-     * graph, the danger map, and each transport's name and base cost in order. Code is hashed by each
-     * class's hand-bumped {@code PLANE_VERSION}. A store whose stamp differs starts empty. Computed on
-     * first ask, so an engine whose stores live on the heap never pays.
-     */
-    private synchronized byte[] storeStamp() {
-        if (storeStamp == null) {
-            MessageDigest md = Digests.sha256();
-            Digests.version(md, "Engine", PLANE_VERSION);
-            Digests.version(md, "Legs", Legs.PLANE_VERSION);
-            Digests.version(md, "DangerField", DangerField.PLANE_VERSION);
-            Digests.version(md, "DangerMap", DangerMap.PLANE_VERSION);
-            Digests.version(md, "ClusterEdges", ClusterEdges.PLANE_VERSION);
-            Digests.version(md, "ClusterGeometry", ClusterGeometry.PLANE_VERSION);
-            Digests.version(md, "CollisionMap", CollisionMap.STEP_RULES_VERSION);
-            Digests.collisionMap(md, map);
-            graph.digest(md);
-            dangerMap.digest(md);
-            Digests.ints(md, baseCosts);
-            for (String name : names) {
-                Digests.string(md, name);
-            }
-            storeStamp = md.digest();
-        }
-        return storeStamp;
-    }
-
     /** A destination's price: the weight every choice inside it is made by, and the time reported for it. */
     private record Price(long weight, long time) {
         static final Price NONE = new Price(Long.MAX_VALUE, Long.MAX_VALUE);
@@ -905,7 +877,7 @@ public final class Engine implements Planner {
     }
 
     /**
-     * Everything {@link CchMetric#customize} reads: eligibility and costs by value, so a hash collision
+     * Everything {@link Routing#customize} reads: eligibility and costs by value, so a hash collision
      * cannot price one class with another's weights, and the danger field by signature.
      */
     private record MetricKey(EligKey elig, int dangerSig, int[] tCosts, int hash) {
@@ -934,7 +906,8 @@ public final class Engine implements Planner {
     /**
      * One routing class, the transports usable at what cost under which danger field, and the metric
      * that prices it, customized on first use. Holds no engine: a thread's memos outlive the engine,
-     * and a class that held one would keep it alive.
+     * and a class that held one would keep it alive. For the same reason it holds its metric only
+     * weakly while the engine's store keeps metrics: the store's budget bounds them, not the memos.
      */
     private static final class Klass {
         final boolean[] canUse;
@@ -944,7 +917,10 @@ public final class Engine implements Planner {
         /** The class this one derives from, an account's own for its banked class, whose metric it starts from. */
         final Klass parent;
 
-        private CchMetric metric;
+        /** The metric over a store that keeps none, where this class is all that keeps it. */
+        private Metric held;
+
+        private WeakReference<Metric> seen;
 
         Klass(Engine owner, boolean[] canUse, int[] tCosts, DangerField danger) {
             this(owner, canUse, tCosts, danger, EligKey.of(canUse), null);
@@ -967,81 +943,70 @@ public final class Engine implements Planner {
                     elig, danger, tCosts, tCosts == owner.baseCosts ? owner.baseCostsHash : owner.costsHash(tCosts));
         }
 
-        CchMetric metric(Engine owner) {
-            CchMetric m = metric;
-            if (m == null) {
-                m = owner.metrics.get(key, k -> {
-                    owner.metricBuilds.incrementAndGet();
-                    return owner.customized(danger, canUse, tCosts, parent);
-                });
-                metric = m;
-            }
+        /**
+         * Asked of the store on every use, so that its eviction sees what is used; an instance the store let go
+         * that this class still sees is handed back to it rather than customized again.
+         */
+        Metric metric(Engine owner) {
+            Metric m = owner.metrics.get(key, k -> {
+                Metric live = atHand();
+                if (live != null) {
+                    return live;
+                }
+                owner.metricBuilds.incrementAndGet();
+                return owner.customized(danger, canUse, tCosts, parent);
+            });
+            keep(owner, m);
             return m;
         }
 
         /** Whether {@link #metric} answers without customizing. */
         boolean metricAtHand(Engine owner) {
-            if (metric == null) {
-                metric = owner.metrics.getIfPresent(key);
+            Metric m = owner.metrics.getIfPresent(key);
+            if (m == null) {
+                return atHand() != null;
             }
-            return metric != null;
+            keep(owner, m);
+            return true;
+        }
+
+        /** The metric this class last answered with, while anything still keeps it; else null. */
+        @Nullable
+        Metric atHand() {
+            Metric m = held;
+            if (m != null) {
+                return m;
+            }
+            WeakReference<Metric> s = seen;
+            return s != null ? s.get() : null;
+        }
+
+        private void keep(Engine owner, Metric m) {
+            if (!owner.metricsKept) {
+                held = m;
+                return;
+            }
+            WeakReference<Metric> s = seen;
+            if (s == null || s.get() != m) {
+                seen = new WeakReference<>(m);
+            }
         }
     }
 
-    /**
-     * Per danger field, the metric with every ungated transport as the field's first class has it and
-     * every gated one closed: what {@link #customized} starts a class from. Kept outside the metric
-     * store, since every class of the field needs it.
-     */
-    private final ConcurrentHashMap<Integer, CchMetric> baseMetrics = new ConcurrentHashMap<>();
-
-    /**
-     * A class's metric, as a delta where it can be: from its parent's metric when that is at hand, else
-     * from its danger field's base when the class agrees with the base on every ungated transport (an
-     * ungated transport reads no fact, so every class should), else whole. Every way gives the same
-     * weights.
-     */
-    private CchMetric customized(DangerField danger, boolean[] canUse, int[] tCosts, Klass parent) {
+    /** A class's metric, from its parent's when that is at hand: the routing may start from it. */
+    private Metric customized(DangerField danger, boolean[] canUse, int[] tCosts, Klass parent) {
         if (parent != null && parent.danger == danger && parent.tCosts == tCosts) {
-            CchMetric from = parent.metric != null ? parent.metric : metrics.getIfPresent(parent.key);
+            Metric from = metrics.getIfPresent(parent.key);
+            if (from == null) {
+                from = parent.atHand();
+            }
             if (from != null) {
-                int[] changed = new int[canUse.length];
-                int n = 0;
-                for (int i = 0; i < canUse.length; i++) {
-                    if (canUse[i] != parent.canUse[i]) {
-                        changed[n++] = i;
-                    }
-                }
-                changedCustomizations.incrementAndGet();
-                return CchMetric.customizeChanged(from, danger, canUse, tCosts, Arrays.copyOf(changed, n));
+                return routing.customize(danger, canUse, tCosts, from, parent.canUse);
             }
         }
-        if (tCosts == baseCosts) {
-            CchMetric base = baseMetrics.computeIfAbsent(danger.signature(), sig -> {
-                boolean[] constant = new boolean[canUse.length];
-                for (int i = 0; i < constant.length; i++) {
-                    constant[i] = !topology.gated[i] && canUse[i];
-                }
-                return CchMetric.customize(topology, danger, constant, baseCosts, false);
-            });
-            if (base.agreesUngated(canUse)) {
-                boolean[] gated = topology.gated;
-                int[] opened = new int[canUse.length];
-                int n = 0;
-                for (int i = 0; i < canUse.length; i++) {
-                    if (gated[i] && canUse[i]) {
-                        opened[n++] = i;
-                    }
-                }
-                deltaCustomizations.incrementAndGet();
-                return CchMetric.customizeChanged(base, danger, canUse, tCosts, Arrays.copyOf(opened, n));
-            }
-        }
-        return CchMetric.customize(topology, danger, canUse, tCosts, false);
+        return routing.customize(danger, canUse, tCosts, null, null);
     }
 
-    private final AtomicLong deltaCustomizations = new AtomicLong();
-    private final AtomicLong changedCustomizations = new AtomicLong();
     private final AtomicLong fundedFloorSkips = new AtomicLong();
     private final AtomicLong bankedFloorSkips = new AtomicLong();
     private final AtomicLong batchRowHits = new AtomicLong();
@@ -1092,7 +1057,7 @@ public final class Engine implements Planner {
         long[] bankReach;
 
         int[] stops;
-        /** Per bank, the packed cost of reaching it under the carried class; {@link CchMetric#INF} for none. */
+        /** Per bank, the packed cost of reaching it under the carried class; {@link PackedCost#INF} for none. */
         long[] toBank;
         /** The least of {@link #bankReach}: a floor under every funded weight from here, since the leg on only adds. */
         long cheapestStop = Long.MAX_VALUE;
@@ -1103,7 +1068,7 @@ public final class Engine implements Planner {
      * destination behind no gate is decided by one scan. {@code fromSide}'s forward half must already
      * have run from {@code from} under {@code r}'s class.
      */
-    FundedFrom fundedFrom(Point from, NavPolicy policy, Resolved r, CchSearch fromSide) {
+    FundedFrom fundedFrom(Point from, NavPolicy policy, Resolved r, Search fromSide) {
         FundedFrom f = new FundedFrom();
         if (bankNodes.length == 0 || policy.assumeAllEligible()) {
             return f;
@@ -1118,12 +1083,12 @@ public final class Engine implements Planner {
         searches.incrementAndGet();
         // The leg to a bank is the walk the account can make now, under the carried class; only the leg on
         // may use the banked one.
-        f.toBank = meetBanks(fromSide.forward, r.klass.metric(this).toBankLabels());
+        f.toBank = meetBanks(fromSide.forward(), r.klass.metric(this).toBankLabels());
         f.stops = stopCosts(policy);
         f.bankReach = new long[bankNodes.length];
         for (int i = 0; i < bankNodes.length; i++) {
             f.bankReach[i] =
-                    f.toBank[i] == CchMetric.INF ? Long.MAX_VALUE : CchMetric.weightOf(f.toBank[i]) + f.stops[i];
+                    f.toBank[i] == PackedCost.INF ? Long.MAX_VALUE : PackedCost.weightOf(f.toBank[i]) + f.stops[i];
             f.cheapestStop = Math.min(f.cheapestStop, f.bankReach[i]);
         }
         f.usable = true;
@@ -1188,10 +1153,10 @@ public final class Engine implements Planner {
         for (int i = 0; i < bankNodes.length; i++) {
             long to = f.toBank[i];
             long back = backs[i];
-            if (to == CchMetric.INF || back == CchMetric.INF) {
+            if (to == PackedCost.INF || back == PackedCost.INF) {
                 continue;
             }
-            long total = (long) CchMetric.weightOf(to) + f.stops[i] + CchMetric.weightOf(back);
+            long total = (long) PackedCost.weightOf(to) + f.stops[i] + PackedCost.weightOf(back);
             long time = (to & 0xFFFFFFFFL) + f.stops[i] + (back & 0xFFFFFFFFL);
             if (total < best || (total == best && time < bestTime)) {
                 best = total;
@@ -1218,8 +1183,8 @@ public final class Engine implements Planner {
         }
         long floor = Long.MAX_VALUE;
         for (int i = 0; i < backs.length; i++) {
-            if (f.bankReach[i] != Long.MAX_VALUE && backs[i] != CchMetric.INF) {
-                floor = Math.min(floor, f.bankReach[i] + CchMetric.weightOf(backs[i]));
+            if (f.bankReach[i] != Long.MAX_VALUE && backs[i] != PackedCost.INF) {
+                floor = Math.min(floor, f.bankReach[i] + PackedCost.weightOf(backs[i]));
             }
         }
         return floor;
@@ -1238,20 +1203,20 @@ public final class Engine implements Planner {
         if (gB.ranks().length == 0) {
             return Long.MAX_VALUE;
         }
-        CchSearch banked = bankedTl.get();
+        Search banked = bankedTl.get();
         if (!f.bankedRun) {
-            runFromTile(banked.forward, from, f.klassB);
+            runFromTile(banked.forward(), from, f.klassB);
             f.bankedRun = true;
         }
-        long p = meetLabels(banked.forward, gB);
-        return p == CchMetric.INF ? Long.MAX_VALUE : CchMetric.weightOf(p) + cheapestOf(f.stops);
+        long p = meetLabels(banked.forward(), gB);
+        return p == PackedCost.INF ? Long.MAX_VALUE : PackedCost.weightOf(p) + cheapestOf(f.stops);
     }
 
     /**
      * Seeds {@code half} at a tile: its walk to each node of its cluster, and each cast source whose
      * region holds it.
      */
-    private void seedFromTile(CchSearch.Half half, Point from, DangerField danger) {
+    private void seedFromTile(Search.Half half, Point from, DangerField danger) {
         half.reset();
         int sc = ClusterGeometry.clusterOf(from.x(), from.y());
         int first = graph.clusterFirstNode(sc);
@@ -1259,19 +1224,19 @@ public final class Engine implements Planner {
         int[] costs = legs.costsAt(sc, from.x(), from.y(), true, danger, times);
         for (int m = 0; m < costs.length; m++) {
             if (costs[m] != Integer.MAX_VALUE) {
-                half.seed(first + m, CchMetric.pack(costs[m], times[m]));
+                half.seed(first + m, PackedCost.pack(costs[m], times[m]));
             }
         }
         for (int src = 0; src < graph.castSourceCount(); src++) {
             if (graph.castSourceRegion(src).contains(from.x(), from.y())) {
-                half.seed(topology.firstSource + src, 0L);
+                half.seed(routing.firstSource() + src, 0L);
             }
         }
     }
 
     /** {@code half} run from {@code from} under {@code k}, unless it still holds exactly that run. */
-    private void runFromTile(CchSearch.Half half, Point from, Klass k) {
-        CchMetric m = k.metric(this);
+    private void runFromTile(Search.Half half, Point from, Klass k) {
+        Metric m = k.metric(this);
         if (half.holds(m, from)) {
             return;
         }
@@ -1281,7 +1246,7 @@ public final class Engine implements Planner {
     }
 
     /** Seeds {@code half} at a goal tile: each node's walk to it. False for a goal that is fully blocked. */
-    private boolean seedToTile(CchSearch.Half half, Point goal, DangerField danger) {
+    private boolean seedToTile(Search.Half half, Point goal, DangerField danger) {
         half.reset();
         int gc = ClusterGeometry.clusterOf(goal.x(), goal.y());
         int[] times = new int[graph.clusterNodeCount(gc)];
@@ -1292,44 +1257,44 @@ public final class Engine implements Planner {
         int first = graph.clusterFirstNode(gc);
         for (int j = 0; j < seeds.length; j++) {
             if (seeds[j] != Integer.MAX_VALUE) {
-                half.seed(first + j, CchMetric.pack(seeds[j], times[j]));
+                half.seed(first + j, PackedCost.pack(seeds[j], times[j]));
             }
         }
         return true;
     }
 
     private Comp tileToGoal(Point from, Point goal, Klass k) {
-        CchSearch s = searchTl.get();
+        Search s = searchTl.get();
         GoalLabels g = goalLabels(goal, k);
         if (g.ranks().length > 0) {
-            runFromTile(s.forward, from, k);
+            runFromTile(s.forward(), from, k);
         }
         return toGoal(s, from, goal, k, g);
     }
 
-    private Comp toGoal(CchSearch fromSide, Point from, Point goal, Klass k, GoalLabels g) {
+    private Comp toGoal(Search fromSide, Point from, Point goal, Klass k, GoalLabels g) {
         Comp c;
         if (g.ranks().length == 0) {
             c = new Comp();
             c.klass = k;
         } else {
-            c = pricedAt(meetLabels(fromSide.forward, g), k);
+            c = pricedAt(meetLabels(fromSide.forward(), g), k);
         }
         c.fromTile = from;
         c.goalTile = goal;
         return c;
     }
 
-    /** The cheapest route from {@code forward}'s seeds to {@code g}'s goal, packed; {@link CchMetric#INF} for none. */
-    private long meetLabels(CchSearch.Half forward, GoalLabels g) {
+    /** The cheapest route from {@code forward}'s seeds to {@code g}'s goal, packed; {@link PackedCost#INF} for none. */
+    private long meetLabels(Search.Half forward, GoalLabels g) {
         searches.incrementAndGet();
-        long best = CchMetric.INF;
+        long best = PackedCost.INF;
         int[] ranks = g.ranks();
         long[] costs = g.costs();
         for (int i = 0; i < ranks.length; i++) {
             int r = ranks[i];
             if (forward.reached(r)) {
-                long via = forward.dist[r] + costs[i];
+                long via = forward.dist(r) + costs[i];
                 if (via < best) {
                     best = via;
                 }
@@ -1386,22 +1351,22 @@ public final class Engine implements Planner {
 
     private GoalLabels computeGoalLabels(Point goal, Klass k) {
         {
-            CchSearch s = searchTl.get();
-            if (!seedToTile(s.backward, goal, k.danger)) {
+            Search s = searchTl.get();
+            if (!seedToTile(s.backward(), goal, k.danger)) {
                 return GoalLabels.NONE;
             }
-            s.backward.run(k.metric(this));
-            int n = s.backward.size();
+            s.backward().run(k.metric(this));
+            int n = s.backward().size();
             int[] ranks = new int[n];
             long[] costs = new long[n];
             int[] preds = new int[n];
             int kept = 0;
             for (int i = 0; i < n; i++) {
-                int r = s.backward.rankAt(i);
-                long d = s.backward.dist[r];
-                if (d != CchMetric.INF) {
+                int r = s.backward().rankAt(i);
+                long d = s.backward().dist(r);
+                if (d != PackedCost.INF) {
                     ranks[kept] = r;
-                    preds[kept] = s.backward.pred[r];
+                    preds[kept] = s.backward().pred(r);
                     costs[kept++] = d;
                 }
             }
@@ -1419,14 +1384,14 @@ public final class Engine implements Planner {
 
     /** Tile to every bank, index-aligned with {@code bankNodes}. */
     private Comp[] tileToBanks(Point from, Klass k) {
-        CchSearch s = searchTl.get();
-        runFromTile(s.forward, from, k);
+        Search s = searchTl.get();
+        runFromTile(s.forward(), from, k);
         return banksFrom(s, from, k);
     }
 
-    private Comp[] banksFrom(CchSearch fromSide, Point from, Klass k) {
+    private Comp[] banksFrom(Search fromSide, Point from, Klass k) {
         searches.incrementAndGet();
-        long[] best = meetBanks(fromSide.forward, k.metric(this).toBankLabels());
+        long[] best = meetBanks(fromSide.forward(), k.metric(this).toBankLabels());
         Comp[] out = new Comp[bankNodes.length];
         for (int i = 0; i < bankNodes.length; i++) {
             out[i] = pricedAt(best[i], k);
@@ -1437,22 +1402,22 @@ public final class Engine implements Planner {
         return out;
     }
 
-    private long[] meetBanks(CchSearch.Half half, long[] labels) {
+    private long[] meetBanks(Search.Half half, long[] labels) {
         int banks = bankNodes.length;
         long[] best = new long[banks];
-        Arrays.fill(best, CchMetric.INF);
-        int[] slotOf = topology.bankSlot;
+        Arrays.fill(best, PackedCost.INF);
+        int[] slotOf = routing.bankSlots();
         for (int j = 0; j < half.size(); j++) {
             int r = half.rankAt(j);
             int slot = slotOf[r];
-            long d = half.dist[r];
-            if (slot < 0 || d == CchMetric.INF) {
+            long d = half.dist(r);
+            if (slot < 0 || d == PackedCost.INF) {
                 continue;
             }
             int base = slot * banks;
             for (int i = 0; i < banks; i++) {
                 long b = labels[base + i];
-                if (b != CchMetric.INF && d + b < best[i]) {
+                if (b != PackedCost.INF && d + b < best[i]) {
                     best[i] = d + b;
                 }
             }
@@ -1463,8 +1428,8 @@ public final class Engine implements Planner {
     private static Comp pricedAt(long packed, Klass k) {
         Comp c = new Comp();
         c.klass = k;
-        if (packed != CchMetric.INF) {
-            c.cost = CchMetric.weightOf(packed);
+        if (packed != PackedCost.INF) {
+            c.cost = PackedCost.weightOf(packed);
             c.time = packed & 0xFFFFFFFFL;
         }
         return c;
@@ -1488,7 +1453,7 @@ public final class Engine implements Planner {
     }
 
     /**
-     * Per bank, the packed cost from it to {@code g}'s goal under {@code k}, {@link CchMetric#INF} for
+     * Per bank, the packed cost from it to {@code g}'s goal under {@code k}, {@link PackedCost#INF} for
      * none: kept on {@code g}, never written.
      */
     private long[] backsTo(GoalLabels g, Klass k) {
@@ -1498,14 +1463,14 @@ public final class Engine implements Planner {
         }
         int banks = bankNodes.length;
         long[] best = new long[banks];
-        Arrays.fill(best, CchMetric.INF);
+        Arrays.fill(best, PackedCost.INF);
         int[] ranks = g.ranks();
         // NONE is shared by every blocked goal: nothing is kept on it.
         if (ranks.length == 0) {
             return best;
         }
         long[] labels = k.metric(this).fromBankLabels();
-        int[] slotOf = topology.bankSlot;
+        int[] slotOf = routing.bankSlots();
         long[] costs = g.costs();
         for (int j = 0; j < ranks.length; j++) {
             int slot = slotOf[ranks[j]];
@@ -1526,24 +1491,24 @@ public final class Engine implements Planner {
     }
 
     /**
-     * A priced leg's chain ({@link CchSearch#chain}), read out of the query that priced it; null if it
+     * A priced leg's chain ({@link Search}), read out of the query that priced it; null if it
      * never priced.
      */
     private List<int[]> chain(Comp c) {
         return chain(c, searchTl.get());
     }
 
-    private List<int[]> chain(Comp c, CchSearch s) {
+    private List<int[]> chain(Comp c, Search s) {
         if (c.cost == Long.MAX_VALUE) {
             return null;
         }
-        CchMetric m = c.klass.metric(this);
+        Metric m = c.klass.metric(this);
         if (c.fromTile == null) {
             // Out of a bank: both sides are kept labels, so no half runs and the thread's tile half stays as it was.
             GoalLabels g = goalLabels(c.goalTile, c.klass);
             return s.chainFromBank(m, c.bank, g.ranks(), g.costs(), g.preds());
         }
-        runFromTile(s.forward, c.fromTile, c.klass);
+        runFromTile(s.forward(), c.fromTile, c.klass);
         if (c.goalTile != null) {
             GoalLabels g = goalLabels(c.goalTile, c.klass);
             return s.chainToLabels(m, g.ranks(), g.costs(), g.preds());
@@ -1606,7 +1571,7 @@ public final class Engine implements Planner {
         NavCacheStats s = metrics.stats();
         return String.format(
                 "metrics: %d entries, %dMB held, hitRate=%.3f, loads=%d, missCost=%.2fms, "
-                        + "evictionWeight=%dMB, deltas=%d, fromParent=%d, fundedSkips=%d, "
+                        + "evictionWeight=%dMB, %s, fundedSkips=%d, "
                         + "bankedSkips=%d, fundedResearches=%d (capped %d), batchRowHits=%d, "
                         + "classRowHits=%d, planHits=%d, planStopSkips=%d; "
                         + "%s; searches=%d; eligClasses=%d; dangerFields=%d; %s",
@@ -1616,8 +1581,7 @@ public final class Engine implements Planner {
                 s.loads(),
                 s.missCostMs(),
                 s.evictedBytes() >> 20,
-                deltaCustomizations.get(),
-                changedCustomizations.get(),
+                routing.stats(),
                 fundedFloorSkips.get(),
                 bankedFloorSkips.get(),
                 fundedResearches.get(),
@@ -1694,8 +1658,8 @@ public final class Engine implements Planner {
             }
         }
         // One from-side for the whole batch: each destination pays only its own backward half.
-        CchSearch fromSide = batchTl.get();
-        runFromTile(fromSide.forward, from, r.klass);
+        Search fromSide = batchTl.get();
+        runFromTile(fromSide.forward(), from, r.klass);
         FundedFrom funded = fundedFrom(from, policy, r, fromSide);
         for (int i = 0; i < out.length; i++) {
             out[i] = priceDest(from, dests.get(i), policy, r, funded, fromSide).deci();
@@ -1731,8 +1695,8 @@ public final class Engine implements Planner {
         // against the candidates' banked labels. The winner alone is then priced as any destination is.
         StaticTargetTables.Targets ts = staticTargets.select(statics);
         Resolved r = resolve(account, policy);
-        CchSearch fromSide = batchTl.get();
-        runFromTile(fromSide.forward, from, r.klass);
+        Search fromSide = batchTl.get();
+        runFromTile(fromSide.forward(), from, r.klass);
         FundedFrom funded = fundedFrom(from, policy, r, fromSide);
         IntArrayList near = new IntArrayList();
         int reach = -1;
@@ -1796,10 +1760,10 @@ public final class Engine implements Planner {
                 }
             }
             GoalLabels labels = targetLabels(ts, r.klass);
-            int at = meetIndex(fromSide.forward, labels);
+            int at = meetIndex(fromSide.forward(), labels);
             if (at >= 0) {
-                long p = fromSide.forward.dist[labels.ranks()[at]] + labels.costs()[at];
-                Price via = new Price(CchMetric.weightOf(p), p & 0xFFFFFFFFL);
+                long p = fromSide.forward().dist(labels.ranks()[at]) + labels.costs()[at];
+                Price via = new Price(PackedCost.weightOf(p), p & 0xFFFFFFFFL);
                 if (via.beats(lead)) {
                     lead = via;
                     winner = ownerAt(labels, at);
@@ -1836,7 +1800,7 @@ public final class Engine implements Planner {
      * The winner's tiles that can still carry its price: those whose direct weight is the winning one.
      * Where a bank stop could undercut the win, every tile stays.
      */
-    private Dest winningTiles(int[] tiles, Price lead, Point from, Resolved r, FundedFrom funded, CchSearch fromSide) {
+    private Dest winningTiles(int[] tiles, Price lead, Point from, Resolved r, FundedFrom funded, Search fromSide) {
         if (funded.usable && funded.cheapestStop <= lead.weight()) {
             return StaticTargetTables.Targets.dest(tiles);
         }
@@ -1850,9 +1814,9 @@ public final class Engine implements Planner {
             }
             GoalLabels g = goalLabels(goal, r.klass);
             if (g.ranks().length > 0) {
-                long p = meetLabels(fromSide.forward, g);
-                if (p != CchMetric.INF) {
-                    w = Math.min(w, CchMetric.weightOf(p));
+                long p = meetLabels(fromSide.forward(), g);
+                if (p != PackedCost.INF) {
+                    w = Math.min(w, PackedCost.weightOf(p));
                 }
             }
             if (w == lead.weight()) {
@@ -1896,7 +1860,7 @@ public final class Engine implements Planner {
         if (held != null) {
             return (GoalLabels) held;
         }
-        // Looked up before the load, not inside it: a Caffeine store refuses a load that loads from itself.
+        // Looked up before the load, not inside it: a store may refuse a load that loads from itself.
         TargetSeeds seeds = targetSeeds(ts, k.danger);
         return (GoalLabels) goalLabels.get(key, _ -> computeTargetLabels(ts, k, seeds));
     }
@@ -1909,7 +1873,7 @@ public final class Engine implements Planner {
     private GoalLabels computeTargetLabels(StaticTargetTables.Targets ts, Klass k, TargetSeeds all) {
         searches.incrementAndGet();
         targetLabelBuilds.incrementAndGet();
-        CchSearch.Half half = searchTl.get().backward;
+        Search.Half half = searchTl.get().backward();
         half.reset();
         int[] owner = ownerTl.get();
         boolean seeded = false;
@@ -1931,8 +1895,8 @@ public final class Engine implements Planner {
             }
             int first = graph.clusterFirstNode(gc);
             for (int m = 0; m < cost.length; m++) {
-                if (cost[m] != CchMetric.INF && half.seed(first + m, cost[m])) {
-                    owner[topology.rankOf[first + m]] = from[m];
+                if (cost[m] != PackedCost.INF && half.seed(first + m, cost[m])) {
+                    owner[routing.rankOf(first + m)] = from[m];
                     seeded = true;
                 }
             }
@@ -1949,11 +1913,11 @@ public final class Engine implements Planner {
         int kept = 0;
         for (int i = 0; i < n; i++) {
             int r = half.rankAt(i);
-            long d = half.dist[r];
-            if (d != CchMetric.INF) {
+            long d = half.dist(r);
+            if (d != PackedCost.INF) {
                 ranks[kept] = r;
-                preds[kept] = half.pred[r];
-                owners[kept] = half.pred[r] < 0 ? owner[r] : -1;
+                preds[kept] = half.pred(r);
+                owners[kept] = half.pred(r) < 0 ? owner[r] : -1;
                 costs[kept++] = d;
             }
         }
@@ -2053,7 +2017,7 @@ public final class Engine implements Planner {
             DangerField danger,
             long[] cost,
             int[] owner) {
-        Arrays.fill(cost, CchMetric.INF);
+        Arrays.fill(cost, PackedCost.INF);
         Arrays.fill(owner, -1);
         int[] times = new int[cost.length];
         for (int i = 0; i < pairs.length; i += 2) {
@@ -2068,7 +2032,7 @@ public final class Engine implements Planner {
             }
             for (int m = 0; m < seeds.length; m++) {
                 if (seeds[m] != Integer.MAX_VALUE) {
-                    long p = CchMetric.pack(seeds[m], times[m]);
+                    long p = PackedCost.pack(seeds[m], times[m]);
                     if (p < cost[m]) {
                         cost[m] = p;
                         owner[m] = g;
@@ -2082,16 +2046,16 @@ public final class Engine implements Planner {
      * Where {@code forward} meets {@code g} cheapest, as an index into its ranks (the lowest rank of equal
      * minima), or -1.
      */
-    private int meetIndex(CchSearch.Half forward, GoalLabels g) {
+    private int meetIndex(Search.Half forward, GoalLabels g) {
         searches.incrementAndGet();
-        long best = CchMetric.INF;
+        long best = PackedCost.INF;
         int at = -1;
         int[] ranks = g.ranks();
         long[] costs = g.costs();
         for (int i = 0; i < ranks.length; i++) {
             int r = ranks[i];
             if (forward.reached(r)) {
-                long via = forward.dist[r] + costs[i];
+                long via = forward.dist(r) + costs[i];
                 if (via < best) {
                     best = via;
                     at = i;
@@ -2106,7 +2070,7 @@ public final class Engine implements Planner {
         int[] ranks = g.ranks();
         int[] preds = g.preds();
         while (preds[i] >= 0) {
-            i = Arrays.binarySearch(ranks, topology.tail[preds[i]]);
+            i = Arrays.binarySearch(ranks, routing.tail(preds[i]));
         }
         return g.owners()[i];
     }
@@ -2120,10 +2084,10 @@ public final class Engine implements Planner {
         for (int i = 0; i < bankNodes.length; i++) {
             long to = f.toBank[i];
             long back = backs[i];
-            if (to == CchMetric.INF || back == CchMetric.INF) {
+            if (to == PackedCost.INF || back == PackedCost.INF) {
                 continue;
             }
-            long total = (long) CchMetric.weightOf(to) + f.stops[i] + CchMetric.weightOf(back);
+            long total = (long) PackedCost.weightOf(to) + f.stops[i] + PackedCost.weightOf(back);
             long time = (to & 0xFFFFFFFFL) + f.stops[i] + (back & 0xFFFFFFFFL);
             if (total < best || (total == best && time < bestTime)) {
                 best = total;
@@ -2136,10 +2100,10 @@ public final class Engine implements Planner {
         }
         long[] labels = f.klassB.metric(this).fromBankLabels();
         int banks = bankNodes.length;
-        int[] slotOf = topology.bankSlot;
+        int[] slotOf = routing.bankSlots();
         int[] ranks = gB.ranks();
         long[] costs = gB.costs();
-        long min = CchMetric.INF;
+        long min = PackedCost.INF;
         int at = -1;
         for (int j = 0; j < ranks.length; j++) {
             int slot = slotOf[ranks[j]];
@@ -2331,8 +2295,8 @@ public final class Engine implements Planner {
             return out;
         }
         Resolved r = resolve(account, policy);
-        CchSearch fromSide = batchTl.get();
-        runFromTile(fromSide.forward, from, r.klass);
+        Search fromSide = batchTl.get();
+        runFromTile(fromSide.forward(), from, r.klass);
         FundedFrom funded = fundedFrom(from, policy, r, fromSide);
         for (int i = 0; i < out.length; i++) {
             Price p = priceDest(from, dests.get(i), policy, r, funded, fromSide);
@@ -2351,8 +2315,7 @@ public final class Engine implements Planner {
      * One destination priced: an {@code AnyOf} by its lightest option, as a plan chooses; an area at its
      * {@link #entryTile}.
      */
-    private Price priceDest(
-            Point from, Dest dest, NavPolicy policy, Resolved r, FundedFrom funded, CchSearch fromSide) {
+    private Price priceDest(Point from, Dest dest, NavPolicy policy, Resolved r, FundedFrom funded, Search fromSide) {
         if (dest instanceof Dest.AnyOf any) {
             Price best = Price.NONE;
             for (Area a : any.options()) {
@@ -2474,7 +2437,7 @@ public final class Engine implements Planner {
      * route, which stops at a bank for the gate item it lacks. Ranked by weight; the winner's own time
      * is reported.
      */
-    private Price priceTile(Point from, Point goal, Resolved r, FundedFrom funded, CchSearch fromSide) {
+    private Price priceTile(Point from, Point goal, Resolved r, FundedFrom funded, Search fromSide) {
         long best = Long.MAX_VALUE;
         long bestTime = Long.MAX_VALUE;
         LocalField local = localField(from, goal, r.danger);
@@ -2487,9 +2450,9 @@ public final class Engine implements Planner {
         boolean viaHierarchy = false;
         GoalLabels g = goalLabels(goal, r.klass);
         if (g.ranks().length > 0) {
-            long p = meetLabels(fromSide.forward, g);
-            if (p != CchMetric.INF) {
-                long cost = CchMetric.weightOf(p);
+            long p = meetLabels(fromSide.forward(), g);
+            if (p != PackedCost.INF) {
+                long cost = PackedCost.weightOf(p);
                 long time = p & 0xFFFFFFFFL;
                 // Against an exact local walk, the hierarchy's time counts only when its route is a different one;
                 // its lighter weight still ranks, since the funded arm below is priced through the hierarchy too.
@@ -2608,7 +2571,7 @@ public final class Engine implements Planner {
      * and the hierarchy met against the area's labels, else {@link #primaryTile}. One tile for plans,
      * estimates and walks alike.
      */
-    private @Nullable Point entryTile(Point from, Area a, Klass k, DangerField danger, CchSearch fromSide) {
+    private @Nullable Point entryTile(Point from, Area a, Klass k, DangerField danger, Search fromSide) {
         if (a.contains(from.x(), from.y())) {
             return from;
         }
@@ -2656,24 +2619,24 @@ public final class Engine implements Planner {
         return via >= 0 ? tileOf(via) : best >= 0 ? tileOf(best) : primaryTile(a);
     }
 
-    private int hierarchyEntry(Point from, Area a, Klass k, CchSearch fromSide, long bestW, long bestT) {
+    private int hierarchyEntry(Point from, Area a, Klass k, Search fromSide, long bestW, long bestT) {
         long[] best = hierarchyBest(from, a, k, fromSide);
         return best != null && (best[0] < bestW || (best[0] == bestW && best[1] < bestT)) ? (int) best[2] : -1;
     }
 
     /** The hierarchy's lightest way into {@code a} as {@code {weight, time, tile}}; null when it reaches none. */
-    private long @Nullable [] hierarchyBest(Point from, Area a, Klass k, CchSearch fromSide) {
+    private long @Nullable [] hierarchyBest(Point from, Area a, Klass k, Search fromSide) {
         GoalLabels g = areaLabels(a, k);
         if (g.ranks().length == 0) {
             return null;
         }
-        runFromTile(fromSide.forward, from, k);
-        int at = meetIndex(fromSide.forward, g);
+        runFromTile(fromSide.forward(), from, k);
+        int at = meetIndex(fromSide.forward(), g);
         if (at < 0) {
             return null;
         }
-        long p = fromSide.forward.dist[g.ranks()[at]] + g.costs()[at];
-        return new long[] {CchMetric.weightOf(p), p & 0xFFFFFFFFL, ownerAt(g, at)};
+        long p = fromSide.forward().dist(g.ranks()[at]) + g.costs()[at];
+        return new long[] {PackedCost.weightOf(p), p & 0xFFFFFFFFL, ownerAt(g, at)};
     }
 
     /**
@@ -2682,7 +2645,7 @@ public final class Engine implements Planner {
      * the window charges nothing or its charged walk is no heavier than the hierarchy's; else the leg
      * names the hierarchy's seams, since the way round lies outside the window.
      */
-    private @Nullable Leg walkInto(Point from, Area a, Klass k, CchSearch s, boolean charged) {
+    private @Nullable Leg walkInto(Point from, Area a, Klass k, Search s, boolean charged) {
         if (a.contains(from.x(), from.y())) {
             return new Leg(List.of(), 0);
         }
@@ -2741,7 +2704,7 @@ public final class Engine implements Planner {
      * The charged walk into {@code a} for a window the field reaches into: the window's own where it is
      * no heavier than the hierarchy's, else the hierarchy's, seams and all. Null when neither reaches.
      */
-    private @Nullable Leg sealedWindow(Point from, Area a, Klass k, CchSearch s, Rect win) {
+    private @Nullable Leg sealedWindow(Point from, Area a, Klass k, Search s, Rect win) {
         long[] best = hierarchyBest(from, a, k, s);
         FlatWalk flat = flatTl.get();
         long window = flat.weightInto(
@@ -2834,7 +2797,7 @@ public final class Engine implements Planner {
 
     private GoalLabels computeAreaLabels(int[] tiles, Klass k) {
         searches.incrementAndGet();
-        CchSearch.Half half = searchTl.get().backward;
+        Search.Half half = searchTl.get().backward();
         half.reset();
         int[] owner = ownerTl.get();
         boolean seeded = false;
@@ -2852,7 +2815,7 @@ public final class Engine implements Planner {
             int nodes = graph.clusterNodeCount(gc);
             long[] cost = new long[nodes];
             int[] from = new int[nodes];
-            Arrays.fill(cost, CchMetric.INF);
+            Arrays.fill(cost, PackedCost.INF);
             int[] times = new int[nodes];
             for (int t : e.getValue()) {
                 int[] seeds = goalSeeds(tileOf(t), gc, k.danger, times);
@@ -2861,7 +2824,7 @@ public final class Engine implements Planner {
                 }
                 for (int m = 0; m < seeds.length; m++) {
                     if (seeds[m] != Integer.MAX_VALUE) {
-                        long p = CchMetric.pack(seeds[m], times[m]);
+                        long p = PackedCost.pack(seeds[m], times[m]);
                         if (p < cost[m]) {
                             cost[m] = p;
                             from[m] = t;
@@ -2871,8 +2834,8 @@ public final class Engine implements Planner {
             }
             int first = graph.clusterFirstNode(gc);
             for (int m = 0; m < nodes; m++) {
-                if (cost[m] != CchMetric.INF && half.seed(first + m, cost[m])) {
-                    owner[topology.rankOf[first + m]] = from[m];
+                if (cost[m] != PackedCost.INF && half.seed(first + m, cost[m])) {
+                    owner[routing.rankOf(first + m)] = from[m];
                     seeded = true;
                 }
             }
@@ -2889,11 +2852,11 @@ public final class Engine implements Planner {
         int kept = 0;
         for (int i = 0; i < n; i++) {
             int r = half.rankAt(i);
-            long d = half.dist[r];
-            if (d != CchMetric.INF) {
+            long d = half.dist(r);
+            if (d != PackedCost.INF) {
                 ranks[kept] = r;
-                preds[kept] = half.pred[r];
-                owners[kept] = half.pred[r] < 0 ? owner[r] : -1;
+                preds[kept] = half.pred(r);
+                owners[kept] = half.pred(r) < 0 ? owner[r] : -1;
                 costs[kept++] = d;
             }
         }
@@ -3025,7 +2988,7 @@ public final class Engine implements Planner {
     }
 
     /** A walk's own searches, apart from a plan's, whose halves hold the account's class. */
-    private final ThreadLocal<CchSearch> walkFromTl;
+    private final ThreadLocal<Search> walkFromTl;
 
     @Override
     public TracedRoute trace(Point from, Route route) {
@@ -3060,7 +3023,7 @@ public final class Engine implements Planner {
      * The walk to {@code goal} under a charged walk class: the local window's plain walk where it gets
      * there, else the hierarchy's.
      */
-    private @Nullable Leg chargedWalk(Point from, Point goal, Klass k, CchSearch s) {
+    private @Nullable Leg chargedWalk(Point from, Point goal, Klass k, Search s) {
         if (from.equals(goal)) {
             return new Leg(List.of(), 0);
         }
@@ -3071,10 +3034,10 @@ public final class Engine implements Planner {
         return hierarchyWalk(from, goal, k, s);
     }
 
-    private @Nullable Leg hierarchyWalk(Point from, Point goal, Klass k, CchSearch s) {
+    private @Nullable Leg hierarchyWalk(Point from, Point goal, Klass k, Search s) {
         GoalLabels g = goalLabels(goal, k);
         if (g.ranks().length > 0) {
-            runFromTile(s.forward, from, k);
+            runFromTile(s.forward(), from, k);
         }
         Comp comp = toGoal(s, from, goal, k, g);
         if (comp.cost == Long.MAX_VALUE) {
@@ -3091,7 +3054,7 @@ public final class Engine implements Planner {
     }
 
     /** The uncharged walk to {@code goal}: the local window's unless the hierarchy's is a different, lighter one. */
-    private @Nullable Leg plainWalk(Point from, Point goal, CchSearch s) {
+    private @Nullable Leg plainWalk(Point from, Point goal, Search s) {
         if (from.equals(goal)) {
             return new Leg(List.of(), 0);
         }
@@ -3100,7 +3063,7 @@ public final class Engine implements Planner {
         GoalLabels g = goalLabels(goal, k);
         Comp comp;
         if (g.ranks().length > 0) {
-            runFromTile(s.forward, from, k);
+            runFromTile(s.forward(), from, k);
             comp = toGoal(s, from, goal, k, g);
         } else {
             comp = toGoal(s, from, goal, k, g);

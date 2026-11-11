@@ -16,9 +16,6 @@ public final class ClusterGeometry {
 
     public static final int CLUSTER_SIZE = 64;
 
-    /** Bumped when a change here can change what a persisted leg plane holds. */
-    static final int PLANE_VERSION = 1;
-
     public static final int CLUSTERS_X = (CollisionMap.WIDTH + CLUSTER_SIZE - 1) / CLUSTER_SIZE;
     public static final int CLUSTERS_PER_FLOOR_Y = (CollisionMap.FLOOR_HEIGHT + CLUSTER_SIZE - 1) / CLUSTER_SIZE;
     public static final int CLUSTERS_PER_FLOOR = CLUSTERS_X * CLUSTERS_PER_FLOOR_Y;

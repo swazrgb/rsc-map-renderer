@@ -35,7 +35,7 @@ class DangerTimeFloorTest {
     @BeforeAll
     static void load() {
         env = RealDefs.serverData();
-        pf = RealDefs.cachedPathfinder();
+        pf = RealDefs.pathfinder();
     }
 
     @Test

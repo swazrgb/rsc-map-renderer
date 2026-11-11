@@ -45,40 +45,42 @@ public final class ClusterGraph {
     private final CollisionMap map;
     private final List<Transport> transports;
 
-    private final int[] clusterFirstNode;
-    private final int totalNodes;
-    private final int[] nodeX;
+    private final int[] transportPrice;
 
-    private final int[] nodeY;
-    private final int[] nodeCluster;
-    private final int[] nodeSpanLo;
+    final int[] clusterFirstNode;
+    final int totalNodes;
+    final int[] nodeX;
 
-    private final int[] nodeSpanHi;
-    private final int[][] clusterMatrix;
+    final int[] nodeY;
+    final int[] nodeCluster;
+    final int[] nodeSpanLo;
 
-    private final int[] boundaryA;
+    final int[] nodeSpanHi;
+    final int[][] clusterMatrix;
 
-    private final int[] boundaryB;
-    private final int boundaryEdgeCount;
+    final int[] boundaryA;
 
-    private final int[] transportFrom;
+    final int[] boundaryB;
+    final int boundaryEdgeCount;
 
-    private final int[] transportTo;
-    private final int[] transportIdx;
-    private final int transportEdgeCount;
+    final int[] transportFrom;
 
-    private final int[] anywhereDestNode;
+    final int[] transportTo;
+    final int[] transportIdx;
+    final int transportEdgeCount;
 
-    private final int[] anywhereTransportIdx;
-    private final int[] anywhereSource;
+    final int[] anywhereDestNode;
+
+    final int[] anywhereTransportIdx;
+    final int[] anywhereSource;
 
     private final TeleportRegion[] sourceRegion;
 
-    private final int[] castEntryFirst;
+    final int[] castEntryFirst;
 
-    private final int[] castEntryNodes;
+    final int[] castEntryNodes;
 
-    private final int[] bankNodes;
+    final int[] bankNodes;
 
     private final int[][] outTransports;
 
@@ -117,6 +119,10 @@ public final class ClusterGraph {
         this.map = map;
         this.edgeTables = edgeTables;
         this.transports = transports;
+        this.transportPrice = new int[transports.size()];
+        for (int i = 0; i < transportPrice.length; i++) {
+            transportPrice[i] = Math.max(0, transports.get(i).price());
+        }
         this.clusterFirstNode = clusterFirstNode;
         this.totalNodes = totalNodes;
         this.nodeX = nodeX;
@@ -141,31 +147,6 @@ public final class ClusterGraph {
         this.bankNodes = bankNodes;
         this.outTransports = outTransports;
         this.outBoundary = outBoundary;
-    }
-
-    /** Feeds every structural array into a store stamp; the per-node adjacency is derived from them. */
-    void digest(java.security.MessageDigest md) {
-        Digests.ints(md, clusterFirstNode);
-        Digests.ints(md, new int[] {totalNodes, boundaryEdgeCount, transportEdgeCount});
-        Digests.ints(md, nodeX);
-        Digests.ints(md, nodeY);
-        Digests.ints(md, nodeCluster);
-        Digests.ints(md, nodeSpanLo);
-        Digests.ints(md, nodeSpanHi);
-        for (int[] matrix : clusterMatrix) {
-            Digests.ints(md, matrix);
-        }
-        Digests.ints(md, boundaryA);
-        Digests.ints(md, boundaryB);
-        Digests.ints(md, transportFrom);
-        Digests.ints(md, transportTo);
-        Digests.ints(md, transportIdx);
-        Digests.ints(md, anywhereDestNode);
-        Digests.ints(md, anywhereTransportIdx);
-        Digests.ints(md, anywhereSource);
-        Digests.ints(md, castEntryFirst);
-        Digests.ints(md, castEntryNodes);
-        Digests.ints(md, bankNodes);
     }
 
     /**
@@ -458,6 +439,11 @@ public final class ClusterGraph {
      */
     public int[] outBoundary(int nodeId) {
         return outBoundary[nodeId];
+    }
+
+    /** Transport {@code transportIdx}'s {@link Transport#price}, at least 0. */
+    public int price(int transportIdx) {
+        return transportPrice[transportIdx];
     }
 
     /** The list the graph was built from, which every transport index indexes. */

@@ -129,7 +129,7 @@ class AreaGoalTest {
     @Test
     @DisplayName("a walk into an area is its shortest walk, even one that swings wide")
     void aWalkThatSwingsWideIsStillTheShortest() {
-        Pathfinder pf = RealDefs.cachedPathfinder();
+        Pathfinder pf = RealDefs.pathfinder();
         record Case(Point from, Rect area, int ticks) {}
         for (Case c : List.of(
                 new Case(Point.of(589, 525), new Rect(571, 473, 577, 500), 63),

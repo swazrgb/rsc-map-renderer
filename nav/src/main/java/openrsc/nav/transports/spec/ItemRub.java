@@ -20,6 +20,9 @@ public record ItemRub(int itemId, String[] keywords, Point to, int cost) impleme
     /** The account's opt-in to item teleports, which every item teleport requires. */
     public static final EligibilityInputs.Fact JEWELLERY_ALLOWED = EligibilityInputs.Fact.teleportJewelleryAllowed();
 
+    /** What spending a charge weighs ({@link Transport#price}): fifty walked tiles. */
+    public static final int CHARGE_PRICE = 500;
+
     private static final List<EligibilityInputs.Fact> RUB_HERE = List.of(
             JEWELLERY_ALLOWED,
             SpellTransport.NOT_HOLDING_ANA,
@@ -38,7 +41,7 @@ public record ItemRub(int itemId, String[] keywords, Point to, int cost) impleme
         }
         facts[RUB_HERE.size()] = Prereq.fact(EligibilityInputs.Fact.carriedAtLeast(itemId, 1));
         Prereq gate = Prereq.all(facts);
-        return List.of(ItemCommandTransport.teleport(itemId, to, cost, gate, List.<String[]>of(keywords))
+        return List.of(ItemCommandTransport.teleport(itemId, to, cost, CHARGE_PRICE, gate, List.<String[]>of(keywords))
                 .withPlacement(id));
     }
 }

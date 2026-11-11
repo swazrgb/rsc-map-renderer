@@ -44,7 +44,7 @@ export function wornItems(token: string, wearables: Record<number, string[]> | n
     return out;
 }
 import {Entity3D, EntityLayer} from "./World3DEntities";
-import {ObjectLibrary, ResolvedPlacement, assembleCell, sceneryHub} from "./World3DScenery";
+import {ObjectLibrary, ResolvedPlacement, assembleCell, centreTileOf, sceneryHub} from "./World3DScenery";
 import {BoundaryPlacement, DoorDefLite, assembleDoors, fetchDoorData} from "./World3DDoors";
 import {NpcSpriteLayer, NpcSpriteState, fetchNpcAtlas} from "./World3DNpcSprites";
 import {spriteViewProj} from "./spriteDepth";
@@ -61,7 +61,7 @@ import {componentsOverlay} from "./World3DComponents";
 import {WildernessLayer, wildernessStrideFor} from "./World3DWilderness";
 import {ProjectileLayer, ProjectileFlight, PROJECTILE_FLIGHT_MS} from "./World3DProjectiles";
 import {CompassGizmo} from "./World3DCompass";
-import type {SceneryPlacement} from "./api";
+import type {SceneryPlacement, UsedItem} from "./api";
 import {
     fetchScenery,
     fetchSceneryAtlasIndex,
@@ -624,6 +624,8 @@ export interface World3DViewProps {
      * a right click opens the menu of every action under the cursor.
      */
     walkTool?: boolean;
+    /** A right click opens the menu of every action under the cursor for the selected bot, as `walkTool` does. */
+    menu?: boolean;
     /** A left click on the ground reports its tile through `onTilePick`; entity and label clicks keep their meaning. */
     pickTool?: boolean;
     onTilePick?: (tile: {x: number; z: number; floor: number}) => void;
@@ -632,7 +634,7 @@ export interface World3DViewProps {
     /** Given, the walk tool's "Walk here" reports the tile instead of walking the selected bot. */
     onWalkHere?: (tile: {x: number; z: number; floor: number}) => void;
     /** An armed "Use item with": the next world click uses it on what it lands on. */
-    useItem?: {id: number; name: string} | null;
+    useItem?: UsedItem | null;
     /** The use was sent, or a walk cancelled it. */
     onUseItemDone?: () => void;
     onFlyingChange?: (flying: boolean) => void;
@@ -754,6 +756,7 @@ export function World3DView(props: World3DViewProps) {
             verb: string;
             target?: string;
             tcolor?: string;
+            count?: number;
             suffix?: string;
             scolor?: string;
             prio: number;
@@ -1634,6 +1637,8 @@ export function World3DView(props: World3DViewProps) {
             transport?: {name: string; dx: number; dz: number; dfloor: number} | null;
             noClick?: boolean;
             moved?: number;
+            /** Past the click's slack: the camera follows the pointer. */
+            dragging?: boolean;
         }
         let drag: Drag | null = null;
 
@@ -1659,7 +1664,9 @@ export function World3DView(props: World3DViewProps) {
             return true;
         };
 
-        const LOCK_PX = 4;
+        // How far a press may wander and still be a click: a hand on a mouse moves a pixel or two as it clicks.
+        const CLICK_PX = 4;
+        const LOCK_PX = CLICK_PX;
         // A camera drag takes pointer lock once past the click threshold, so it never runs out of screen.
         // Only Chromium is trusted with it; elsewhere it jumps the cursor about, and plain positions do.
         const lockCapable = (
@@ -1910,6 +1917,16 @@ export function World3DView(props: World3DViewProps) {
                     return;
                 }
                 const locked = isLocked();
+                // The camera keeps still while the press may yet be a click, then catches up in one step, so a pan
+                // stays under the pointer.
+                if (
+                    !drag.dragging &&
+                    !locked &&
+                    Math.hypot(e.clientX - drag.downX, e.clientY - drag.downY) < CLICK_PX
+                ) {
+                    return;
+                }
+                drag.dragging = true;
                 let dx = locked ? e.movementX : e.clientX - drag.lastX;
                 let dy = locked ? e.movementY : e.clientY - drag.lastY;
                 drag.lastX = e.clientX;
@@ -1944,6 +1961,8 @@ export function World3DView(props: World3DViewProps) {
             verb: string;
             target?: string;
             tcolor?: string;
+            /** How many of the target the entry stands for, ` x count` after it past 1. */
+            count?: number;
             suffix?: string;
             scolor?: string;
             prio: number;
@@ -1997,9 +2016,9 @@ export function World3DView(props: World3DViewProps) {
                 z: number,
                 id: number,
                 dir: number,
-                item = 0,
+                used: UsedItem | null = null,
             ) => {
-                sendInteract(user, action, x, z, id, dir, item).catch(() => {
+                sendInteract(user, action, x, z, id, dir, used?.id ?? 0, used?.noted ?? false).catch(() => {
                     // A lost click is the user's to repeat; the menu has closed either way.
                 });
             };
@@ -2018,7 +2037,7 @@ export function World3DView(props: World3DViewProps) {
                         tcolor: "#ff0",
                         prio: 710,
                         run: () => {
-                            send("use_item_on_npc", x, z, idx, clickNonce++, useIt.id);
+                            send("use_item_on_npc", x, z, idx, clickNonce++, useIt);
                             endItemUse();
                         },
                     });
@@ -2113,8 +2132,16 @@ export function World3DView(props: World3DViewProps) {
                 }
             }
 
-            // One Take per item in a pile, nearest first.
+            // One Take per item and tile in a pile, nearest first: as RuneLite collapses them, ten flax on a tile are
+            // one "Take Flax x 10", and the take picks up one of them.
+            const piles = new Map<string, {g: GroundItem3D; count: number}>();
             for (const g of L.ground) {
+                const key = `${g.id}:${Math.round(g.x)}:${Math.round(g.z)}`;
+                const pile = piles.get(key);
+                if (pile) pile.count++;
+                else piles.set(key, {g, count: 1});
+            }
+            for (const {g, count} of piles.values()) {
                 const gx = Math.round(g.x);
                 const gz = zAbs(Math.round(g.z));
                 if (useIt) {
@@ -2122,9 +2149,10 @@ export function World3DView(props: World3DViewProps) {
                         verb: `Use ${useIt.name} with`,
                         target: g.name ?? "item",
                         tcolor: "#ff9040",
+                        count,
                         prio: 210,
                         run: () => {
-                            send("use_item_on_ground_item", gx, gz, g.id, clickNonce++, useIt.id);
+                            send("use_item_on_ground_item", gx, gz, g.id, clickNonce++, useIt);
                             endItemUse();
                         },
                     });
@@ -2133,6 +2161,7 @@ export function World3DView(props: World3DViewProps) {
                         verb: "Take",
                         target: g.name ?? "item",
                         tcolor: "#ff9040",
+                        count,
                         prio: 220,
                         run: () => send("ground_item", gx, gz, g.id, clickNonce++),
                     });
@@ -2151,7 +2180,7 @@ export function World3DView(props: World3DViewProps) {
                         tcolor: "#0ff",
                         prio: 310,
                         run: () => {
-                            send("use_item_on_wall_object", wl.x, z, wl.id, wl.dir, useIt.id);
+                            send("use_item_on_wall_object", wl.x, z, wl.id, wl.dir, useIt);
                             endItemUse();
                         },
                     });
@@ -2188,7 +2217,7 @@ export function World3DView(props: World3DViewProps) {
                         tcolor: "#0ff",
                         prio: 410,
                         run: () => {
-                            send("use_item_on_object", o.ax, z, o.id, o.dir, useIt.id);
+                            send("use_item_on_object", o.ax, z, o.id, o.dir, useIt);
                             endItemUse();
                         },
                     });
@@ -2267,7 +2296,8 @@ export function World3DView(props: World3DViewProps) {
         };
 
         const endDrag = (e: PointerEvent) => {
-            const wasClick = drag && !drag.noClick && Math.hypot(e.clientX - drag.downX, e.clientY - drag.downY) < 4;
+            const wasClick =
+                drag && !drag.noClick && Math.hypot(e.clientX - drag.downX, e.clientY - drag.downY) < CLICK_PX;
             if (wasClick && ctxMenuOpenRef.current) {
                 setCtxMenu(null);
                 drag = null;
@@ -2277,7 +2307,7 @@ export function World3DView(props: World3DViewProps) {
             if (
                 wasClick &&
                 drag?.button === 2 &&
-                (propsRef.current.walkTool || propsRef.current.useItem) &&
+                (propsRef.current.menu || propsRef.current.walkTool || propsRef.current.useItem) &&
                 propsRef.current.selectedBot
             ) {
                 openMenu(e.clientX, e.clientY);
@@ -2285,7 +2315,11 @@ export function World3DView(props: World3DViewProps) {
                 if (host.hasPointerCapture(e.pointerId)) host.releasePointerCapture(e.pointerId);
                 return;
             }
-            if (drag?.button === 0 && !drag.noClick && Math.hypot(e.clientX - drag.downX, e.clientY - drag.downY) < 4) {
+            if (
+                drag?.button === 0 &&
+                !drag.noClick &&
+                Math.hypot(e.clientX - drag.downX, e.clientY - drag.downY) < CLICK_PX
+            ) {
                 if (drag.transport) {
                     const t = drag.transport;
                     const f = Math.max(0, Math.min(3, t.dfloor));
@@ -2417,6 +2451,7 @@ export function World3DView(props: World3DViewProps) {
                                 pivot: null,
                                 plateKey: null,
                                 noClick: true,
+                                dragging: true,
                             };
                         } else {
                             drag = null;
@@ -2798,9 +2833,23 @@ export function World3DView(props: World3DViewProps) {
         const sceneryMeshes = new Map<string, THREE.Group>();
         const dirtyCells = new Set<string>();
         const terrainReady = new Set<string>();
+        // Scenery cells waiting on a neighbour's terrain, by that terrain cell's key: an object centred over
+        // the next cell reads its ground there.
+        const sceneryWaits = new Map<string, Set<string>>();
+        const sceneryWaiting = new Set<string>();
         let lastObservedRev = -1;
         const cellKeyOf = (plane: number, x: number, z: number) =>
             `${plane}:${Math.floor((x - 24) / 48)},${Math.floor((z - 24) / 48)}`;
+        let bakedTerrain: Set<string> | null = null;
+        // A cell the bake left without terrain never lands one, and has no ground to wait for.
+        const terrainBaked = (ck: string): boolean => {
+            const m = stateRef.current.manifest;
+            if (!m) return true;
+            bakedTerrain ??= new Set(
+                m.cells.filter((c) => c.kinds.includes("terrain")).map((c) => cellKeyOf(c.plane, c.botX0, c.botZ0)),
+            );
+            return bakedTerrain.has(ck);
+        };
         const tileKeyOf = (plane: number, x: number, z: number) => `${plane}:${x},${z}`;
 
         // Animated scenery (fires, torches) gets one group per frame per cell, cycled every 120 ms as the
@@ -2843,7 +2892,6 @@ export function World3DView(props: World3DViewProps) {
             const manifest = stateRef.current.manifest;
             const lib = objLib;
             if (!lib || !manifest) return;
-            disposeSceneryCell(key);
             const statics = placementsByCell.get(key) ?? [];
             const plane = parseInt(key.split(":")[0], 10);
             const resolved: ResolvedPlacement[] = [];
@@ -2864,6 +2912,24 @@ export function World3DView(props: World3DViewProps) {
                 if (cellKeyOf(plane, x, z) !== key) continue;
                 resolved.push({id, dir: 0, x, z});
             }
+            // Built once the ground under every object's centre is in; until then the cell keeps what it shows.
+            const lacking = new Set<string>();
+            for (const pl of resolved) {
+                const c = centreTileOf(lib, pl);
+                const ck = c && cellKeyOf(plane, c.x, c.z);
+                if (ck && !terrainReady.has(ck) && terrainBaked(ck)) lacking.add(ck);
+            }
+            for (const ck of lacking) {
+                let waiting = sceneryWaits.get(ck);
+                if (!waiting) sceneryWaits.set(ck, (waiting = new Set()));
+                waiting.add(key);
+            }
+            if (lacking.size > 0) {
+                sceneryWaiting.add(key);
+                return;
+            }
+            sceneryWaiting.delete(key);
+            disposeSceneryCell(key);
             if (resolved.length === 0) return;
             const worldWidthUnits = manifest.botXTiles * 128;
             // The cell's own plane's heights, since this may rebuild a hidden floor; its groups stay hidden
@@ -3234,16 +3300,6 @@ export function World3DView(props: World3DViewProps) {
         // Outlines waiting on a terrain cell, by cell key: drawn before it lands, one would drape on height 0.
         const transportWaits = new Map<string, (() => void)[]>();
         // Runs `draw` once every cell under `tiles` has its terrain, at once if they all have.
-        let bakedTerrain: Set<string> | null = null;
-        // A cell the bake left without terrain never lands one, and has no ground to wait for.
-        const terrainBaked = (ck: string): boolean => {
-            const m = stateRef.current.manifest;
-            if (!m) return true;
-            bakedTerrain ??= new Set(
-                m.cells.filter((c) => c.kinds.includes("terrain")).map((c) => cellKeyOf(c.plane, c.botX0, c.botZ0)),
-            );
-            return bakedTerrain.has(ck);
-        };
         const whenTerrain = (plane: number, tiles: Iterable<{x: number; z: number}>, draw: () => void) => {
             const missing = new Set<string>();
             for (const t of tiles) {
@@ -4065,6 +4121,8 @@ export function World3DView(props: World3DViewProps) {
                             const ck = cellKeyOf(cell.plane, cell.botX0, cell.botZ0);
                             terrainReady.add(ck);
                             dirtyCells.add(ck);
+                            for (const waiting of sceneryWaits.get(ck) ?? []) dirtyCells.add(waiting);
+                            sceneryWaits.delete(ck);
                             const waits = transportWaits.get(ck);
                             transportWaits.delete(ck);
                             for (const w of waits ?? []) w();
@@ -4488,7 +4546,8 @@ export function World3DView(props: World3DViewProps) {
                     const key = `p${cell.plane}_${cell.a}_${cell.b}_${kind}`;
                     if (!loaded.has(key)) missing.add(key);
                 }
-                if (objLib && dirtyCells.has(cellKeyOf(cell.plane, cell.botX0, cell.botZ0))) ready = false;
+                const ck = cellKeyOf(cell.plane, cell.botX0, cell.botZ0);
+                if (objLib && (dirtyCells.has(ck) || sceneryWaiting.has(ck))) ready = false;
             }
             // The queue was sorted from where the camera stood when the floor was asked for.
             if (missing.size > 0) queue.sort((x, y) => Number(missing.has(y.key)) - Number(missing.has(x.key)));
@@ -4944,7 +5003,12 @@ export function World3DView(props: World3DViewProps) {
     }, []);
 
     return (
-        <div style={{position: "relative", width: "100%", height: "100%", isolation: "isolate"}}>
+        <div
+            style={{position: "relative", width: "100%", height: "100%", isolation: "isolate"}}
+            // Over everything the view draws: on Windows the browser's menu comes after the button is released,
+            // by when the game's menu is open under the pointer.
+            onContextMenu={(e) => e.preventDefault()}
+        >
             {/* Its own stacking context: the view's tiers (tags up to 905000, toolbar and compass 1000000,
                 the menu 2000000) stay inside it, so whatever the page floats over the view paints above. */}
             <div ref={hostRef} style={{position: "absolute", inset: 0, overflow: "hidden"}} />
@@ -5112,7 +5176,13 @@ export function World3DView(props: World3DViewProps) {
                             <span data-verb style={{color: "#fff"}}>
                                 {en.verb}
                             </span>
-                            {en.target && <span style={{color: en.tcolor ?? "#fff"}}> {en.target}</span>}
+                            {en.target && (
+                                <span style={{color: en.tcolor ?? "#fff"}}>
+                                    {" "}
+                                    {en.target}
+                                    {en.count != null && en.count > 1 ? ` x ${en.count}` : ""}
+                                </span>
+                            )}
                             {en.suffix && <span style={{color: en.scolor ?? "#fff"}}>{en.suffix}</span>}
                         </div>
                     ))}
