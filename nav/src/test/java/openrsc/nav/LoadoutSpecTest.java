@@ -251,6 +251,70 @@ class LoadoutSpecTest {
     }
 
     @Test
+    void banked_kit_takes_no_pack_slots_with_an_equipment_tab_but_one_to_pass_through() {
+        List<LoadoutSpec.Requirement> reqs = new java.util.ArrayList<>();
+        for (ItemId id : WORN_KIT) {
+            reqs.add(new Item(id, 1, 1, 1, true));
+        }
+        reqs.add(new Item(ItemId.SHARK, 29, 30, 30, false));
+        LoadoutSpec spec = new LoadoutSpec(reqs);
+        int[][] banked = new int[WORN_KIT.length + 1][];
+        for (int i = 0; i < WORN_KIT.length; i++) {
+            banked[i] = s(WORN_KIT[i].id(), 1);
+        }
+        banked[WORN_KIT.length] = s(ItemId.SHARK.id(), 100);
+
+        Settle coleslaw = spec.settleAt(new MutableInventory(true).snapshot(), bank(banked), DEFS);
+        assertTrue(coleslaw.satisfiable(), "the kit goes on and leaves the pack");
+        assertEquals(29L, coleslaw.manifest().withdraw().get(ItemId.SHARK), "one slot left to wear through");
+        assertEquals(WORN_KIT.length, coleslaw.manifest().equip().size());
+        assertEquals(29, coleslaw.projected().usedSlots());
+
+        Settle uranium = spec.settleAt(new MutableInventory(false).snapshot(), bank(banked), DEFS);
+        assertFalse(uranium.satisfiable(), "without a tab the kit keeps its five slots");
+    }
+
+    @Test
+    void two_put_ons_from_the_bank_keep_a_slot_even_when_one_displaces() {
+        MutableInventory m = new MutableInventory(true);
+        m.setSlot(0, new InventorySlot(0, ItemId.STEEL_LONG_SWORD.id(), 1, true));
+        m.setSlot(1, new InventorySlot(1, ItemId.STEEL_KITE_SHIELD.id(), 1, true));
+        LoadoutSpec spec = new LoadoutSpec(
+                List.of(
+                        new Item(ItemId.RUNE_2_HANDED_SWORD, 1, 1, 1, true),
+                        new Item(ItemId.RED_CAPE, 1, 1, 1, true),
+                        new Item(ItemId.SHARK, 1, 30, 30, false)),
+                false,
+                true);
+        Settle settle = spec.settleAt(
+                m.snapshot(),
+                bank(s(ItemId.RUNE_2_HANDED_SWORD.id(), 1), s(ItemId.RED_CAPE.id(), 1), s(ItemId.SHARK.id(), 100)),
+                DEFS);
+
+        assertTrue(settle.satisfiable());
+        assertEquals(
+                27L,
+                settle.manifest().withdraw().get(ItemId.SHARK),
+                "the sword and shield, and a slot for whichever piece goes on second");
+    }
+
+    @Test
+    void a_put_on_copy_is_never_trimmed_for_room_it_does_not_take() {
+        LoadoutSpec spec = new LoadoutSpec(
+                List.of(new Item(ItemId.SHARK, 29, 30, 30, false), new Item(ItemId.RING_OF_LIFE, 0, 1, 1, true)),
+                false,
+                true);
+        Settle settle = spec.settleAt(
+                new MutableInventory(true).snapshot(),
+                bank(s(ItemId.SHARK.id(), 100), s(ItemId.RING_OF_LIFE.id(), 1)),
+                DEFS);
+
+        assertTrue(settle.satisfiable());
+        assertEquals(Set.of(ItemId.RING_OF_LIFE), settle.manifest().equip(), "the ring frees nothing by staying");
+        assertEquals(29L, settle.manifest().withdraw().get(ItemId.SHARK));
+    }
+
+    @Test
     void a_wear_leaves_room_for_what_it_displaces() {
         MutableInventory m = new MutableInventory(true);
         m.setSlot(0, new InventorySlot(0, ItemId.STEEL_LONG_SWORD.id(), 1, true));

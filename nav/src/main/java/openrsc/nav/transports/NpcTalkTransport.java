@@ -29,6 +29,7 @@ public final class NpcTalkTransport implements Transport, DeclarativeTransport {
     private final Prereq prereq;
 
     private final int cost;
+    private int price;
     private final String note;
     private List<Consumed> consumes = List.of();
     private int useItemId = -1;
@@ -51,6 +52,11 @@ public final class NpcTalkTransport implements Transport, DeclarativeTransport {
         this.prereq = prereq;
         this.cost = cost;
         this.note = note;
+    }
+
+    public NpcTalkTransport priced(int price) {
+        this.price = price;
+        return this;
     }
 
     public NpcTalkTransport consuming(int itemId, int count) {
@@ -123,6 +129,11 @@ public final class NpcTalkTransport implements Transport, DeclarativeTransport {
     @Override
     public int cost() {
         return cost;
+    }
+
+    @Override
+    public int price() {
+        return price;
     }
 
     @Override

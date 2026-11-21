@@ -13,6 +13,7 @@ import openrsc.nav.transports.LadderTransport;
 import openrsc.nav.transports.ScriptedLadderTransport;
 import openrsc.nav.transports.spec.Rows.Answers;
 import openrsc.nav.transports.spec.Rows.CanKillAt;
+import openrsc.nav.transports.spec.Rows.Costs;
 import openrsc.nav.transports.spec.Rows.Note;
 import openrsc.nav.transports.spec.Rows.Option;
 import openrsc.nav.transports.spec.Rows.When;
@@ -23,7 +24,16 @@ import openrsc.nav.transports.spec.Rows.When;
  * from; a world that does not place the object there gets nothing.
  */
 public record ScriptedClimb(
-        int objectId, int x, int z, Point to, boolean column, boolean up, Prereq gate, String[][] answers, String note)
+        int objectId,
+        int x,
+        int z,
+        Point to,
+        boolean column,
+        boolean up,
+        Prereq gate,
+        String[][] answers,
+        String note,
+        int cost)
         implements TransportSpec {
 
     /** A climb's cost, in the planner's units of 10 per walked tile. */
@@ -36,9 +46,18 @@ public record ScriptedClimb(
     }
 
     public static ScriptedClimb ladder(int objectId, int x, int z, Point to, Option... options) {
-        allowOnly("a scripted climb", options, When.class, CanKillAt.class, Answers.class, Note.class);
+        allowOnly("a scripted climb", options, When.class, CanKillAt.class, Answers.class, Note.class, Costs.class);
         return new ScriptedClimb(
-                objectId, x, z, to, false, false, Rows.gateOf(options), Rows.answersOf(options), Rows.noteOf(options));
+                objectId,
+                x,
+                z,
+                to,
+                false,
+                false,
+                Rows.gateOf(options),
+                Rows.answersOf(options),
+                Rows.noteOf(options),
+                costOf(options));
     }
 
     /** {@link #ladder} at every placement of {@code objectId}, for a handler that matches the id alone. */
@@ -51,7 +70,7 @@ public record ScriptedClimb(
      * {@code up} or down, once its gate or conversation is passed.
      */
     public static ScriptedClimb columnLadder(int objectId, int x, int z, boolean up, Option... options) {
-        allowOnly("a scripted climb", options, When.class, CanKillAt.class, Answers.class, Note.class);
+        allowOnly("a scripted climb", options, When.class, CanKillAt.class, Answers.class, Note.class, Costs.class);
         return new ScriptedClimb(
                 objectId,
                 x,
@@ -61,7 +80,13 @@ public record ScriptedClimb(
                 up,
                 Rows.gateOf(options),
                 Rows.answersOf(options),
-                Rows.noteOf(options));
+                Rows.noteOf(options),
+                costOf(options));
+    }
+
+    private static int costOf(Option... options) {
+        Costs c = Rows.find(Costs.class, options);
+        return c == null ? COST : c.cost();
     }
 
     @Override
@@ -84,7 +109,7 @@ public record ScriptedClimb(
             return List.of();
         }
         ScriptedLadderTransport t =
-                new ScriptedLadderTransport(objectId, x, z, to.x(), to.y(), gate, COST, entries).withNote(note);
+                new ScriptedLadderTransport(objectId, x, z, to.x(), to.y(), gate, cost, entries).withNote(note);
         t.withPlacement(id);
         if (column) {
             t.coordPreserving(up);

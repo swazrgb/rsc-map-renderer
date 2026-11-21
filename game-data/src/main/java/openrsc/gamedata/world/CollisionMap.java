@@ -776,19 +776,17 @@ public final class CollisionMap {
      * tile an NPC or player target stands on.
      */
     public List<Point> engageTiles(Targetable t, LocalOverlay overlay) {
-        Bounds window =
-                switch (t.kind()) {
-                    case SCENERY -> {
-                        Bounds b = sceneryBounds(objectDef(t.id()), t.x(), t.z(), t.dir());
-                        int m = closeSpecReach(t.id());
-                        yield new Bounds(b.minX() - m, b.minY() - m, b.maxX() + m, b.maxY() + m);
-                    }
-                    case BOUNDARY -> boundaryBounds(t.x(), t.z(), t.dir());
-                    case NPC, PLAYER, PLAYER_USE, NPC_SPAWN, GROUND ->
-                        new Bounds(t.x() - 1, t.z() - 1, t.x() + 1, t.z() + 1);
-                    case PLAYER_TRADE ->
-                        new Bounds(t.x() - TRADE_RANGE, t.z() - TRADE_RANGE, t.x() + TRADE_RANGE, t.z() + TRADE_RANGE);
-                };
+        Bounds window = switch (t.kind()) {
+            case SCENERY -> {
+                Bounds b = sceneryBounds(objectDef(t.id()), t.x(), t.z(), t.dir());
+                int m = closeSpecReach(t.id());
+                yield new Bounds(b.minX() - m, b.minY() - m, b.maxX() + m, b.maxY() + m);
+            }
+            case BOUNDARY -> boundaryBounds(t.x(), t.z(), t.dir());
+            case NPC, PLAYER, PLAYER_USE, NPC_SPAWN, GROUND -> new Bounds(t.x() - 1, t.z() - 1, t.x() + 1, t.z() + 1);
+            case PLAYER_TRADE ->
+                new Bounds(t.x() - TRADE_RANGE, t.z() - TRADE_RANGE, t.x() + TRADE_RANGE, t.z() + TRADE_RANGE);
+        };
         boolean mob = t.kind() == Targetable.Kind.NPC
                 || t.kind() == Targetable.Kind.PLAYER
                 || t.kind() == Targetable.Kind.PLAYER_USE;

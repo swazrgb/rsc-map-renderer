@@ -73,7 +73,7 @@ import openrsc.nav.transports.spec.TransportSpec;
 public enum AgilityObstacles implements TransportDef {
     // Fixed landings per id:
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/skills/agility/AgilityShortcuts.java#L179
-    FALADOR_SE_WALL_HANDHOLD(anyPlacement(693, to(338, 555), AgilityObstacles.COST, when(level(Skill.AGILITY, 5)))),
+    FALADOR_SE_WALL_HANDHOLD(anyPlacement(693, to(338, 555), 10, when(level(Skill.AGILITY, 5)))),
     BRIMHAVEN_VINE_SWING_E_W(anyPlacement(694, to(511, 669), AgilityObstacles.COST, when(level(Skill.AGILITY, 10)))),
     BRIMHAVEN_VINE_SWING_W_E(anyPlacement(695, to(508, 668), AgilityObstacles.COST, when(level(Skill.AGILITY, 10)))),
     EDGEVILLE_DUNGEON_ROPE_N_S(anyPlacement(684, to(207, 3221), AgilityObstacles.COST, when(level(Skill.AGILITY, 15)))),
@@ -86,8 +86,8 @@ public enum AgilityObstacles implements TransportDef {
             anyPlacement(627, to(598, 3585), AgilityObstacles.COST, when(level(Skill.AGILITY, 57)))),
     YANILLE_AGILITY_LEDGE_N_S(anyPlacement(614, to(601, 3563), AgilityObstacles.COST, when(level(Skill.AGILITY, 40)))),
     YANILLE_AGILITY_LEDGE_S_N(anyPlacement(615, to(601, 3557), AgilityObstacles.COST, when(level(Skill.AGILITY, 40)))),
-    YANILLE_RUBBLE_DOWN(anyPlacement(636, to(580, 3525), AgilityObstacles.COST, when(level(Skill.AGILITY, 67)))),
-    YANILLE_RUBBLE_UP(anyPlacement(633, to(582, 3573), AgilityObstacles.COST, when(level(Skill.AGILITY, 67)))),
+    YANILLE_RUBBLE_DOWN(anyPlacement(636, to(580, 3525), 10, when(level(Skill.AGILITY, 67)))),
+    YANILLE_RUBBLE_UP(anyPlacement(633, to(582, 3573), 10, when(level(Skill.AGILITY, 67)))),
     YANILLE_PIPE_W_E(anyPlacement(656, to(608, 3568), AgilityObstacles.COST, when(level(Skill.AGILITY, 49)))),
     YANILLE_PIPE_E_W(anyPlacement(657, to(605, 3568), AgilityObstacles.COST, when(level(Skill.AGILITY, 49)))),
 
@@ -97,9 +97,8 @@ public enum AgilityObstacles implements TransportDef {
      * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/skills/agility/AgilityShortcuts.java#L426">AgilityShortcuts.onOpLoc</a>
      */
     GREW_ISLAND_ROPE_S_N(anyPlacement(664, to(666, 755), AgilityObstacles.COST)),
-    YANILLE_CLIMBING_ROCKS(anyPlacement(1029, to(624, 741), AgilityObstacles.COST, when(level(Skill.AGILITY, 15)))),
-    YANILLE_WATCHTOWER_HANDHOLDS(
-            anyPlacement(658, to(637, 1680), AgilityObstacles.COST, when(level(Skill.AGILITY, 18)))),
+    YANILLE_CLIMBING_ROCKS(anyPlacement(1029, to(624, 741), 10, when(level(Skill.AGILITY, 15)))),
+    YANILLE_WATCHTOWER_HANDHOLDS(anyPlacement(658, to(637, 1680), 10, when(level(Skill.AGILITY, 18)))),
 
     WILDERNESS_AGILITY_COURSE_VINE_CLIMB_CLIFF(anyPlacement(709, to(304, 120), AgilityObstacles.COST)),
 
@@ -155,7 +154,7 @@ public enum AgilityObstacles implements TransportDef {
 
     // 3 in 10 climbs fall back onto the spikes.
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/members/undergroundpass/obstacles/UndergroundPassOrbs.java#L132
-    UNDERGROUND_PASS_GRILL_CLIMB_816(anyPlacement(816, to(737, 3453), AgilityObstacles.COST, canKillAt(6))),
+    UNDERGROUND_PASS_GRILL_CLIMB_816(anyPlacement(816, to(737, 3453), 110, canKillAt(6))),
 
     // The side is the player's absolute x.
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/skills/agility/AgilityShortcuts.java#L449
@@ -214,7 +213,7 @@ public enum AgilityObstacles implements TransportDef {
                     p.x(),
                     p.z(),
                     p.x() == 450 ? to(452, 829) : to(449, 828),
-                    AgilityObstacles.COST,
+                    140,
                     when(level(Skill.AGILITY, 32)),
                     answers("easily climb"))))),
 
@@ -228,7 +227,7 @@ public enum AgilityObstacles implements TransportDef {
                             p.x(),
                             p.z(),
                             to(460, 828),
-                            AgilityObstacles.COST,
+                            200,
                             xAtMost(459),
                             when(level(Skill.AGILITY, 32)),
                             answers("totally brave")),
@@ -237,7 +236,7 @@ public enum AgilityObstacles implements TransportDef {
                             p.x(),
                             p.z(),
                             to(458, 828),
-                            AgilityObstacles.COST,
+                            200,
                             xAtLeast(460),
                             when(level(Skill.AGILITY, 32)),
                             answers("totally brave"))))),
@@ -248,20 +247,20 @@ public enum AgilityObstacles implements TransportDef {
     UNDERGROUND_PASS_LEDGE_752(everyScenery(752, AgilityObstacles::ledgeArms)),
     UNDERGROUND_PASS_LEDGE_753(everyScenery(753, AgilityObstacles::ledgeArms)),
 
-    UNDERGROUND_PASS_ROCK_731(everyScenery(731, p -> rockArms(p, 1))),
-    UNDERGROUND_PASS_ROCK_737(everyScenery(737, p -> rockArms(p, 1))),
-    UNDERGROUND_PASS_ROCK_738(everyScenery(738, p -> rockArms(p, 1))),
-    UNDERGROUND_PASS_ROCK_739(everyScenery(739, p -> rockArms(p, 1))),
-    UNDERGROUND_PASS_ROCK_740(everyScenery(740, p -> rockArms(p, 1))),
-    UNDERGROUND_PASS_ROCK_741(everyScenery(741, p -> rockArms(p, 1))),
-    UNDERGROUND_PASS_ROCK_742(everyScenery(742, p -> rockArms(p, 1))),
-    UNDERGROUND_PASS_ROCK_743(everyScenery(743, p -> rockArms(p, 1))),
-    UNDERGROUND_PASS_ROCK_744(everyScenery(744, p -> rockArms(p, 1))),
-    UNDERGROUND_PASS_ROCK_745(everyScenery(745, p -> rockArms(p, 1))),
-    UNDERGROUND_PASS_ROCK_746(everyScenery(746, p -> rockArms(p, 1))),
-    UNDERGROUND_PASS_ROCK_747(everyScenery(747, p -> rockArms(p, 1))),
-    UNDERGROUND_PASS_ROCK_748(everyScenery(748, p -> rockArms(p, 1))),
-    UNDERGROUND_PASS_ROCK_749(everyScenery(749, p -> rockArms(p, 1))),
+    UNDERGROUND_PASS_ROCK_731(everyScenery(731, p -> rockArms(p, 1, 10))),
+    UNDERGROUND_PASS_ROCK_737(everyScenery(737, p -> rockArms(p, 1, 10))),
+    UNDERGROUND_PASS_ROCK_738(everyScenery(738, p -> rockArms(p, 1, 10))),
+    UNDERGROUND_PASS_ROCK_739(everyScenery(739, p -> rockArms(p, 1, 10))),
+    UNDERGROUND_PASS_ROCK_740(everyScenery(740, p -> rockArms(p, 1, 10))),
+    UNDERGROUND_PASS_ROCK_741(everyScenery(741, p -> rockArms(p, 1, 10))),
+    UNDERGROUND_PASS_ROCK_742(everyScenery(742, p -> rockArms(p, 1, 10))),
+    UNDERGROUND_PASS_ROCK_743(everyScenery(743, p -> rockArms(p, 1, 10))),
+    UNDERGROUND_PASS_ROCK_744(everyScenery(744, p -> rockArms(p, 1, 10))),
+    UNDERGROUND_PASS_ROCK_745(everyScenery(745, p -> rockArms(p, 1, 10))),
+    UNDERGROUND_PASS_ROCK_746(everyScenery(746, p -> rockArms(p, 1, 10))),
+    UNDERGROUND_PASS_ROCK_747(everyScenery(747, p -> rockArms(p, 1, 10))),
+    UNDERGROUND_PASS_ROCK_748(everyScenery(748, p -> rockArms(p, 1, 10))),
+    UNDERGROUND_PASS_ROCK_749(everyScenery(749, p -> rockArms(p, 1, 10))),
 
     /**
      * Any swamp tile, clicked, drags the player down into the crevasse. Not (697,3441): the first rocks
@@ -272,8 +271,8 @@ public enum AgilityObstacles implements TransportDef {
      * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/members/undergroundpass/mechanism/UndergroundPassMechanismMap1.java#L123">UndergroundPassMechanismMap1.onUseLoc</a>
      * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/world/World.java#L494">World.registerGameObject</a>
      */
-    UNDERGROUND_PASS_SWAMP_754_DRAG_INTO_CREVASSE(anyPlacement(754, to(690, 3461), AgilityObstacles.COST, canKillAt(2))
-            .except(Point.of(697, 3441))),
+    UNDERGROUND_PASS_SWAMP_754_DRAG_INTO_CREVASSE(
+            anyPlacement(754, to(690, 3461), 310, canKillAt(2)).except(Point.of(697, 3441))),
 
     /**
      * Rocks thrown on the blessed spider's swamp; the side is the player's absolute y. Not (714,3418):
@@ -336,20 +335,20 @@ public enum AgilityObstacles implements TransportDef {
     UNDERGROUND_PASS_GATE_OF_ZAMORAK(obstacleAnywhere(875, to(763, 3417), AgilityObstacles.COST)),
 
     SHILO_SMASHED_TABLE_697_CRAFT_RAFT(
-            obstacleAnywhere(697, to(341, 810), AgilityObstacles.COST, answers("crude raft"), secondCommand())),
+            obstacleAnywhere(697, to(341, 810), 480, answers("crude raft"), secondCommand())),
 
     UNDERGROUND_PASS_OLD_BRIDGE_726_LIT_ARROW(bespoke(UndergroundPassOldBridgeTransport::forWorld)),
 
     SHILO_TOMB_DOLMEN_724_LOOK(everyScenery(
-            724, p -> List.of(scenery(724, p.plus(-1, 1), to(380, 3625), AgilityObstacles.COST, clickAt(p.at()))))),
+            724, p -> List.of(scenery(724, p.plus(-1, 1), to(380, 3625), 100, clickAt(p.at()))))),
 
-    UNDERGROUND_PASS_ROCK_756(everyScenery(756, p -> rockArms(p, 1))),
-    UNDERGROUND_PASS_ROCK_757(everyScenery(757, p -> rockArms(p, 1))),
-    UNDERGROUND_PASS_ROCK_758(everyScenery(758, p -> rockArms(p, 1))),
-    UNDERGROUND_PASS_ROCK_759(everyScenery(759, p -> rockArms(p, 1))),
-    UNDERGROUND_PASS_ROCK_760(everyScenery(760, p -> rockArms(p, 1))),
-    UNDERGROUND_PASS_ROCK_762(everyScenery(762, p -> rockArms(p, 1))),
-    UNDERGROUND_PASS_ROCK_766(everyScenery(766, p -> rockArms(p, 1))),
+    UNDERGROUND_PASS_ROCK_756(everyScenery(756, p -> rockArms(p, 1, 10))),
+    UNDERGROUND_PASS_ROCK_757(everyScenery(757, p -> rockArms(p, 1, 10))),
+    UNDERGROUND_PASS_ROCK_758(everyScenery(758, p -> rockArms(p, 1, 10))),
+    UNDERGROUND_PASS_ROCK_759(everyScenery(759, p -> rockArms(p, 1, 10))),
+    UNDERGROUND_PASS_ROCK_760(everyScenery(760, p -> rockArms(p, 1, 10))),
+    UNDERGROUND_PASS_ROCK_762(everyScenery(762, p -> rockArms(p, 1, 10))),
+    UNDERGROUND_PASS_ROCK_766(everyScenery(766, p -> rockArms(p, 1, 10))),
     UNDERGROUND_PASS_ROCK_763(everyScenery(763, p -> rockFrom(p, 1, new int[] {1, 0}, new int[] {-1, 0}))),
     UNDERGROUND_PASS_ROCK_764(everyScenery(764, p -> rockFrom(p, 1, new int[] {1, 0}))),
     UNDERGROUND_PASS_ROCK_765(everyScenery(765, p -> rockFrom(p, 1, new int[] {1, 0}, new int[] {-1, 0}))),
@@ -376,7 +375,7 @@ public enum AgilityObstacles implements TransportDef {
     UNDERGROUND_PASS_PIT_OF_THE_DAMNED_913_DOLL_OF_IBAN(obstacleAnywhere(
             913,
             to(687, 3485),
-            AgilityObstacles.COST,
+            340,
             usesItem(ItemId.A_DOLL_OF_IBAN.id(), 1),
             when(Prereq.all(
                     notQuestAtLeast(UNDERGROUND_PASS, 8),
@@ -387,10 +386,9 @@ public enum AgilityObstacles implements TransportDef {
 
     // Both gates turn back 2 in 5 attempts, whatever the level.
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/skills/agility/WildernessAgilityCourse.java#L46
-    WILDERNESS_AGILITY_RIDGE_GATE_703(
-            obstacleAnywhere(703, to(298, 125), AgilityObstacles.COST, when(level(Skill.AGILITY, 52)))),
+    WILDERNESS_AGILITY_RIDGE_GATE_703(obstacleAnywhere(703, to(298, 125), 160, when(level(Skill.AGILITY, 52)))),
 
-    WILDERNESS_AGILITY_RIDGE_GATE_704_EXIT(obstacleAnywhere(704, to(298, 134), AgilityObstacles.COST)),
+    WILDERNESS_AGILITY_RIDGE_GATE_704_EXIT(obstacleAnywhere(704, to(298, 134), 120)),
 
     BARBARIAN_AGILITY_ROPESWING_675_SWING_ACROSS(anyPlacement(
             675,
@@ -435,12 +433,11 @@ public enum AgilityObstacles implements TransportDef {
                             when(level(Skill.AGILITY, 35)),
                             note("a balance roll, always failed under 35; a slip drops you to the ground floor"))))),
 
-    BARBARIAN_AGILITY_HANDHOLDS_679_CLIMB_WALL(anyPlacement(679, to(497, 555), AgilityObstacles.COST)),
+    BARBARIAN_AGILITY_HANDHOLDS_679_CLIMB_WALL(anyPlacement(679, to(497, 555), 10)),
 
-    WATCHTOWER_FORCEFIELD_LEVER(
-            obstacleAnywhere(1014, to(492, 3521), AgilityObstacles.COST, when(questAt(WATCHTOWER, 10)))),
+    WATCHTOWER_FORCEFIELD_LEVER(obstacleAnywhere(1014, to(492, 3521), 280, when(questAt(WATCHTOWER, 10)))),
 
-    UNDERGROUND_PASS_MUD_PILE_767_CLIMB_TO_MAIN_FLOOR(anyPlacement(767, to(685, 3420), AgilityObstacles.COST)),
+    UNDERGROUND_PASS_MUD_PILE_767_CLIMB_TO_MAIN_FLOOR(anyPlacement(767, to(685, 3420), 100)),
     UNDERGROUND_PASS_MUD_PILE_841_CLIMB(anyPlacement(841, to(727, 3448), AgilityObstacles.COST)),
     UNDERGROUND_PASS_MUD_PILE_843_CLIMB(anyPlacement(843, to(753, 3481), AgilityObstacles.COST)),
     UNDERGROUND_PASS_MUD_PILE_844_CLIMB(anyPlacement(844, to(753, 3475), AgilityObstacles.COST)),
@@ -450,8 +447,8 @@ public enum AgilityObstacles implements TransportDef {
 
     UNDERGROUND_PASS_NORTH_STONE_STEP_889_CLIMB_TO_SURFACE(
             anyPlacement(889, to(766, 585), AgilityObstacles.COST, when(notQuestAt(UNDERGROUND_PASS, 4)))),
-    UNDERGROUND_PASS_LEVER_733_LOWER_BRIDGE_CROSS_W(anyPlacement(733, to(703, 3420), AgilityObstacles.COST)),
-    UNDERGROUND_PASS_DROP_DOWN_LEDGE_812_DROP_TO_CAVE_FLOOR(anyPlacement(812, to(706, 3439), AgilityObstacles.COST)),
+    UNDERGROUND_PASS_LEVER_733_LOWER_BRIDGE_CROSS_W(anyPlacement(733, to(703, 3420), 90)),
+    UNDERGROUND_PASS_DROP_DOWN_LEDGE_812_DROP_TO_CAVE_FLOOR(anyPlacement(812, to(706, 3439), 10)),
 
     UNDERGROUND_PASS_SPEAR_ROCK_806(everyScenery(806, AgilityObstacles::spearRockArms)),
     UNDERGROUND_PASS_SPEAR_ROCK_807(everyScenery(807, AgilityObstacles::spearRockArms)),
@@ -502,17 +499,17 @@ public enum AgilityObstacles implements TransportDef {
                             when(Prereq.all(level(Skill.AGILITY, 1), notQuestAt(UNDERGROUND_PASS, 4))),
                             canKillAt(6))))),
 
-    UP_BLACK_AREA_ROCK_849(everyScenery(849, p -> rockArms(p, 6))),
-    UP_BLACK_AREA_ROCK_850(everyScenery(850, p -> rockArms(p, 6))),
-    UP_BLACK_AREA_ROCK_851(everyScenery(851, p -> rockArms(p, 6))),
-    UP_BLACK_AREA_ROCK_852(everyScenery(852, p -> rockArms(p, 6))),
-    UP_BLACK_AREA_ROCK_853(everyScenery(853, p -> rockArms(p, 6))),
-    UP_BLACK_AREA_ROCK_854(everyScenery(854, p -> rockArms(p, 6))),
-    UP_BLACK_AREA_ROCK_855(everyScenery(855, p -> rockArms(p, 6))),
-    UP_BLACK_AREA_ROCK_857(everyScenery(857, p -> rockArms(p, 6))),
-    UP_BLACK_AREA_ROCK_858(everyScenery(858, p -> rockArms(p, 6))),
-    UP_BLACK_AREA_ROCK_859(everyScenery(859, p -> rockArms(p, 6))),
-    UP_BLACK_AREA_ROCK_860(everyScenery(860, p -> rockArms(p, 6))),
+    UP_BLACK_AREA_ROCK_849(everyScenery(849, p -> rockArms(p, 6, 30))),
+    UP_BLACK_AREA_ROCK_850(everyScenery(850, p -> rockArms(p, 6, 30))),
+    UP_BLACK_AREA_ROCK_851(everyScenery(851, p -> rockArms(p, 6, 30))),
+    UP_BLACK_AREA_ROCK_852(everyScenery(852, p -> rockArms(p, 6, 30))),
+    UP_BLACK_AREA_ROCK_853(everyScenery(853, p -> rockArms(p, 6, 30))),
+    UP_BLACK_AREA_ROCK_854(everyScenery(854, p -> rockArms(p, 6, 30))),
+    UP_BLACK_AREA_ROCK_855(everyScenery(855, p -> rockArms(p, 6, 30))),
+    UP_BLACK_AREA_ROCK_857(everyScenery(857, p -> rockArms(p, 6, 30))),
+    UP_BLACK_AREA_ROCK_858(everyScenery(858, p -> rockArms(p, 6, 30))),
+    UP_BLACK_AREA_ROCK_859(everyScenery(859, p -> rockArms(p, 6, 30))),
+    UP_BLACK_AREA_ROCK_860(everyScenery(860, p -> rockArms(p, 6, 30))),
 
     UP_HIJACK_ROCK_856(everyScenery(
             856,
@@ -522,7 +519,7 @@ public enum AgilityObstacles implements TransportDef {
                             p.x(),
                             p.z(),
                             to(735, 3479),
-                            AgilityObstacles.COST,
+                            30,
                             xIn(734, 734),
                             when(level(Skill.AGILITY, 1)),
                             canKillAt(6)),
@@ -531,7 +528,7 @@ public enum AgilityObstacles implements TransportDef {
                             p.x(),
                             p.z(),
                             to(734, 3480),
-                            AgilityObstacles.COST,
+                            30,
                             xAtMost(733),
                             when(level(Skill.AGILITY, 1)),
                             canKillAt(6)),
@@ -540,7 +537,7 @@ public enum AgilityObstacles implements TransportDef {
                             p.x(),
                             p.z(),
                             to(734, 3480),
-                            AgilityObstacles.COST,
+                            30,
                             xAtLeast(735),
                             when(level(Skill.AGILITY, 1)),
                             canKillAt(6))))),
@@ -553,14 +550,14 @@ public enum AgilityObstacles implements TransportDef {
     UP_BLACK_AREA_LEDGE_837_CLIMB_UP(obstacleAnywhere(
             837,
             to(764, 3463),
-            AgilityObstacles.COST,
+            50,
             when(level(Skill.AGILITY, 1)),
             secondCommand(),
             note("a soft roll; a slip retries in place"),
             canKillAt(1))),
 
     GNOME_AGILITY_COURSE_NET_CLIMB_UP(anyPlacement(647, to(692, 1448), AgilityObstacles.COST)),
-    GNOME_AGILITY_COURSE_PIPE_EXIT(anyPlacement(654, to(683, 494), AgilityObstacles.COST)),
+    GNOME_AGILITY_COURSE_PIPE_EXIT(anyPlacement(654, to(683, 494), 100)),
 
     GNOME_AGILITY_COURSE_BALANCE_LOG(anyPlacement(655, to(692, 499), AgilityObstacles.COST)),
 
@@ -569,11 +566,7 @@ public enum AgilityObstacles implements TransportDef {
     GNOME_AGILITY_COURSE_WATCH_TOWER_CLIMB_UP(anyPlacement(648, to(693, 2394), AgilityObstacles.COST)),
 
     SHILO_TOMB_OF_BERVIRIUS_HANDHOLDS_CLIMB_TO_SURFACE(anyPlacement(
-            690,
-            to(471, 836),
-            AgilityObstacles.COST,
-            when(level(Skill.AGILITY, 1)),
-            note("a soft roll; a fall lands you at (467,3674)"))),
+            690, to(471, 836), 60, when(level(Skill.AGILITY, 1)), note("a soft roll; a fall lands you at (467,3674)"))),
 
     // Carrying Ana in a barrel here gets you caught and jailed instead.
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/members/touristtrap/Tourist_Trap_Mechanism.java#L372
@@ -582,7 +575,7 @@ public enum AgilityObstacles implements TransportDef {
             to(84, 3640),
             AgilityObstacles.COST,
             when(Prereq.fact(Fact.notCarrying(ItemId.ANA_IN_A_BARREL.id()))))),
-    SKAVID_MAZE_HOLE_YANILLE(anyPlacement(969, to(609, 742), AgilityObstacles.COST)),
+    SKAVID_MAZE_HOLE_YANILLE(anyPlacement(969, to(609, 742), 10)),
     // The side is the player's absolute y; in, once the crystal is placed or the quest is done (the
     // reward clears the crystal's key).
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/members/legendsquest/obstacles/LegendsQuestGameObjects.java#L156
@@ -590,13 +583,13 @@ public enum AgilityObstacles implements TransportDef {
     KHARAZI_CAVERNOUS_OPENING(everyScenery(
             1145,
             p -> List.of(
-                    obstacle(1145, p.x(), p.z(), to(395, 3725), AgilityObstacles.COST, zAtLeast(3733)),
+                    obstacle(1145, p.x(), p.z(), to(395, 3725), 20, zAtLeast(3733)),
                     obstacle(
                             1145,
                             p.x(),
                             p.z(),
                             to(395, 3733),
-                            AgilityObstacles.COST,
+                            20,
                             zAtMost(3732),
                             when(Prereq.any(cache("cavernous_opening"), questComplete(LEGENDS_QUEST))))))),
 
@@ -620,49 +613,30 @@ public enum AgilityObstacles implements TransportDef {
     // Without the map, or without a light, a cave lands you elsewhere.
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/members/watchtower/WatchTowerObstacles.java#L208
     GU_TANOTH_SKAVID_CAVE_970_650_3555(anyPlacement(
-            970,
-            to(650, 3555),
-            AgilityObstacles.COST,
-            when(Prereq.all(carrying(ItemId.SKAVID_MAP.id(), 1), Kit.LIT_LIGHT)))),
+            970, to(650, 3555), 10, when(Prereq.all(carrying(ItemId.SKAVID_MAP.id(), 1), Kit.LIT_LIGHT)))),
     GU_TANOTH_SKAVID_CAVE_972_626_3564(anyPlacement(
-            972,
-            to(626, 3564),
-            AgilityObstacles.COST,
-            when(Prereq.all(carrying(ItemId.SKAVID_MAP.id(), 1), Kit.LIT_LIGHT)))),
+            972, to(626, 3564), 10, when(Prereq.all(carrying(ItemId.SKAVID_MAP.id(), 1), Kit.LIT_LIGHT)))),
     GU_TANOTH_SKAVID_CAVE_950_627_3591(anyPlacement(
-            950,
-            to(627, 3591),
-            AgilityObstacles.COST,
-            when(Prereq.all(carrying(ItemId.SKAVID_MAP.id(), 1), Kit.LIT_LIGHT)))),
+            950, to(627, 3591), 10, when(Prereq.all(carrying(ItemId.SKAVID_MAP.id(), 1), Kit.LIT_LIGHT)))),
     GU_TANOTH_SKAVID_CAVE_971_638_3564(anyPlacement(
-            971,
-            to(638, 3564),
-            AgilityObstacles.COST,
-            when(Prereq.all(carrying(ItemId.SKAVID_MAP.id(), 1), Kit.LIT_LIGHT)))),
+            971, to(638, 3564), 10, when(Prereq.all(carrying(ItemId.SKAVID_MAP.id(), 1), Kit.LIT_LIGHT)))),
     GU_TANOTH_SKAVID_CAVE_949_629_3574(anyPlacement(
-            949,
-            to(629, 3574),
-            AgilityObstacles.COST,
-            when(Prereq.all(carrying(ItemId.SKAVID_MAP.id(), 1), Kit.LIT_LIGHT)))),
+            949, to(629, 3574), 10, when(Prereq.all(carrying(ItemId.SKAVID_MAP.id(), 1), Kit.LIT_LIGHT)))),
     GU_TANOTH_SKAVID_CAVE_975_647_3596(anyPlacement(
-            975,
-            to(647, 3596),
-            AgilityObstacles.COST,
-            when(Prereq.all(carrying(ItemId.SKAVID_MAP.id(), 1), Kit.LIT_LIGHT)))),
+            975, to(647, 3596), 10, when(Prereq.all(carrying(ItemId.SKAVID_MAP.id(), 1), Kit.LIT_LIGHT)))),
 
-    LEGENDS_ROPE_UP(anyPlacement(1167, to(471, 3707), AgilityObstacles.COST)),
+    LEGENDS_ROPE_UP(anyPlacement(1167, to(471, 3707), 10)),
     LEGENDS_CAVE_EXIT_TO_SURFACE(anyPlacement(1158, to(452, 874), AgilityObstacles.COST)),
-    OGRE_ENCLAVE_EXIT(anyPlacement(1024, to(662, 788), AgilityObstacles.COST)),
-    WATERFALL_JUMP_OFF_BAXTORIAN(anyPlacement(469, to(654, 485), AgilityObstacles.COST, canKillAt(10))),
+    OGRE_ENCLAVE_EXIT(anyPlacement(1024, to(662, 788), 10)),
+    WATERFALL_JUMP_OFF_BAXTORIAN(anyPlacement(469, to(654, 485), 130, canKillAt(10))),
 
-    LEGENDS_CAVE_ENTRANCE_FROM_BOULDERS(
-            obstacleAnywhere(1159, to(452, 3702), AgilityObstacles.COST, answers("climb into it"))),
+    LEGENDS_CAVE_ENTRANCE_FROM_BOULDERS(obstacleAnywhere(1159, to(452, 3702), 80, answers("climb into it"))),
 
     GNOME_AGILITY_COURSE_SECOND_NET_CLIMB_UP(anyPlacement(653, to(683, 501), AgilityObstacles.COST)),
     WILDERNESS_AGILITY_COURSE_PIPE_SQUEEZE(anyPlacement(705, to(294, 112), AgilityObstacles.COST)),
     UNDERGROUND_PASS_SW_ROPE_CLIMB(anyPlacement(817, to(737, 3453), AgilityObstacles.COST)),
 
-    WATERFALL_LOG_RAFT_BOARD_ISLAND(anyPlacement(464, to(662, 463), AgilityObstacles.COST)),
+    WATERFALL_LOG_RAFT_BOARD_ISLAND(anyPlacement(464, to(662, 463), 130)),
 
     /**
      * Off the island's dead trees into the rapids. Every tree row fires from the tree's own tile: the
@@ -672,42 +646,21 @@ public enum AgilityObstacles implements TransportDef {
      * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/members/Waterfall_Quest.java#L756">Waterfall_Quest.onUseLoc</a>
      */
     WATERFALL_ISLAND_TREE_462_JUMP_OFF(everyScenery(
-            462,
-            p -> List.of(scenery(462, p.at(), to(654, 485), AgilityObstacles.COST, clickAt(p.at()), canKillAt(10))))),
+            462, p -> List.of(scenery(462, p.at(), to(654, 485), 130, clickAt(p.at()), canKillAt(10))))),
     WATERFALL_ISLAND_TREE_463_JUMP_OFF(everyScenery(
-            463,
-            p -> List.of(scenery(463, p.at(), to(654, 485), AgilityObstacles.COST, clickAt(p.at()), canKillAt(10))))),
+            463, p -> List.of(scenery(463, p.at(), to(654, 485), 130, clickAt(p.at()), canKillAt(10))))),
     WATERFALL_ISLAND_TREE_482_JUMP_OFF(everyScenery(
-            482,
-            p -> List.of(scenery(482, p.at(), to(654, 485), AgilityObstacles.COST, clickAt(p.at()), canKillAt(10))))),
+            482, p -> List.of(scenery(482, p.at(), to(654, 485), 130, clickAt(p.at()), canKillAt(10))))),
 
     WATERFALL_ISLAND_ROPE_TREE_462(everyScenery(
             462,
-            p -> List.of(scenery(
-                    462,
-                    p.at(),
-                    to(662, 467),
-                    AgilityObstacles.COST,
-                    usesItem(ItemId.ROPE.id(), 0),
-                    clickAt(p.at()))))),
+            p -> List.of(scenery(462, p.at(), to(662, 467), 160, usesItem(ItemId.ROPE.id(), 0), clickAt(p.at()))))),
     WATERFALL_ISLAND_ROPE_TREE_463(everyScenery(
             463,
-            p -> List.of(scenery(
-                    463,
-                    p.at(),
-                    to(659, 471),
-                    AgilityObstacles.COST,
-                    usesItem(ItemId.ROPE.id(), 0),
-                    clickAt(p.at()))))),
+            p -> List.of(scenery(463, p.at(), to(659, 471), 160, usesItem(ItemId.ROPE.id(), 0), clickAt(p.at()))))),
     WATERFALL_ROPE_TREE_482_BAXTORIAN_CAVE(everyScenery(
             482,
-            p -> List.of(scenery(
-                    482,
-                    p.at(),
-                    to(659, 3305),
-                    AgilityObstacles.COST,
-                    usesItem(ItemId.ROPE.id(), 0),
-                    clickAt(p.at()))))),
+            p -> List.of(scenery(482, p.at(), to(659, 3305), 160, usesItem(ItemId.ROPE.id(), 0), clickAt(p.at()))))),
 
     /**
      * The rocks outside the mining camp's cell, climbed from the tile the bent window bar drops the
@@ -717,9 +670,7 @@ public enum AgilityObstacles implements TransportDef {
      * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/members/touristtrap/TouristTrap.java#L2751">TouristTrap.onOpLoc</a>
      */
     TOURIST_TRAP_ROCKY_ELEVATION_953_CLIMB(everyScenery(
-            953,
-            p -> List.of(
-                    scenery(953, p.plus(-1, 1), to(93, 799), AgilityObstacles.COST, clickAt(p.at()), canKillAt(7))))),
+            953, p -> List.of(scenery(953, p.plus(-1, 1), to(93, 799), 10, clickAt(p.at()), canKillAt(7))))),
 
     /**
      * The Viyeldi caves' rock-hewn stairs (1114, 1123, 1124, 1125) and rocky walkways (558 to 561): each
@@ -836,7 +787,7 @@ public enum AgilityObstacles implements TransportDef {
     WILDERNESS_AGILITY_COURSE_LEDGE(anyPlacement(
             708,
             to(301, 111),
-            AgilityObstacles.COST,
+            80,
             when(level(Skill.AGILITY, 52)),
             note("a soft roll; a fall lands you at (298,2945)"))),
 
@@ -881,24 +832,19 @@ public enum AgilityObstacles implements TransportDef {
      * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/members/watchtower/WatchTowerObstacles.java#L357">WatchTowerObstacles.onOpLoc</a>
      */
     WATCHTOWER_OGRE_CHASM_JUMP_OVER_TOLL(obstacleAnywhere(
-            995,
-            to(647, 799),
-            AgilityObstacles.COST,
-            when(level(Skill.AGILITY, 30)),
-            pays(ItemId.COINS.id(), 20),
-            answers("pay it"))),
+            995, to(647, 799), 250, when(level(Skill.AGILITY, 30)), pays(ItemId.COINS.id(), 20), answers("pay it"))),
     WATCHTOWER_TUNNEL_CAVE(anyPlacement(998, to(605, 803), AgilityObstacles.COST)),
 
     MAGE_ARENA_BARRIER(everyScenery(
             1027,
             p -> List.of(
-                    obstacle(1027, p.x(), p.z(), to(228, 118), AgilityObstacles.COST, zAtLeast(120)),
+                    obstacle(1027, p.x(), p.z(), to(228, 118), 10, zAtLeast(120)),
                     obstacle(
                             1027,
                             p.x(),
                             p.z(),
                             to(228, 120),
-                            AgilityObstacles.COST,
+                            40,
                             zAtMost(119),
                             // Kolodion's permission, then no banned item carried or worn.
                             // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/minigames/mage_arena/MageArena.java#L677
@@ -911,9 +857,9 @@ public enum AgilityObstacles implements TransportDef {
     // The handler serves these ids on every world, but only location_data 2 places them.
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/database/WorldPopulator.java#L213
     TAVERLEY_DUNGEON_PIPE_W_E(onlyIn(
-            locationData(2), anyPlacement(1236, to(375, 3352), AgilityObstacles.COST, when(level(Skill.AGILITY, 70))))),
+            locationData(2), anyPlacement(1236, to(375, 3352), 10, when(level(Skill.AGILITY, 70))))),
     TAVERLEY_DUNGEON_PIPE_E_W(onlyIn(
-            locationData(2), anyPlacement(1237, to(372, 3352), AgilityObstacles.COST, when(level(Skill.AGILITY, 70))))),
+            locationData(2), anyPlacement(1237, to(372, 3352), 10, when(level(Skill.AGILITY, 70))))),
 
     ENTRANA_RUBBLE(onlyIn(
             locationData(2),
@@ -946,7 +892,7 @@ public enum AgilityObstacles implements TransportDef {
             anyPlacement(
                     1287,
                     to(397, 502),
-                    AgilityObstacles.COST,
+                    90,
                     when(level(Skill.AGILITY, 50)),
                     note("a soft roll (10%); a fall lands you at (388,522)"),
                     canKillAt(19)))),
@@ -956,7 +902,7 @@ public enum AgilityObstacles implements TransportDef {
             anyPlacement(
                     1288,
                     to(395, 502),
-                    AgilityObstacles.COST,
+                    120,
                     when(level(Skill.AGILITY, 50)),
                     note("a soft roll (10%); a fall lands you at (388,522)"),
                     canKillAt(19)))),
@@ -992,7 +938,7 @@ public enum AgilityObstacles implements TransportDef {
                             canKillAt(19))))),
 
     FALADOR_MEMBERS_WALL_HANDHOLDS(onlyIn(
-            locationData(2), anyPlacement(1290, to(339, 544), AgilityObstacles.COST, when(level(Skill.AGILITY, 40))))),
+            locationData(2), anyPlacement(1290, to(339, 544), 10, when(level(Skill.AGILITY, 40))))),
 
     // A slip into the lava costs 21% of current Hits, which never kills.
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/skills/agility/AgilityShortcuts.java#L703
@@ -1085,13 +1031,13 @@ public enum AgilityObstacles implements TransportDef {
     }
 
     /**
-     * Rock {@code p} climbed from each side the climb serves. A slip costs {@code H/42 + 1} on the main
-     * floor and {@code H/5 + 5} in the black area.
+     * Rock {@code p} climbed from each side the climb serves, at {@code cost}. A slip costs
+     * {@code H/42 + 1} on the main floor and {@code H/5 + 5} in the black area.
      *
      * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/members/undergroundpass/obstacles/UndergroundPassObstaclesMap1.java#L131">UndergroundPassObstaclesMap1.onOpLoc</a>
      * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/members/undergroundpass/obstacles/UndergroundPassObstaclesMap2.java#L167">UndergroundPassObstaclesMap2.onOpLoc</a>
      */
-    private static List<TransportSpec> rockArms(Placed p, int canKillAt) {
+    private static List<TransportSpec> rockArms(Placed p, int canKillAt, int cost) {
         List<TransportSpec> out = new ArrayList<>();
         for (int[] s : SIDES) {
             Point to = rockLanding(p, s[0], s[1]);
@@ -1101,7 +1047,7 @@ public enum AgilityObstacles implements TransportDef {
                         p.x(),
                         p.z(),
                         to,
-                        AgilityObstacles.COST,
+                        cost,
                         onlyFrom(p.x() + s[0], p.z() + s[1]),
                         when(level(Skill.AGILITY, 1)),
                         canKillAt(canKillAt)));
@@ -1130,7 +1076,7 @@ public enum AgilityObstacles implements TransportDef {
         List<TransportSpec> out = new ArrayList<>();
         for (Stand s : stands) {
             if (s.click().equals(p.at())) {
-                out.add(scenery(p.objectId(), s.on(), landing, AgilityObstacles.COST, clicked));
+                out.add(scenery(p.objectId(), s.on(), landing, 80, clicked));
             }
         }
         return out;
@@ -1144,7 +1090,7 @@ public enum AgilityObstacles implements TransportDef {
                     p.objectId(),
                     p.plus(s[0], s[1]),
                     rockLanding(p, s[0], s[1]),
-                    AgilityObstacles.COST,
+                    10,
                     when(level(Skill.AGILITY, 1)),
                     clickAt(p.at()),
                     canKillAt(canKillAt)));
@@ -1177,7 +1123,7 @@ public enum AgilityObstacles implements TransportDef {
                 p.x(),
                 p.z(),
                 to,
-                AgilityObstacles.COST,
+                10,
                 onlyFrom(from.x(), from.y()),
                 when(level(Skill.AGILITY, 1)),
                 canKillAt(1));
@@ -1196,7 +1142,7 @@ public enum AgilityObstacles implements TransportDef {
                         p.x(),
                         p.z(),
                         p.plus(1, 0),
-                        AgilityObstacles.COST,
+                        250,
                         xIn(p.x() - 1, p.x() - 1),
                         when(level(Skill.THIEVING, 1)),
                         answers("yes"),
@@ -1208,7 +1154,7 @@ public enum AgilityObstacles implements TransportDef {
                         p.x(),
                         p.z(),
                         p.plus(-1, 0),
-                        AgilityObstacles.COST,
+                        250,
                         xAtLeast(p.x()),
                         when(level(Skill.THIEVING, 1)),
                         answers("yes"),
@@ -1246,16 +1192,13 @@ public enum AgilityObstacles implements TransportDef {
      * @throws IllegalStateException when the bridge faces other than 0 or 6
      */
     private static List<TransportSpec> bridgeFrom(Placed p) {
-        List<Point[]> ends =
-                switch (p.dir()) {
-                    case 6 ->
-                        List.of(new Point[] {p.plus(-1, 0), p.plus(3, 0)}, new Point[] {p.plus(3, 0), p.plus(-1, 0)});
-                    case 0 ->
-                        List.of(new Point[] {p.plus(0, -1), p.plus(0, 3)}, new Point[] {p.plus(0, 3), p.plus(0, -1)});
-                    default ->
-                        throw new IllegalStateException("stone bridge " + p.objectId() + " @" + p.at() + " faces "
-                                + p.dir() + "; bridgeFrom knows 0 and 6");
-                };
+        List<Point[]> ends = switch (p.dir()) {
+            case 6 -> List.of(new Point[] {p.plus(-1, 0), p.plus(3, 0)}, new Point[] {p.plus(3, 0), p.plus(-1, 0)});
+            case 0 -> List.of(new Point[] {p.plus(0, -1), p.plus(0, 3)}, new Point[] {p.plus(0, 3), p.plus(0, -1)});
+            default ->
+                throw new IllegalStateException("stone bridge " + p.objectId() + " @" + p.at() + " faces " + p.dir()
+                        + "; bridgeFrom knows 0 and 6");
+        };
         List<TransportSpec> out = new ArrayList<>();
         for (Point[] e : ends) {
             out.add(scenery(
@@ -1277,8 +1220,7 @@ public enum AgilityObstacles implements TransportDef {
      * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/members/undergroundpass/obstacles/UndergroundPassOrbs.java#L75">UndergroundPassOrbs.onOpLoc</a>
      */
     private static TransportSpec westPassageClear(Placed p) {
-        return obstacle(
-                p.objectId(), p.x(), p.z(), to(p.x() - 1, 3446), AgilityObstacles.COST, xIn(p.x() + 2, p.x() + 2));
+        return obstacle(p.objectId(), p.x(), p.z(), to(p.x() - 1, 3446), 10, xIn(p.x() + 2, p.x() + 2));
     }
 
     /**
@@ -1294,7 +1236,7 @@ public enum AgilityObstacles implements TransportDef {
                         p.x(),
                         p.z(),
                         to(p.x() + 1, 3446),
-                        AgilityObstacles.COST,
+                        210,
                         xIn(p.x() - 1, p.x() - 1),
                         answers("step over"),
                         secondCommand(),
@@ -1304,7 +1246,7 @@ public enum AgilityObstacles implements TransportDef {
                         p.x(),
                         p.z(),
                         to(p.x() - 1, 3446),
-                        AgilityObstacles.COST,
+                        210,
                         xIn(p.x() + 2, p.x() + 2),
                         answers("step over"),
                         secondCommand(),
@@ -1349,7 +1291,7 @@ public enum AgilityObstacles implements TransportDef {
                     p.objectId(),
                     p.plus(dx, 0),
                     p.at(),
-                    AgilityObstacles.COST,
+                    10,
                     clickAt(p.at()),
                     when(level(Skill.AGILITY, 50)),
                     canKillAt(31)));

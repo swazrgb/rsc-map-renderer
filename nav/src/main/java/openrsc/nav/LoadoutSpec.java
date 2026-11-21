@@ -7,6 +7,7 @@ import it.unimi.dsi.fastutil.ints.IntSet;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -914,6 +915,8 @@ public record LoadoutSpec(
         long drawn;
         long fin;
         int drawSlots;
+        // The pack slots the band's put-on copy leaves for the equipment tab.
+        int offPack;
         int fill;
         int rowsFrom;
         int rowsTo;
@@ -926,6 +929,10 @@ public record LoadoutSpec(
         final List<InventorySlot> slots;
         final Finals finals;
         final Set<ItemId> equip = new LinkedHashSet<>();
+        // Per put-on, the pack slots its band already gave back for the copy leaving the pack.
+        private final Map<ItemId, Integer> offPackCredit = new HashMap<>();
+        // The put-ons that come from the bank, so through a free pack slot.
+        private final Set<ItemId> wornFromBank = new LinkedHashSet<>();
         boolean satisfiable = true;
 
         private final Inventory pack;
@@ -936,7 +943,7 @@ public record LoadoutSpec(
         private final int capacity;
         // Under bankWhenFull a full pack is not accepted, so with no slot kept free the bands and the
         // catch-all stop one short of full.
-        private final int room;
+        private int room;
         private final boolean[] claimed;
         private final boolean[] keep;
         private final int[] keptByPool;
@@ -1086,8 +1093,8 @@ public record LoadoutSpec(
                 band.drawSlots = cost;
             }
             band.fin = fin;
-            planned += slotsTaken;
 
+            boolean putOn = false;
             if (item.worn() && fin >= 1) {
                 boolean alreadyWorn = false;
                 for (int k = 0; k < mineCount; k++) {
@@ -1098,8 +1105,23 @@ public record LoadoutSpec(
                 }
                 if (!alreadyWorn) {
                     equip.add(ItemId.getById(id));
+                    putOn = true;
                 }
             }
+            // With an equipment tab the copy put on leaves the pack, a stack whole:
+            // https://gitlab.com/openrsc/openrsc/-/blob/273e630b6/server/src/com/openrsc/server/model/container/Equipment.java#L415
+            if (putOn && pack.wornOffPack() && !item.noted()) {
+                band.offPack = stacks ? slotsTaken : Math.min(1, slotsTaken);
+                if (stacks) {
+                    band.drawSlots = 0;
+                }
+                slotsTaken -= band.offPack;
+                offPackCredit.put(ItemId.getById(id), band.offPack);
+                if (kept == 0) {
+                    wornFromBank.add(ItemId.getById(id));
+                }
+            }
+            planned += slotsTaken;
         }
 
         void settlePool(int idx, Pool pool) {
@@ -1165,7 +1187,10 @@ public record LoadoutSpec(
         // without room for them, so their room is taken before the catch-all's. Worn gear off the pack is
         // kept by its band, or by the catch-all, which keeps every unnamed piece:
         // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/model/container/Equipment.java#L393
+        // A put-on from the bank passes through a free pack slot, so the stop keeps one, a reserved one if
+        // it has any, unless the only such put-on displaces gear into the slot it held.
         void takeWearRoom() {
+            boolean displacesIntoItsSlot = false;
             for (ItemId put : equip) {
                 int displaced = 0;
                 for (int i = 0; i < n; i++) {
@@ -1177,7 +1202,12 @@ public record LoadoutSpec(
                         displaced++;
                     }
                 }
-                planned += Math.max(0, displaced - 1);
+                int credited = offPackCredit.getOrDefault(put, 0) > 0 ? 1 : 0;
+                planned += Math.max(0, displaced - (1 - credited));
+                displacesIntoItsSlot |= displaced > 0 && wornFromBank.contains(put);
+            }
+            if (wornFromBank.size() > 1 || (wornFromBank.size() == 1 && !displacesIntoItsSlot)) {
+                room = Math.min(room, pack.capacity() - 1);
             }
         }
 
@@ -1244,7 +1274,8 @@ public record LoadoutSpec(
                 }
                 int id = item.item().id();
                 int key = formKey(id, item.noted());
-                long floor = Math.max(item.min(), band.fin - band.drawn);
+                // The copy put on takes no pack slot, so cutting it frees none.
+                long floor = Math.max(Math.max(item.min(), band.fin - band.drawn), band.offPack > 0 ? 1 : 0);
                 if (item.noted() || defs.isStackable(id)) {
                     if (band.drawSlots == 1 && floor == 0) {
                         finals.add(key, -band.drawn);

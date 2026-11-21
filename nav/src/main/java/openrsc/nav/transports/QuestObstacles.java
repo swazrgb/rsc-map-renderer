@@ -66,7 +66,7 @@ public enum QuestObstacles implements TransportDef {
     UNDERGROUND_PASS_ROCK_792_WALK_HERE_EAST(obstacleAnywhere(792, to(679, 3447), QuestObstacles.COST)),
     UNDERGROUND_PASS_ROCK_793_WALK_HERE_WEST(obstacleAnywhere(793, to(690, 3452), QuestObstacles.COST)),
 
-    UNDERGROUND_PASS_CAGE_LEVER_801(obstacleAnywhere(801, to(690, 3451), QuestObstacles.COST)),
+    UNDERGROUND_PASS_CAGE_LEVER_801(obstacleAnywhere(801, to(690, 3451), 70)),
 
     /**
      * Open once all four orbs of light are destroyed, or from stage 7.
@@ -76,7 +76,7 @@ public enum QuestObstacles implements TransportDef {
     UNDERGROUND_PASS_WELL_814_DROP_DOWN(obstacleAnywhere(
             814,
             to(722, 3461),
-            QuestObstacles.COST,
+            80,
             when(Prereq.any(
                     Prereq.fact(Fact.questAtLeast(QuestId.UNDERGROUND_PASS.id(), 7)),
                     Prereq.all(
@@ -85,12 +85,12 @@ public enum QuestObstacles implements TransportDef {
                             Prereq.fact(Fact.cacheBool("orb_of_light3", true)),
                             Prereq.fact(Fact.cacheBool("orb_of_light4", true))))))),
 
-    UNDERGROUND_PASS_SOUTH_STONE_STEPS_921(obstacleAnywhere(921, to(739, 667), QuestObstacles.COST)),
+    UNDERGROUND_PASS_SOUTH_STONE_STEPS_921(obstacleAnywhere(921, to(739, 667), 70)),
 
     UNDERGROUND_PASS_DUG_UP_SOIL_840_ENTER_TUNNEL(
-            obstacleAnywhere(840, to(745, 3457), QuestObstacles.COST, answers("yep", "let's do it", "yes"))),
+            obstacleAnywhere(840, to(745, 3457), 110, answers("yep", "let's do it", "yes"))),
     UNDERGROUND_PASS_DUG_UP_SOIL_839_ENTER_TUNNEL(
-            obstacleAnywhere(839, to(747, 3470), QuestObstacles.COST, answers("yep", "let's do it", "yes"))),
+            obstacleAnywhere(839, to(747, 3470), 110, answers("yep", "let's do it", "yes"))),
 
     /**
      * The passage swings down under the player: with the rope tied to the stalagmite they lower
@@ -99,21 +99,17 @@ public enum QuestObstacles implements TransportDef {
      * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/members/undergroundpass/obstacles/UndergroundPassOrbs.java#L119">UndergroundPassOrbs.onOpLoc</a>
      */
     UNDERGROUND_PASS_SOUTH_WEST_PASSAGE_815_DROP(obstacleAnywhere(
-            815,
-            to(709, 3472),
-            QuestObstacles.COST,
-            when(Prereq.fact(Fact.cacheBool("stalagmite", false))),
-            canKillAt(6))),
-    UNDERGROUND_PASS_SOUTH_WEST_PASSAGE_815_ROPE_LOWERS(obstacleAnywhere(
-            815, to(716, 3481), QuestObstacles.COST, when(Prereq.fact(Fact.cacheBool("stalagmite", true))))),
+            815, to(709, 3472), 120, when(Prereq.fact(Fact.cacheBool("stalagmite", false))), canKillAt(6))),
+    UNDERGROUND_PASS_SOUTH_WEST_PASSAGE_815_ROPE_LOWERS(
+            obstacleAnywhere(815, to(716, 3481), 90, when(Prereq.fact(Fact.cacheBool("stalagmite", true))))),
 
     /**
      * The landing is picked by the passage's own x, so each placement is declared.
      *
      * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/members/undergroundpass/obstacles/UndergroundPassObstaclesMap2.java#L192">UndergroundPassObstaclesMap2.onOpLoc</a>
      */
-    UNDERGROUND_PASS_TRAP_PASSAGE_873_735(obstacle(873, 735, 3489, to(737, 3489), QuestObstacles.COST, canKillAt(6))),
-    UNDERGROUND_PASS_TRAP_PASSAGE_873_737(obstacle(873, 737, 3489, to(737, 3489), QuestObstacles.COST, canKillAt(6))),
+    UNDERGROUND_PASS_TRAP_PASSAGE_873_735(obstacle(873, 735, 3489, to(737, 3489), 70, canKillAt(6))),
+    UNDERGROUND_PASS_TRAP_PASSAGE_873_737(obstacle(873, 737, 3489, to(737, 3489), 70, canKillAt(6))),
 
     /**
      * The plank is spent, and lands by the passage's own x.
@@ -155,13 +151,13 @@ public enum QuestObstacles implements TransportDef {
     GRAND_TREE_SHIPYARD_GATE(everyScenery(
                     624,
                     p -> List.of(
-                            obstacle(624, p.x(), p.z(), to(401, 763), QuestObstacles.COST, zAtMost(761)),
+                            obstacle(624, p.x(), p.z(), to(401, 763), 30, zAtMost(761)),
                             obstacle(
                                     624,
                                     p.x(),
                                     p.z(),
                                     to(402, 760),
-                                    QuestObstacles.COST,
+                                    500,
                                     when(Prereq.fact(Fact.questEquals(QuestId.GRAND_TREE.id(), 8))),
                                     answers("glough sent me"),
                                     answers("ka"),
@@ -193,20 +189,17 @@ public enum QuestObstacles implements TransportDef {
     HAZEEL_CULT_SEWER_RAFT_BACK(obstacleAnywhere(433, to(620, 3478), QuestObstacles.COST)),
 
     LEGENDS_QUEST_CAVE_BOOKCASE_931_CLIMB_HOLE(obstacleAnywhere(
-            931,
-            to(444, 3699),
-            QuestObstacles.COST,
-            answers("yes, i'll climb through the hole", "yes", "climb through"))),
+            931, to(444, 3699), 150, answers("yes, i'll climb through the hole", "yes", "climb through"))),
 
     LEGENDS_QUEST_CRAWL_ROCK_1151(obstacleAnywhere(
             1151,
             to(461, 3700),
-            QuestObstacles.COST,
+            190,
             when(Prereq.all(Prereq.fact(Fact.questAtLeast(QuestId.LEGENDS_QUEST.id(), 2)), level(Skill.AGILITY, 50))),
             answers("yes, i'll crawl through", "yes", "crawl through"),
             canKillAt(5))),
 
-    WATCHTOWER_DARK_CAVE_EXIT_ROCK_1008(obstacleAnywhere(1008, to(638, 776), QuestObstacles.COST)),
+    WATCHTOWER_DARK_CAVE_EXIT_ROCK_1008(obstacleAnywhere(1008, to(638, 776), 70)),
 
     /**
      * A search with Ana in a barrel is refused for lack of space. The landing is picked by the
@@ -220,7 +213,7 @@ public enum QuestObstacles implements TransportDef {
             56,
             3631,
             to(62, 3640),
-            QuestObstacles.COST,
+            120,
             when(Prereq.fact(Fact.notCarrying(ItemId.ANA_IN_A_BARREL.id()))),
             answers("yes, of course", "yes"),
             secondCommand(),
@@ -230,14 +223,13 @@ public enum QuestObstacles implements TransportDef {
             62,
             3639,
             to(55, 3632),
-            QuestObstacles.COST,
+            100,
             when(Prereq.fact(Fact.notCarrying(ItemId.ANA_IN_A_BARREL.id()))),
             answers("yes, of course", "yes"),
             secondCommand(),
             canKillAt(2))),
 
-    TOURIST_TRAP_MINE_CART_ABOVE_1025(
-            obstacleAnywhere(1025, to(86, 808), QuestObstacles.COST, answers("yes, i'll get on", "yes"))),
+    TOURIST_TRAP_MINE_CART_ABOVE_1025(obstacleAnywhere(1025, to(86, 808), 80, answers("yes, i'll get on", "yes"))),
 
     /**
      * Needs the compound poured on the brick, which lighting it uses up.
@@ -248,7 +240,7 @@ public enum QuestObstacles implements TransportDef {
     DIGSITE_EXPLOSIVE_BRICK_1096(obstacleAnywhere(
             1096,
             to(22, 3379),
-            QuestObstacles.COST,
+            230,
             usesItem(ItemId.TINDERBOX.id(), 0),
             when(Prereq.fact(Fact.cacheBool("brick_ignite", true))))),
 
@@ -260,7 +252,7 @@ public enum QuestObstacles implements TransportDef {
     HAZEEL_CULT_BOOKCASE_436(obstacleAnywhere(
             436,
             to(614, 2504),
-            QuestObstacles.COST,
+            220,
             when(Prereq.all(
                     Prereq.fact(Fact.questEquals(QuestId.THE_HAZEEL_CULT.id(), 5)),
                     Prereq.fact(Fact.cacheBool("evil_side", true)))))),
@@ -268,7 +260,7 @@ public enum QuestObstacles implements TransportDef {
     PLAGUE_CITY_DUG_UP_SOIL_447(obstacleAnywhere(
             447,
             to(621, 3414),
-            QuestObstacles.COST,
+            130,
             usesItem(ItemId.SPADE.id(), 0),
             when(Prereq.fact(Fact.questAtLeast(QuestId.PLAGUE_CITY.id(), 3))))),
 
@@ -297,11 +289,18 @@ public enum QuestObstacles implements TransportDef {
                     Prereq.notFact(Fact.questComplete(QuestId.BIOHAZARD.id())),
                     Prereq.fact(Fact.wearing(ItemId.GASMASK.id())))))),
 
+    /**
+     * From stage 5 until Shilo Village is done; once it is, the tomb entrance is flooded.
+     *
+     * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/273e630b6/server/plugins/com/openrsc/server/plugins/authentic/quests/members/shilovillage/ShiloVillageObjects.java#L246-L249">ShiloVillageObjects.onOpLoc</a>
+     */
     SHILO_VILLAGE_WELL_ROCKS_688_CRAWL_IN(obstacleAnywhere(
             688,
             to(471, 3658),
-            QuestObstacles.COST,
-            when(Prereq.fact(Fact.questAtLeast(QuestId.SHILO_VILLAGE.id(), 5))),
+            170,
+            when(Prereq.all(
+                    Prereq.fact(Fact.questAtLeast(QuestId.SHILO_VILLAGE.id(), 5)),
+                    Prereq.notFact(Fact.questComplete(QuestId.SHILO_VILLAGE.id())))),
             answers("yes please", "yes", "nothing nicer"),
             secondCommand(),
             canKillAt(3))),
@@ -311,23 +310,12 @@ public enum QuestObstacles implements TransportDef {
      *
      * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/members/shilovillage/ShiloVillageObjects.java#L549">ShiloVillageObjects.onOpLoc</a>
      */
-    SHILO_VILLAGE_RUBBLE_670_348_3708(obstacle(
-            670,
-            348,
-            3708,
-            to(356, 3667),
-            QuestObstacles.COST,
-            answers("yes, i'll wriggle through", "yes", "wriggle"))),
-    SHILO_VILLAGE_RUBBLE_670_357_3668(obstacle(
-            670,
-            357,
-            3668,
-            to(347, 3709),
-            QuestObstacles.COST,
-            answers("yes, i'll wriggle through", "yes", "wriggle"))),
+    SHILO_VILLAGE_RUBBLE_670_348_3708(
+            obstacle(670, 348, 3708, to(356, 3667), 100, answers("yes, i'll wriggle through", "yes", "wriggle"))),
+    SHILO_VILLAGE_RUBBLE_670_357_3668(
+            obstacle(670, 357, 3668, to(347, 3709), 110, answers("yes, i'll wriggle through", "yes", "wriggle"))),
 
-    SHILO_WATERFALL_CLIMB_OUT_696(
-            obstacleAnywhere(696, to(339, 808), QuestObstacles.COST, answers("climb out", "yes"), canKillAt(5))),
+    SHILO_WATERFALL_CLIMB_OUT_696(obstacleAnywhere(696, to(339, 808), 290, answers("climb out", "yes"), canKillAt(5))),
 
     /**
      * Opened by the server's shared gate routine, which steps the player through by the gate's
@@ -398,13 +386,13 @@ public enum QuestObstacles implements TransportDef {
     UPASS_ZAMORAKIAN_TEMPLE_DOOR_869(everyScenery(
             869,
             p -> List.of(
-                    obstacle(869, p.x(), p.z(), to(791, 3469), QuestObstacles.COST, xAtLeast(793)),
+                    obstacle(869, p.x(), p.z(), to(791, 3469), 40, xAtLeast(793)),
                     obstacle(
                             869,
                             p.x(),
                             p.z(),
                             to(795, 3469),
-                            QuestObstacles.COST,
+                            70,
                             when(Prereq.all(
                                     Prereq.fact(Fact.wearing(ItemId.ROBE_OF_ZAMORAK_TOP.id())),
                                     Prereq.fact(Fact.wearing(ItemId.ROBE_OF_ZAMORAK_BOTTOM.id())),
@@ -423,12 +411,11 @@ public enum QuestObstacles implements TransportDef {
     GLARIALS_TOMB_PEBBLE_SLAB_479(obstacleAnywhere(
             479,
             to(631, 3305),
-            QuestObstacles.COST,
+            160,
             usesItem(ItemId.GLARIALS_PEBBLE.id(), 0),
             when(Prereq.fact(Fact.notCarryingTombBanned())))),
 
-    BAXTORIAN_STATUE_483_AMULET(
-            obstacleAnywhere(483, to(647, 3267), QuestObstacles.COST, usesItem(ItemId.GLARIALS_AMULET.id(), 0))),
+    BAXTORIAN_STATUE_483_AMULET(obstacleAnywhere(483, to(647, 3267), 100, usesItem(ItemId.GLARIALS_AMULET.id(), 0))),
 
     /**
      * Every placement but the door at (81, 3633), which the handler matches by its tile to let the
@@ -443,7 +430,7 @@ public enum QuestObstacles implements TransportDef {
                             p.x(),
                             p.z(),
                             to(82, 3630),
-                            QuestObstacles.COST,
+                            210,
                             when(Prereq.all(
                                     Prereq.fact(Fact.wearing(ItemId.SLAVES_ROBE_TOP.id())),
                                     Prereq.fact(Fact.wearing(ItemId.SLAVES_ROBE_BOTTOM.id())))),
@@ -454,16 +441,14 @@ public enum QuestObstacles implements TransportDef {
             81,
             3633,
             to(82, 802),
-            QuestObstacles.COST,
+            120,
             when(Prereq.all(
                     Prereq.fact(Fact.wearing(ItemId.SLAVES_ROBE_TOP.id())),
                     Prereq.fact(Fact.wearing(ItemId.SLAVES_ROBE_BOTTOM.id())))),
             xAtLeast(81))),
 
     FISHING_TRAWLER_EXIT_BARREL(everyScenery(
-            1070,
-            p -> List.of(obstacle(
-                    1070, p.x(), p.z(), to(550, 711), QuestObstacles.COST, onlyFrom(p.x(), p.z()), canKillAt(3))))),
+            1070, p -> List.of(obstacle(1070, p.x(), p.z(), to(550, 711), 100, onlyFrom(p.x(), p.z()), canKillAt(3))))),
 
     /**
      * No world places this doorway: the plugin spawns it when the trees beside it are pulled apart,
@@ -511,7 +496,7 @@ public enum QuestObstacles implements TransportDef {
                     p.x(),
                     p.z(),
                     p.z() == 3619 ? to(348, 3616) : to(348, 3620),
-                    QuestObstacles.COST,
+                    60,
                     when(Prereq.all(wearing(ItemId.BEADS_OF_THE_DEAD.id()), level(Skill.AGILITY, 32))),
                     canKillAt(3))))),
     /**
@@ -550,7 +535,7 @@ public enum QuestObstacles implements TransportDef {
     SHILO_EXIT_DOOR(obstacleAnywhere(
             583,
             to(350, 782),
-            QuestObstacles.COST,
+            100,
             usesItem(ItemId.BONE_KEY.id(), 0),
             note("without the beads of the dead worn, invisible hands take half your hits"))),
 
@@ -568,7 +553,7 @@ public enum QuestObstacles implements TransportDef {
                             p.x(),
                             p.z(),
                             to(795, 3469),
-                            QuestObstacles.COST,
+                            70,
                             when(Prereq.all(
                                     Prereq.fact(Fact.wearing(ItemId.ROBE_OF_ZAMORAK_TOP.id())),
                                     Prereq.fact(Fact.wearing(ItemId.ROBE_OF_ZAMORAK_BOTTOM.id())),

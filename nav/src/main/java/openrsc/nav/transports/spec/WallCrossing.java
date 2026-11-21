@@ -40,7 +40,7 @@ public record WallCrossing(int boundaryId, int x, int z, List<Point> from, Point
         return new WallCrossing(boundaryId, x, z, flanks(x, z, dir), to, Prereq.ALWAYS, TELEPORT_COST, null);
     }
 
-    static final int TELEPORT_COST = 80;
+    static final int TELEPORT_COST = 10;
 
     static List<Point> flanks(int x, int z, int dir) {
         return switch (dir) {

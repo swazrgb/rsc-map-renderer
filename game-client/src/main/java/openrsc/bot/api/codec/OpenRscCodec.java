@@ -32,6 +32,7 @@ import openrsc.bot.api.packets.CastOnNpcPacket;
 import openrsc.bot.api.packets.CastOnPlayerPacket;
 import openrsc.bot.api.packets.CastOnSceneryPacket;
 import openrsc.bot.api.packets.CastOnSelfPacket;
+import openrsc.bot.api.packets.CertSwapPacket;
 import openrsc.bot.api.packets.ChatPacket;
 import openrsc.bot.api.packets.CombatStylePacket;
 import openrsc.bot.api.packets.CommandPacket;
@@ -674,6 +675,14 @@ public class OpenRscCodec extends AbstractPacketCodec<ByteBuf> {
     protected void cancelBatch(@NotNull CancelBatchPacket p, @NotNull ByteBuf out) {
         opcode(out, Opcode.OPCODE_INTERFACE_OPTION);
         out.writeByte(InterfaceOption.CANCEL_BATCH.id());
+    }
+
+    // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/net/rsc/parsers/impl/PayloadCustomParser.java#L880-L882
+    @Override
+    protected void certSwap(@NotNull CertSwapPacket p, @NotNull ByteBuf out) {
+        opcode(out, Opcode.OPCODE_INTERFACE_OPTION);
+        out.writeByte(InterfaceOption.SWAP_CERT.id());
+        out.writeByte(p.on() ? 1 : 0);
     }
 
     private void auctionOption(@NotNull AuctionOptionPacket p, @NotNull ByteBuf out) {

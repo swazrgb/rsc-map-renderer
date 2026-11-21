@@ -23,6 +23,7 @@ public final class DoorTransport implements Transport, DeclarativeTransport {
     private String name;
     private final String note;
     private final int cost;
+    private final int price;
     private final EngageSpec spec;
 
     /**
@@ -40,6 +41,7 @@ public final class DoorTransport implements Transport, DeclarativeTransport {
             Prereq prereq,
             String note,
             int cost,
+            int price,
             List<Consumed> consumes) {
         this.placement = placement;
         this.arm = arm;
@@ -51,6 +53,7 @@ public final class DoorTransport implements Transport, DeclarativeTransport {
         this.prereq = prereq;
         this.note = note;
         this.cost = cost;
+        this.price = price;
         this.spec = spec;
         this.consumes = List.copyOf(consumes);
     }
@@ -103,6 +106,11 @@ public final class DoorTransport implements Transport, DeclarativeTransport {
     @Override
     public int cost() {
         return cost;
+    }
+
+    @Override
+    public int price() {
+        return price;
     }
 
     @Override

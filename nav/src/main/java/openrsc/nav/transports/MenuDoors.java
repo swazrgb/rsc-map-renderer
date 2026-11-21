@@ -72,7 +72,7 @@ public enum MenuDoors implements TransportDef {
      * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/free/BlackKnightsFortress.java#L342">BlackKnightsFortress.onOpBound</a>
      */
     BLACK_KNIGHT_MEETING_DOOR_IN_W_E(
-            menuDoor(39, 275, 439, 1, from(274, 439), to(275, 439), 90, answers("anyway", "going in"))),
+            menuDoor(39, 275, 439, 1, from(274, 439), to(275, 439), 170, answers("anyway", "going in"))),
     BLACK_KNIGHT_MEETING_DOOR_OUT_E_W(menuDoor(39, 275, 439, 1, from(275, 439), to(274, 439), 10)),
 
     /**
@@ -88,7 +88,7 @@ public enum MenuDoors implements TransportDef {
             1,
             from(89, 802),
             to(90, 802),
-            120,
+            260,
             answers("bend the bar"),
             note("a coin toss; a failure offers another try"))),
     TOURIST_TRAP_JAIL_WINDOW_IN(menuDoor(
@@ -98,7 +98,7 @@ public enum MenuDoors implements TransportDef {
             1,
             from(90, 802),
             to(89, 802),
-            120,
+            320,
             answers("bend the bar"),
             note("a coin toss; a failure offers another try"))),
 
@@ -116,7 +116,7 @@ public enum MenuDoors implements TransportDef {
             1,
             from(665, 811),
             to(663, 812),
-            120,
+            500,
             answers("friend"),
             pays(ItemId.ROCK_CAKE.id(), 1),
             when(ogreGiftNotYetGiven()))),
@@ -127,7 +127,7 @@ public enum MenuDoors implements TransportDef {
             1,
             from(665, 812),
             to(663, 812),
-            120,
+            500,
             answers("friend"),
             pays(ItemId.ROCK_CAKE.id(), 1),
             when(ogreGiftNotYetGiven()))),
@@ -140,13 +140,13 @@ public enum MenuDoors implements TransportDef {
      * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/defaults/DoorAction.java#L842">DoorAction.onWallObjectAction</a>
      */
     LOST_CITY_MARKET_DOOR_A_W_E(menuDoor(
-            67, 116, 3537, 1, from(115, 3537), to(116, 3537), 90, answers("okay"), pays(ItemId.DIAMOND.id(), 1))),
+            67, 116, 3537, 1, from(115, 3537), to(116, 3537), 170, answers("okay"), pays(ItemId.DIAMOND.id(), 1))),
     LOST_CITY_MARKET_DOOR_A_E_W(menuDoor(
-            67, 116, 3537, 1, from(116, 3537), to(115, 3537), 90, answers("okay"), pays(ItemId.DIAMOND.id(), 1))),
+            67, 116, 3537, 1, from(116, 3537), to(115, 3537), 160, answers("okay"), pays(ItemId.DIAMOND.id(), 1))),
     LOST_CITY_MARKET_DOOR_B_S_N(menuDoor(
-            67, 117, 3539, 0, from(117, 3538), to(117, 3539), 90, answers("okay"), pays(ItemId.DIAMOND.id(), 1))),
+            67, 117, 3539, 0, from(117, 3538), to(117, 3539), 170, answers("okay"), pays(ItemId.DIAMOND.id(), 1))),
     LOST_CITY_MARKET_DOOR_B_N_S(menuDoor(
-            67, 117, 3539, 0, from(117, 3539), to(117, 3538), 90, answers("okay"), pays(ItemId.DIAMOND.id(), 1))),
+            67, 117, 3539, 0, from(117, 3539), to(117, 3538), 170, answers("okay"), pays(ItemId.DIAMOND.id(), 1))),
 
     /**
      * The gap moves the player to the railing's z - 1 from its own row, else onto its row, so only a
@@ -199,7 +199,7 @@ public enum MenuDoors implements TransportDef {
             }
             out.add(
                     from.y() <= 844
-                            ? menuDoor(165, p.x(), p.z(), p.dir(), from, Point.of(400, 845), 80)
+                            ? menuDoor(165, p.x(), p.z(), p.dir(), from, Point.of(400, 845), 40)
                             : menuDoor(
                                     165,
                                     p.x(),
@@ -207,7 +207,7 @@ public enum MenuDoors implements TransportDef {
                                     p.dir(),
                                     from,
                                     Point.of(400, 844),
-                                    90,
+                                    190,
                                     answers("use furnace"),
                                     pays(ItemId.COINS.id(), 20)));
         }

@@ -33,10 +33,10 @@ class ProxySettingsTest {
     @Test
     void theFileSetsWhatItNamesAndLeavesTheRestAtTheirDefaults() throws Exception {
         Path file = write("""
-                world: Coleslaw
-                web: 0.0.0.0:8080
-                hold: 0
-                """);
+            world: Coleslaw
+            web: 0.0.0.0:8080
+            hold: 0
+            """);
 
         ProxySettings settings = ProxySettings.load(file);
 

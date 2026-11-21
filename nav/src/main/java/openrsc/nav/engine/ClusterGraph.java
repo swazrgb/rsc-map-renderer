@@ -191,7 +191,8 @@ public final class ClusterGraph {
         b.buildCastSources();
         ClusterGraph g = b.toGraph();
         LOG.info(
-                "nav: cluster graph built in {}ms — {} nodes, {} boundary pairs, {} transport edges, {} teleports from {} cast sources ({} cast entries)",
+                "nav: cluster graph built in {}ms — {} nodes, {} boundary pairs, {} transport edges, {} teleports from"
+                        + " {} cast sources ({} cast entries)",
                 (System.nanoTime() - t0) / 1_000_000,
                 g.totalNodes,
                 g.boundaryEdgeCount,
@@ -523,9 +524,9 @@ public final class ClusterGraph {
                 if (t.entries().isEmpty() && !t.entryFree()) {
                     brokenEntryless.add(t);
                     LOG.error(
-                            "ClusterGraph: transport \"{}\" has NO entry tiles but is not entryFree() — "
-                                    + "its entry enumeration is broken (blocked/mis-modelled entrance). Dropping it from "
-                                    + "the graph instead of promoting it to an anywhere teleport.",
+                            "ClusterGraph: transport \"{}\" has NO entry tiles but is not entryFree() — its entry"
+                                    + " enumeration is broken (blocked/mis-modelled entrance). Dropping it from the"
+                                    + " graph instead of promoting it to an anywhere teleport.",
                             t.name());
                 }
             }

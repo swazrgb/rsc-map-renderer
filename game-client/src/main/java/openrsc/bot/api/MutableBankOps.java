@@ -6,6 +6,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import openrsc.bot.api.packets.BankClosePacket;
+import openrsc.bot.api.packets.CertSwapPacket;
 import openrsc.bot.api.packets.DepositAllWornPacket;
 import openrsc.bot.api.packets.DepositPacket;
 import openrsc.bot.api.packets.DropPacket;
@@ -45,10 +46,19 @@ public final class MutableBankOps {
 
     private @Nullable BankOpsOut snap = BankOpsOut.NONE;
 
+    private boolean swappingCerts;
+
     public synchronized void sent(Packet packet, SessionTick now, boolean bankOpen) {
+        if (packet instanceof CertSwapPacket s) {
+            swappingCerts = s.on();
+            return;
+        }
         Line line = packet instanceof WithdrawPacket w
                 ? new Line(w.itemId(), w.amount(), true, now)
-                : packet instanceof DepositPacket d ? new Line(d.itemId(), d.amount(), false, now) : null;
+                : packet instanceof DepositPacket d
+                        ? new Line(
+                                swappingCerts ? CertSwapPacket.landsAs(d.itemId()) : d.itemId(), d.amount(), false, now)
+                        : null;
         if (line != null) {
             if (out.size() >= MAX_LINES) {
                 LOG.warn("BANK: {} unanswered lines — dropping the oldest, {}", out.size(), out.peekFirst());

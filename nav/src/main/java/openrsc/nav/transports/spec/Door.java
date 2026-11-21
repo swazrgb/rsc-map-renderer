@@ -15,6 +15,8 @@ import openrsc.nav.transports.DoorTransport;
 import openrsc.nav.transports.EngageSpec;
 import openrsc.nav.transports.spec.Rows.Answers;
 import openrsc.nav.transports.spec.Rows.ArmCost;
+import openrsc.nav.transports.spec.Rows.ArmPrice;
+import openrsc.nav.transports.spec.Rows.Costs;
 import openrsc.nav.transports.spec.Rows.LandsAt;
 import openrsc.nav.transports.spec.Rows.Note;
 import openrsc.nav.transports.spec.Rows.OpenedWith;
@@ -52,6 +54,8 @@ public record Door(
         Point highToLowLands,
         int lowToHighCost,
         int highToLowCost,
+        int lowToHighPrice,
+        int highToLowPrice,
         List<String[]> dialog,
         String note)
         implements TransportSpec {
@@ -136,13 +140,18 @@ public record Door(
                 Pays.class,
                 LandsAt.class,
                 ArmCost.class,
+                ArmPrice.class,
+                Costs.class,
                 Answers.class,
                 Note.class);
         OpenedWith key = Rows.find(OpenedWith.class, options);
         Point up = null;
         Point down = null;
-        int upCost = COST;
-        int downCost = COST;
+        Costs both = Rows.find(Costs.class, options);
+        int upCost = both == null ? COST : both.cost();
+        int downCost = upCost;
+        int upPrice = 0;
+        int downPrice = 0;
         for (Option o : options) {
             if (o instanceof LandsAt l) {
                 if (l.lowToHigh()) {
@@ -155,6 +164,12 @@ public record Door(
                     upCost = c.cost();
                 } else {
                     downCost = c.cost();
+                }
+            } else if (o instanceof ArmPrice c) {
+                if (c.lowToHigh()) {
+                    upPrice = c.price();
+                } else {
+                    downPrice = c.price();
                 }
             }
         }
@@ -173,6 +188,8 @@ public record Door(
                 down,
                 upCost,
                 downCost,
+                upPrice,
+                downPrice,
                 List.of(Rows.answersOf(options)),
                 Rows.noteOf(options));
     }
@@ -185,12 +202,29 @@ public record Door(
             return List.of();
         }
         List<Transport> out = new ArrayList<>(2);
-        arm(out, id, true, low, lowToHighLands != null ? lowToHighLands : high, lowToHigh, lowToHighCost);
-        arm(out, id, false, high, highToLowLands != null ? highToLowLands : low, highToLow, highToLowCost);
+        arm(
+                out,
+                id,
+                true,
+                low,
+                lowToHighLands != null ? lowToHighLands : high,
+                lowToHigh,
+                lowToHighCost,
+                lowToHighPrice);
+        arm(
+                out,
+                id,
+                false,
+                high,
+                highToLowLands != null ? highToLowLands : low,
+                highToLow,
+                highToLowCost,
+                highToLowPrice);
         return out;
     }
 
-    private void arm(List<Transport> out, String id, boolean lowToHigh, Point from, Point to, Prereq gate, int cost) {
+    private void arm(
+            List<Transport> out, String id, boolean lowToHigh, Point from, Point to, Prereq gate, int cost, int price) {
         if (gate == Prereq.NEVER) {
             return;
         }
@@ -219,6 +253,7 @@ public record Door(
                 gate,
                 note,
                 cost,
+                price,
                 spent));
     }
 

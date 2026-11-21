@@ -1158,7 +1158,7 @@ public final class World {
                 return sectors[chunk].getTile(tileX, tileZ).groundTexture & 0xff;
             } else return 0;
         } catch (RuntimeException var5) {
-            throw GenUtil.makeThrowable(var5, "k.V(" + "dummy" + ',' + tileX + ',' + tileZ + ')');
+            throw GenUtil.makeThrowable(var5, "k.V(dummy" + ',' + tileX + ',' + tileZ + ')');
         }
     }
 
@@ -1172,7 +1172,7 @@ public final class World {
             return Objects.requireNonNull(EntityHandler.getTileDef(id - 1)).getColour();
         } catch (RuntimeException var7) {
             throw GenUtil.makeThrowable(
-                    var7, "k.M(" + "dummy" + ',' + xTile + ',' + defaultVal + ',' + plane + ',' + zTile + ')');
+                    var7, "k.M(dummy" + ',' + xTile + ',' + defaultVal + ',' + plane + ',' + zTile + ')');
         }
     }
 
@@ -1304,7 +1304,7 @@ public final class World {
                 return sectors[chunk].getTile(xTile, zTile).horizontalWall & 0xFF;
             } else return 0;
         } catch (RuntimeException var6) {
-            throw GenUtil.makeThrowable(var6, "k.LA(" + "dummy" + ',' + xTile + ',' + zTile + ')');
+            throw GenUtil.makeThrowable(var6, "k.LA(dummy" + ',' + xTile + ',' + zTile + ')');
         }
     }
 

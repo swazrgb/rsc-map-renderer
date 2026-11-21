@@ -101,7 +101,8 @@ public record EngageSpec(
         UNDERGROUND_PASS_OLD_BRIDGE,
         UNDERGROUND_PASS_EAST_GRILL,
         ERNEST_BASEMENT_MAZE,
-        PARAMAYA_DORMITORY
+        PARAMAYA_DORMITORY,
+        NIGHTSHADE_PICKUP
     }
 
     /** Which inventory item an item action uses. */
@@ -229,24 +230,22 @@ public record EngageSpec(
 
     /** A one-line description for route listings, naming objects and items by id. */
     public String describe() {
-        String verb =
-                switch (action) {
-                    case Action.Interact i -> i.command() == 2 ? "interact(2) with" : "interact with";
-                    case Action.NpcCommand n -> "command(" + n.command() + ") on";
-                    case Action.UseItem u -> "use " + describe(u.selector()) + " on";
-                    case Action.ItemCommand ic -> "command (rub) " + describe(ic.selector()) + " —";
-                    case Action.Cast c -> "cast spell " + c.spellId() + " at";
-                    case Action.Bespoke b -> "run bespoke script " + b.script() + " for";
-                };
-        String what =
-                switch (target) {
-                    case Target.Scenery s ->
-                        "scenery " + s.objectId() + (s.alsoIds().isEmpty() ? "" : " (or " + s.alsoIds() + ")") + " @("
-                                + s.x() + "," + s.y() + ")";
-                    case Target.Boundary b -> "boundary " + b.boundaryId() + " @(" + b.x() + "," + b.y() + ")";
-                    case Target.Npcs n -> "npc " + Arrays.toString(n.npcIds());
-                    case Target.Self s -> "self";
-                };
+        String verb = switch (action) {
+            case Action.Interact i -> i.command() == 2 ? "interact(2) with" : "interact with";
+            case Action.NpcCommand n -> "command(" + n.command() + ") on";
+            case Action.UseItem u -> "use " + describe(u.selector()) + " on";
+            case Action.ItemCommand ic -> "command (rub) " + describe(ic.selector()) + " —";
+            case Action.Cast c -> "cast spell " + c.spellId() + " at";
+            case Action.Bespoke b -> "run bespoke script " + b.script() + " for";
+        };
+        String what = switch (target) {
+            case Target.Scenery s ->
+                "scenery " + s.objectId() + (s.alsoIds().isEmpty() ? "" : " (or " + s.alsoIds() + ")") + " @(" + s.x()
+                        + "," + s.y() + ")";
+            case Target.Boundary b -> "boundary " + b.boundaryId() + " @(" + b.x() + "," + b.y() + ")";
+            case Target.Npcs n -> "npc " + Arrays.toString(n.npcIds());
+            case Target.Self s -> "self";
+        };
         return verb + " " + what + (dialog.isEmpty() ? "" : " and answer " + dialog.size() + " menus");
     }
 

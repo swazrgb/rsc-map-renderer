@@ -49,7 +49,7 @@ public class FastMath {
         try {
             return val & 255;
         } catch (RuntimeException var3) {
-            throw GenUtil.makeThrowable(var3, "nb.G(" + "dummy" + ',' + val + ')');
+            throw GenUtil.makeThrowable(var3, "nb.G(dummy" + ',' + val + ')');
         }
     }
 }

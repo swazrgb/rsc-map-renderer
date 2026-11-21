@@ -25,7 +25,7 @@ public class RSBufferUtils {
 
             return val;
         } catch (RuntimeException var4) {
-            throw GenUtil.makeThrowable(var4, "w.B(" + "{...}" + ',' + -1 + ',' + index + ')');
+            throw GenUtil.makeThrowable(var4, "w.B({...}" + ',' + -1 + ',' + index + ')');
         }
     }
 }

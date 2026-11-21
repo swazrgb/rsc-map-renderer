@@ -109,7 +109,7 @@ public enum SceneryCrossings implements TransportDef {
 
     // Only the ladder at (98,3537), and only while its fairy attendant is there.
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/defaults/Ladders.java#L248
-    ZANARIS_EXIT_LADDER(sceneryMenu(249, from(98, 3536), to(98, 706), 80, clickAt(98, 3537), answers("yes"))),
+    ZANARIS_EXIT_LADDER(sceneryMenu(249, from(98, 3536), to(98, 706), 210, clickAt(98, 3537), answers("yes"))),
 
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/skills/mining/Mining.java#L60
     ROCKSLIDE_MINE_THROUGH(everyScenery(
@@ -120,7 +120,7 @@ public enum SceneryCrossings implements TransportDef {
                             SceneryId.ROCKSLIDE.id(),
                             from,
                             west ? to(428, 438) : to(425, 438),
-                            60,
+                            10,
                             clickAt(p.at()),
                             when(Prereq.all(level(Skill.MINING, 50), Kit.PICKAXE))),
                     p.plus(-1, 0),
@@ -128,10 +128,10 @@ public enum SceneryCrossings implements TransportDef {
 
     // Only the gate at (394,851), from x >= 394.
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/defaults/DoorAction.java#L1256
-    SHILO_VILLAGE_WOODEN_GATE_EXIT(scenery(712, from(394, 851), to(381, 851), 80)),
+    SHILO_VILLAGE_WOODEN_GATE_EXIT(scenery(712, from(394, 851), to(381, 851), 40)),
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/defaults/DoorAction.java#L1270
     SHILO_VILLAGE_METAL_GATE_ENTER(
-            scenery(611, from(387, 851), to(395, 851), 80, clickAt(388, 851), when(questComplete(SHILO_VILLAGE)))),
+            scenery(611, from(387, 851), to(395, 851), 10, clickAt(388, 851), when(questComplete(SHILO_VILLAGE)))),
 
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/misc/SewerValve.java#L72
     HAZEEL_CULT_SEWER_RAFT(everyScenery(
@@ -140,7 +140,7 @@ public enum SceneryCrossings implements TransportDef {
                     432,
                     p.plus(-1, 0),
                     to(587, 3411),
-                    80,
+                    40,
                     clickAt(p.at()),
                     when(Prereq.all(
                             cache("VALVE_1_RIGHT"),
@@ -168,7 +168,7 @@ public enum SceneryCrossings implements TransportDef {
                     634,
                     p.plus(1, 0),
                     to(711, 3306),
-                    90,
+                    250,
                     clickAt(p.at()),
                     when(questAt(GRAND_TREE, 14)),
                     answers("climb down"),
@@ -205,9 +205,9 @@ public enum SceneryCrossings implements TransportDef {
     UNDERGROUND_PASS_CAVE_ENTRANCE_ENTER(everyScenery(
             725,
             p -> List.of(scenery(
-                    725, p.plus(-1, 0), to(673, 3420), 80, clickAt(p.at()), when(questAtLeast(UNDERGROUND_PASS, 2)))))),
+                    725, p.plus(-1, 0), to(673, 3420), 40, clickAt(p.at()), when(questAtLeast(UNDERGROUND_PASS, 2)))))),
     UNDERGROUND_PASS_CRUMBLED_ROCK_CLIMB_OUT(everyScenery(
-            728, p -> List.of(scenery(728, p.plus(1, 0), to(713, 581), 80, clickAt(p.at()))))),
+            728, p -> List.of(scenery(728, p.plus(1, 0), to(713, 581), 40, clickAt(p.at()))))),
 
     // Only the gate at (689,3513).
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/members/Observatory.java#L534
@@ -222,7 +222,7 @@ public enum SceneryCrossings implements TransportDef {
             926,
             from(690, 3514),
             to(690, 3513),
-            80,
+            10,
             clickAt(689, 3513),
             when(Prereq.any(cache("keep_key_gate"), questComplete(OBSERVATORY_QUEST))))),
 
@@ -235,7 +235,7 @@ public enum SceneryCrossings implements TransportDef {
                                     443,
                                     from,
                                     to(589, 541),
-                                    80,
+                                    30,
                                     clickAt(p.at()),
                                     when(Prereq.all(
                                             wearing(ItemId.PROTECTIVE_JACKET.id()),
@@ -243,12 +243,12 @@ public enum SceneryCrossings implements TransportDef {
                             // At x 589 the gate opens without the suit.
                             // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/members/SheepHerder.java#L215
                             : from.x() == 589
-                                    ? scenery(443, from, to(588, 540), 80, clickAt(p.at()))
+                                    ? scenery(443, from, to(588, 540), 10, clickAt(p.at()))
                                     : scenery(
                                             443,
                                             from,
                                             to(588, 540),
-                                            80,
+                                            10,
                                             clickAt(p.at()),
                                             when(Prereq.all(
                                                     wearing(ItemId.PROTECTIVE_JACKET.id()),
@@ -263,12 +263,12 @@ public enum SceneryCrossings implements TransportDef {
                     p -> bySide(
                             playerYAtLeast(794),
                             (from, south) -> south
-                                    ? scenery(988, from, to(630, 792), 80, clickAt(p.at()))
+                                    ? scenery(988, from, to(630, 792), 10, clickAt(p.at()))
                                     : scenery(
                                             988,
                                             from,
                                             to(630, 795),
-                                            80,
+                                            70,
                                             clickAt(p.at()),
                                             awaitsDialog(),
                                             when(Prereq.any(cache("has_gold_ogre"), questComplete(WATCHTOWER)))),
@@ -281,12 +281,12 @@ public enum SceneryCrossings implements TransportDef {
                     p -> bySide(
                             playerXAtLeast(666),
                             (from, west) -> west
-                                    ? scenery(989, from, to(665, 773), 80, clickAt(p.at()))
+                                    ? scenery(989, from, to(665, 773), 10, clickAt(p.at()))
                                     : scenery(
                                             989,
                                             from,
                                             to(667, 773),
-                                            80,
+                                            90,
                                             clickAt(p.at()),
                                             awaitsDialog(),
                                             when(Prereq.any(
@@ -298,9 +298,9 @@ public enum SceneryCrossings implements TransportDef {
     // Only the gate at x 494.
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/minigames/barcrawl/AlfredGrimhandBarCrawl.java#L54
     BARBARIAN_OUTPOST_GATE_ENTER(
-            scenery(311, from(494, 543), to(493, 543), 80, clickAt(494, 543), when(cache("barcrawl_completed")))),
+            scenery(311, from(494, 543), to(493, 543), 30, clickAt(494, 543), when(cache("barcrawl_completed")))),
     BARBARIAN_OUTPOST_GATE_EXIT(
-            scenery(311, from(493, 543), to(494, 543), 80, clickAt(494, 543), when(cache("barcrawl_completed")))),
+            scenery(311, from(493, 543), to(494, 543), 30, clickAt(494, 543), when(cache("barcrawl_completed")))),
 
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/misc/RandomObjects.java#L162
     ARDOUGNE_WALL_GATEWAY(everyScenery(
@@ -315,14 +315,14 @@ public enum SceneryCrossings implements TransportDef {
 
     // Members only.
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/defaults/DoorAction.java#L1309
-    VARROCK_BIOHAZARD_GATE_W_E(scenery(513, from(93, 521), to(94, 521), 80)),
+    VARROCK_BIOHAZARD_GATE_W_E(scenery(513, from(93, 521), to(94, 521), 30)),
     // At Biohazard stages 6 and 7 the guard takes the ethenea, broline and honey vials.
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/defaults/DoorAction.java#L1315
-    VARROCK_BIOHAZARD_GATE_E_W(scenery(513, from(94, 521), to(92, 522), 80, clickAt(93, 521))),
+    VARROCK_BIOHAZARD_GATE_E_W(scenery(513, from(94, 521), to(92, 522), 30, clickAt(93, 521))),
 
     // Opens only for a player at y <= 3715.
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/members/legendsquest/obstacles/LegendsQuestDarkMetalGate.java#L27
-    LEGENDS_DARK_METAL_GATE_OPEN_NORTH(scenery(1165, from(474, 3715), to(474, 3720), 80)),
+    LEGENDS_DARK_METAL_GATE_OPEN_NORTH(scenery(1165, from(474, 3715), to(474, 3720), 30)),
 
     // A Strength roll: a failed one lowers Strength by one and leaves the player in place.
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/members/legendsquest/obstacles/LegendsQuestGameObjects.java#L371
@@ -334,7 +334,7 @@ public enum SceneryCrossings implements TransportDef {
                             1033,
                             from,
                             north ? to(441, 3719) : to(441, 3717),
-                            90,
+                            340,
                             clickAt(p.at()),
                             when(level(Skill.STRENGTH, 50)),
                             answers("force them open"),
@@ -350,12 +350,12 @@ public enum SceneryCrossings implements TransportDef {
             p -> bySide(
                     playerYAtLeast(3703),
                     (from, south) -> south
-                            ? sceneryMenu(1160, from, to(442, 3701), 80, clickAt(p.at()))
+                            ? sceneryMenu(1160, from, to(442, 3701), 90, clickAt(p.at()))
                             : sceneryMenu(
                                     1160,
                                     from,
                                     to(441, 3703),
-                                    90,
+                                    380,
                                     clickAt(p.at()),
                                     when(Prereq.all(level(Skill.THIEVING, 50), carrying(ItemId.LOCKPICK.id(), 1))),
                                     secondCommand()),
@@ -371,7 +371,7 @@ public enum SceneryCrossings implements TransportDef {
                             1080,
                             from,
                             north ? to(513, 541) : to(513, 539),
-                            80,
+                            10,
                             clickAt(p.at()),
                             when(questAtLeast(LEGENDS_QUEST, 11))),
                     p.plus(0, -1),
@@ -385,12 +385,12 @@ public enum SceneryCrossings implements TransportDef {
                     p -> bySide(
                             playerYAtMost(550),
                             (from, north) -> north
-                                    ? scenery(1079, from, to(513, 552), 80, clickAt(p.at()))
+                                    ? scenery(1079, from, to(513, 552), 10, clickAt(p.at()))
                                     : scenery(
                                             1079,
                                             from,
                                             to(513, 549),
-                                            90,
+                                            70,
                                             clickAt(p.at()),
                                             awaitsDialog(),
                                             when(questAtLeast(LEGENDS_QUEST, 1))),
@@ -409,7 +409,7 @@ public enum SceneryCrossings implements TransportDef {
                                     626,
                                     p.at(),
                                     p.plus(0, 1),
-                                    80,
+                                    60,
                                     clickAt(p.at()),
                                     when(notQuestAt(GRAND_TREE, 8)),
                                     note("the gnome guards seal it at Grand Tree stage 8 — leave by glider")),
@@ -417,7 +417,7 @@ public enum SceneryCrossings implements TransportDef {
                                     626,
                                     p.plus(0, 1),
                                     p.at(),
-                                    90,
+                                    400,
                                     clickAt(p.at()),
                                     when(notQuestAt(GRAND_TREE, 10)),
                                     answers("ok then"),
@@ -426,7 +426,7 @@ public enum SceneryCrossings implements TransportDef {
             .writtenFor(Point.of(703, 531))),
 
     BARBARIAN_AGILITY_COURSE_NET_CLIMB_UP(everyScenery(
-            677, p -> List.of(scenery(677, p.plus(-1, 0), to(496, 1507), 60, clickAt(p.at()))))),
+            677, p -> List.of(scenery(677, p.plus(-1, 0), to(496, 1507), 10, clickAt(p.at()))))),
 
     // Needs the cart driver within 10 tiles.
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/npcs/shilo/CartDriver.java#L118
@@ -436,7 +436,7 @@ public enum SceneryCrossings implements TransportDef {
                             768,
                             p.plus(-1, 0),
                             to(468, 662),
-                            150,
+                            290,
                             clickAt(p.at()),
                             pays(ItemId.COINS.id(), 500),
                             answers("yes"))))
@@ -452,7 +452,7 @@ public enum SceneryCrossings implements TransportDef {
                             769,
                             p.plus(-1, 0),
                             to(417, 855),
-                            150,
+                            290,
                             clickAt(p.at()),
                             pays(ItemId.COINS.id(), 500),
                             when(questComplete(SHILO_VILLAGE)),
@@ -466,7 +466,7 @@ public enum SceneryCrossings implements TransportDef {
     // From x < 386 the cart is crossed by its search command.
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/misc/RandomObjects.java#L60
     SHILO_FARM_CART_CLIMB_W_E(
-            sceneryMenu(613, from(383, 852), to(386, 852), 45, clickAt(384, 851), answers("nimble"), secondCommand())),
+            sceneryMenu(613, from(383, 852), to(386, 852), 230, clickAt(384, 851), answers("nimble"), secondCommand())),
 
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/misc/RandomObjects.java#L126
     ENTRANA_SHIP_PORT_SARIM_241(everyScenery(
@@ -477,13 +477,13 @@ public enum SceneryCrossings implements TransportDef {
             243, p -> List.of(scenery(243, p.plus(0, -1), to(263, 660), 80, clickAt(p.at()))))),
 
     HAZEEL_CAVE_ENTRANCE_ENTER(everyScenery(
-            417, p -> List.of(scenery(417, p.plus(-1, 0), to(617, 3479), 80, clickAt(p.at()))))),
+            417, p -> List.of(scenery(417, p.plus(-1, 0), to(617, 3479), 10, clickAt(p.at()))))),
 
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/misc/MagicalPool.java#L19
     MAGE_ARENA_MAGICAL_POOL_DESCEND_TO_GOD_SPELL_CHAMBER(everyScenery(
             1155,
             p -> List.of(scenery(
-                    1155, p.plus(-1, 0), to(471, 3385), 80, clickAt(p.at()), when(cacheAtLeast("mage_arena", 2)))))),
+                    1155, p.plus(-1, 0), to(471, 3385), 10, clickAt(p.at()), when(cacheAtLeast("mage_arena", 2)))))),
     MAGE_ARENA_MAGICAL_POOL_RETURN_TO_KOLODIONS_CAVE(everyScenery(
             1166, p -> List.of(scenery(1166, p.plus(-1, 0), to(447, 3373), 80, clickAt(p.at()))))),
 
@@ -492,11 +492,11 @@ public enum SceneryCrossings implements TransportDef {
     DIG_SITE_WINCH_OPERATE_WEST_SHAFT(everyScenery(
             1095,
             p -> List.of(
-                    scenery(1095, p.plus(0, 2), to(19, 3385), 80, clickAt(p.at()), when(questComplete(DIGSITE)))))),
+                    scenery(1095, p.plus(0, 2), to(19, 3385), 10, clickAt(p.at()), when(questComplete(DIGSITE)))))),
     DIG_SITE_WINCH_OPERATE_EAST_SHAFT(everyScenery(
             1053,
             p -> List.of(
-                    scenery(1053, p.plus(-1, 0), to(19, 3385), 80, clickAt(p.at()), when(questComplete(DIGSITE)))))),
+                    scenery(1053, p.plus(-1, 0), to(19, 3385), 10, clickAt(p.at()), when(questComplete(DIGSITE)))))),
 
     DIG_SITE_WINCH_ROPE_CLIMB_DOWN_WEST_SHAFT(everyScenery(
             1095,
@@ -565,7 +565,7 @@ public enum SceneryCrossings implements TransportDef {
                                             SceneryId.GATE_WOODEN_FISHING_CONTEST_CLOSED.id(),
                                             from,
                                             p.doGateLanding(from),
-                                            10,
+                                            140,
                                             clickAt(p.at()),
                                             awaitsDialog(),
                                             when(carrying(ItemId.FISHING_COMPETITION_PASS.id(), 1)))
@@ -573,7 +573,7 @@ public enum SceneryCrossings implements TransportDef {
                                             SceneryId.GATE_WOODEN_FISHING_CONTEST_CLOSED.id(),
                                             from,
                                             p.doGateLanding(from),
-                                            10,
+                                            60,
                                             clickAt(p.at()),
                                             answers("compete again another day")),
                             p.at(),
@@ -609,7 +609,7 @@ public enum SceneryCrossings implements TransportDef {
                                     SceneryId.GATE_WOODEN_FISHING_CONTEST_CLOSED.id(),
                                     p.at(),
                                     p.plus(1, 0),
-                                    10,
+                                    220,
                                     clickAt(p.at()),
                                     answers("fish around"),
                                     when(questComplete(FISHING_CONTEST)))))

@@ -39,8 +39,8 @@ public enum SpiritTreeRoutes implements TransportDef {
     ;
 
     private static final String WHERE = "where can i go";
-    private static final int BIG_COST = 260;
-    private static final int YOUNG_COST = 140;
+    private static final int BIG_COST = 330;
+    private static final int YOUNG_COST = 200;
     private static final int VILLAGE_DEST_X = 658;
     private static final int VILLAGE_DEST_Z = 695;
 

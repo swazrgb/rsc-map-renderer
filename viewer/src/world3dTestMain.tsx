@@ -4,11 +4,8 @@ import {need} from "./need";
 import type {MapEntity, NpcDefInfo, NpcSpawnInfo, Observer, WorldEntities} from "./api";
 import {World3DView, floorIndexForKey} from "./World3DView";
 import {EntityCard, type CardRow, type PickedEntity} from "./EntityCard";
-import {boxPerimeter, drapeGate, overlay} from "./World3DOverlays";
-import type {OverlayContext, OverlayPoint, ViewerOverlay} from "./World3DOverlays";
+import {overlay} from "./World3DOverlays";
 import {predictedOverlay} from "./World3DPaths";
-import type {Ribbon} from "./World3DSight";
-import type {TagPool} from "./World3DTags";
 import {
     type FloorTransports,
     fetchFloorTransports,
@@ -35,72 +32,6 @@ import {useCampSession} from "./scriptgen/campUrl";
 import {GeneratePanel} from "./scriptgen/GeneratePanel";
 import {campOverlay, NO_CAMP, type CampMarks} from "./scriptgen/campOverlay";
 import type {CampResponse} from "./scriptgen/campApi";
-
-// A labelled tile box, z absolute.
-interface Region {
-    id: string;
-    name: string;
-    x0: number;
-    z0: number;
-    x1: number;
-    z1: number;
-}
-
-// An example overlay: draped boxes with a label each, highlighted on hover. The label takes the click,
-// not the box, which would swallow clicks on the ground inside it.
-function regionOverlay(onSelect: (id: string) => void): ViewerOverlay<Region[]> {
-    const ribbons = new Map<string, Ribbon>();
-    let labels: TagPool | null = null;
-    let hovered: string | null = null;
-    const stale = drapeGate();
-    const restyle = (ribbon: Ribbon, id: string) =>
-        id === hovered ? ribbon.setStyle(0x7ee3ff, 0.95, 0.34) : ribbon.setStyle(0x7ee3ff, 0.5, 0.18);
-    return {
-        mount(ctx: OverlayContext) {
-            labels = ctx.tags({
-                css:
-                    "font:600 10px monospace;color:#7ee3ff;background:rgba(10,24,32,.8);" +
-                    "padding:1px 5px;border:1px solid rgba(126,227,255,.5);border-radius:4px;",
-                band: "chrome",
-                interactive: true,
-            });
-            labels.onClick = (key) => onSelect(key);
-        },
-        frame(ctx: OverlayContext, regions: Region[]) {
-            const redrape = stale(ctx, regions);
-            for (const r of regions) {
-                let ribbon = ribbons.get(r.id);
-                if (!ribbon) {
-                    ribbon = ctx.ribbon({color: 0x7ee3ff, opacity: 0.5, ghostOpacity: 0.18});
-                    ribbons.set(r.id, ribbon);
-                }
-                if (redrape) {
-                    ribbon.extrude([{pts: boxPerimeter(r), closed: true}], ctx.toWorld);
-                }
-            }
-            labels?.begin(ctx.view, ctx.camera);
-            for (const r of regions) {
-                if (Math.floor(r.z0 / 944) !== ctx.floor) continue;
-                labels?.put(r.id, ctx.toWorld((r.x0 + r.x1) / 2, (r.z0 + r.z1) / 2), r.name);
-            }
-            labels?.end();
-        },
-        hitTest(at: OverlayPoint, regions: Region[]): string | null {
-            for (const r of regions) {
-                if (at.x >= r.x0 && at.x <= r.x1 && at.z >= r.z0 && at.z <= r.z1) {
-                    return r.id;
-                }
-            }
-            return null;
-        },
-        hover(hit: string | null) {
-            hovered = hit;
-            for (const [id, ribbon] of ribbons) restyle(ribbon, id);
-        },
-    };
-}
-
-const DEMO_REGIONS: Region[] = [{id: "swamp", name: "Lumbridge swamp", x0: 108, z0: 680, x1: 140, z1: 700}];
 
 const NO_OBSERVERS: Observer[] = [];
 // Stable empty references: with the simulation off the view draws every spawn as a ghost.
@@ -219,19 +150,6 @@ function Demo({spawns}: {spawns: NpcSpawnInfo[]}) {
             alive = false;
         };
     }, []);
-    // The overlay is stable and only its data changes per render, so a fresh `overlays` array remounts nothing.
-    const regions = useMemo(
-        () =>
-            regionOverlay((id) =>
-                setPicked({
-                    kind: "region",
-                    name: DEMO_REGIONS.find((r) => r.id === id)?.name ?? id,
-                    npcId: null,
-                    inCombat: false,
-                }),
-            ),
-        [],
-    );
     const viewRef = useRef<World3DHandle>(null);
     const routeEnds = useMemo(() => routeEndsOverlay(944), []);
     // Its pointers stay clear of the search list (8px in, 300px wide) and the toolbar above it.
@@ -400,7 +318,6 @@ function Demo({spawns}: {spawns: NpcSpawnInfo[]}) {
                 floorIndex={floor}
                 onFloorIndexChange={setFloor}
                 overlays={[
-                    overlay("regions", regions, DEMO_REGIONS),
                     overlay("predicted", predictedOverlay, predicted),
                     overlay("route-ends", routeEnds, planner.ends),
                     overlay("search", searchMarks, target),

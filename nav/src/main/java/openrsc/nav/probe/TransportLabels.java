@@ -73,27 +73,27 @@ public final class TransportLabels {
                     case UNDERGROUND_PASS_EAST_GRILL -> "Tie a rope to the wall grill and climb across";
                     case ERNEST_BASEMENT_MAZE -> "Pull the levers and cross the maze";
                     case PARAMAYA_DORMITORY -> "Buy a rest ticket and climb";
+                    case NIGHTSHADE_PICKUP -> "Take a nightshade for the guard";
                 };
         };
     }
 
     private static String command(EngageSpec.Target target, int command, ServerData defs) {
-        String raw =
-                switch (target) {
-                    case EngageSpec.Target.Scenery s -> {
-                        ObjectDef def = defs.object(s.objectId());
-                        yield def == null ? null : (command == 1 ? def.command1() : def.command2());
-                    }
-                    case EngageSpec.Target.Boundary b -> {
-                        DoorDef def = defs.doorDefs().get(b.boundaryId());
-                        yield def == null ? null : (command == 1 ? def.command1() : def.command2());
-                    }
-                    case EngageSpec.Target.Npcs npcs -> {
-                        NpcDef def = npcs.npcIds().length == 0 ? null : defs.npc(npcs.npcIds()[0]);
-                        yield def == null ? "Talk to the ferryman" : "Talk to " + def.name();
-                    }
-                    case EngageSpec.Target.Self self -> null;
-                };
+        String raw = switch (target) {
+            case EngageSpec.Target.Scenery s -> {
+                ObjectDef def = defs.object(s.objectId());
+                yield def == null ? null : (command == 1 ? def.command1() : def.command2());
+            }
+            case EngageSpec.Target.Boundary b -> {
+                DoorDef def = defs.doorDefs().get(b.boundaryId());
+                yield def == null ? null : (command == 1 ? def.command1() : def.command2());
+            }
+            case EngageSpec.Target.Npcs npcs -> {
+                NpcDef def = npcs.npcIds().length == 0 ? null : defs.npc(npcs.npcIds()[0]);
+                yield def == null ? "Talk to the ferryman" : "Talk to " + def.name();
+            }
+            case EngageSpec.Target.Self self -> null;
+        };
         if (raw == null || raw.isBlank()) {
             return null;
         }

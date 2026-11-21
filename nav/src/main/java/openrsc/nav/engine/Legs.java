@@ -199,7 +199,7 @@ final class Legs {
     String stats() {
         NavCacheStats cs = clusterCache.stats();
         return String.format(
-                "legs: %d entries, %dMB held, hitRate=%.3f, loads=%d, missCost=%.2fms, " + "evictionWeight=%dMB",
+                "legs: %d entries, %dMB held, hitRate=%.3f, loads=%d, missCost=%.2fms, evictionWeight=%dMB",
                 cs.entries(), cs.heldBytes() >> 20, cs.hitRate(), cs.loads(), cs.missCostMs(), cs.evictedBytes() >> 20);
     }
 

@@ -128,7 +128,7 @@ public final class Scene {
             this.m_gb = new int[var4];
         } catch (RuntimeException var6) {
             throw GenUtil.makeThrowable(
-                    var6, "lb.<init>(" + "{...}" + ',' + var2 + ',' + maxPolygonCount + ',' + var4 + ')');
+                    var6, "lb.<init>({...}" + ',' + var2 + ',' + maxPolygonCount + ',' + var4 + ')');
         }
     }
 
@@ -218,7 +218,7 @@ public final class Scene {
             // true)) : true);
         } catch (RuntimeException var8) {
             throw GenUtil.makeThrowable(
-                    var8, "lb.H(" + "dummy" + ',' + var2 + ',' + var3 + ',' + var4 + ',' + var5 + ',' + var6 + ')');
+                    var8, "lb.H(dummy" + ',' + var2 + ',' + var3 + ',' + var4 + ',' + var5 + ',' + var6 + ')');
         }
     }
 
@@ -369,7 +369,7 @@ public final class Scene {
             this.m_n = 0;
             this.m_T.resetFaceVertHead((int) 1);
         } catch (RuntimeException var3) {
-            throw GenUtil.makeThrowable(var3, "lb.Q(" + "dummy" + ')');
+            throw GenUtil.makeThrowable(var3, "lb.Q(dummy" + ')');
         }
     }
 
@@ -2599,7 +2599,7 @@ public final class Scene {
             }
 
         } catch (RuntimeException var4) {
-            throw GenUtil.makeThrowable(var4, "lb.NA(" + "null" + ',' + 118 + ')');
+            throw GenUtil.makeThrowable(var4, "lb.NA(null" + ',' + 118 + ')');
         }
     }
 

@@ -3,10 +3,12 @@ package openrsc.nav.transports;
 import static openrsc.nav.transports.spec.Bespoke.bespoke;
 import static openrsc.nav.transports.spec.Rows.onlyIn;
 import static openrsc.nav.transports.spec.WorldGate.feature;
+import static openrsc.nav.transports.spec.WorldGate.rule;
 
 import java.util.ArrayList;
 import java.util.List;
 import openrsc.gamedata.ServerData;
+import openrsc.gamedata.ServerRules;
 import openrsc.gamedata.WorldProfile;
 import openrsc.nav.Transport;
 import openrsc.nav.transports.spec.TransportDef;
@@ -26,6 +28,18 @@ public enum SpecialCrossings implements TransportDef {
             bespoke((env, id) -> List.of(new BananaPlantationTransport(269, 648).withPlacement(id)))),
     BANANA_ESCAPE_TO_ARDOUGNE(bespoke((env, id) -> List.of(new BananaPlantationTransport(538, 617).withPlacement(id)))),
 
+    // The guard takes a nightshade after the quest only where locked post-quest regions stay open.
+    NIGHTSHADE_PICKUP_NORTH_CAVE(onlyIn(
+            rule(ServerRules::postQuestRegionsOpen),
+            bespoke((env, id) -> List.of(new NightshadePickupTransport(
+                            NightshadePickupTransport.NORTH_SPAWN, NightshadePickupTransport.NORTH_COST)
+                    .withPlacement(id))))),
+    NIGHTSHADE_PICKUP_SOUTH_CAVE(onlyIn(
+            rule(ServerRules::postQuestRegionsOpen),
+            bespoke((env, id) -> List.of(new NightshadePickupTransport(
+                            NightshadePickupTransport.SOUTH_SPAWN, NightshadePickupTransport.SOUTH_COST)
+                    .withPlacement(id))))),
+
     // Any charge-orb spell cast on the gate moves the player to (474,3714), from either side.
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/members/legendsquest/obstacles/LegendsQuestDarkMetalGate.java#L97
     LEGENDS_DARK_METAL_GATE_CHARGE_ORB_S_RETURN(bespoke((env, id) -> List.of(new SpellLocTransport(
@@ -39,7 +53,7 @@ public enum SpecialCrossings implements TransportDef {
                     3719,
                     474,
                     3714,
-                    90)
+                    220)
             .withPlacement(id)))),
 
     ARHEIN_STOW_AWAY_SHIP_CATHERBY_DOCK_KEEP_LE_FAYE(

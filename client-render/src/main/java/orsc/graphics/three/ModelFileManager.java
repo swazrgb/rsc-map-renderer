@@ -18,7 +18,7 @@ class ModelFileManager {
                 modelFile[modelFiles++] = model;
             }
         } catch (RuntimeException var3) {
-            throw GenUtil.makeThrowable(var3, "ca.CA(" + "dummy" + ',' + (model != null ? "{...}" : "null") + ')');
+            throw GenUtil.makeThrowable(var3, "ca.CA(dummy" + ',' + (model != null ? "{...}" : "null") + ')');
         }
     }
 }

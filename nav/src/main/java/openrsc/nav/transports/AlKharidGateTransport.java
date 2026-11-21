@@ -104,7 +104,7 @@ public final class AlKharidGateTransport implements Transport, DeclarativeTransp
 
     @Override
     public int cost() {
-        return free ? 20 : 30;
+        return free ? 80 : 150;
     }
 
     private String name;

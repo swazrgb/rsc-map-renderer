@@ -32,6 +32,8 @@ public final class Rows {
                     OpenedWith,
                     LandsAt,
                     ArmCost,
+                    ArmPrice,
+                    Costs,
                     CanKillAt {}
 
     /** The object stands on {@code tile}, not on the tile it is clicked from. */
@@ -82,8 +84,14 @@ public final class Rows {
     /** Where a door's arm lands, when its handler moves the player beyond the far flank. */
     public record LandsAt(boolean lowToHigh, Point tile) implements Option {}
 
-    /** One arm of a door at {@code cost} instead of {@link Door#COST}. */
+    /** One arm of a door at {@code cost} instead of the door's {@link Costs}, or {@link Door#COST} without one. */
     public record ArmCost(boolean lowToHigh, int cost) implements Option {}
+
+    /** One arm of a door at {@code price}, its {@link openrsc.nav.Transport#price}, instead of 0. */
+    public record ArmPrice(boolean lowToHigh, int price) implements Option {}
+
+    /** The crossing at {@code cost}, in deci-ticks, instead of its kind's default. */
+    public record Costs(int cost) implements Option {}
 
     /**
      * One use can kill a player on {@code hits} current Hits or fewer: a failed roll, a fall or a trap
@@ -202,8 +210,20 @@ public final class Rows {
         return new LandsAt(false, Point.of(x, z));
     }
 
+    public static Option lowToHighCost(int cost) {
+        return new ArmCost(true, cost);
+    }
+
     public static Option highToLowCost(int cost) {
         return new ArmCost(false, cost);
+    }
+
+    public static Option highToLowPrice(int price) {
+        return new ArmPrice(false, price);
+    }
+
+    public static Option costs(int cost) {
+        return new Costs(cost);
     }
 
     public static Option canKillAt(int hits) {

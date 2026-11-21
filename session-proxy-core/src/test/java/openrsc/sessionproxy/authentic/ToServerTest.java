@@ -31,7 +31,7 @@ class ToServerTest {
         ToServer drop = new ToServer(
                 new PreLoginConfigs("test", BigInteger.ONE, BigInteger.ONE, Map.of()), slot -> slot == 3 ? 700 : 0);
         assertEquals(
-                "f6" + "0003" + "000002bc",
+                "f60003000002bc",
                 hex(drop.translate(new PacketWriter(246).u16(3).toByteArray())));
     }
 

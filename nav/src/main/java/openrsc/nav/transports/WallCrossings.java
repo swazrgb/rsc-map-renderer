@@ -51,11 +51,11 @@ public enum WallCrossings implements TransportDef {
             66, to(126, 3518), 80, when(Prereq.all(wearing(ItemId.DRAMEN_STAFF.id()), questAtLeast(LOST_CITY, 4))))),
 
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/members/LostCity.java#L453
-    ENTRANA_DUNGEON_MAGIC_DOOR_EXIT(anyWall(65, to(109, 245), 80)),
+    ENTRANA_DUNGEON_MAGIC_DOOR_EXIT(anyWall(65, to(109, 245), 20)),
 
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/defaults/DoorAction.java#L189
-    GRAND_TREE_MAIN_DOOR_ENTER(anyWall(153, to(416, 165), 80)),
-    GRAND_TREE_MAIN_DOOR_EXIT(anyWall(154, to(703, 455), 80)),
+    GRAND_TREE_MAIN_DOOR_ENTER(anyWall(153, to(416, 165), 40)),
+    GRAND_TREE_MAIN_DOOR_EXIT(anyWall(154, to(703, 455), 40)),
 
     // Steps through from a tile at x >= 414, or from anywhere at Dragon Slayer stage 3.
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/free/DragonSlayer.java#L458
@@ -71,9 +71,9 @@ public enum WallCrossings implements TransportDef {
 
     // Each portal id has one landing, wherever it stands.
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/misc/MagicGuildPortals.java#L23
-    MAGIC_PORTAL_147(anyWall(147, to(212, 695), 80)),
-    MAGIC_PORTAL_148(anyWall(148, to(511, 1452), 80)),
-    MAGIC_PORTAL_149(anyWall(149, to(362, 1515), 80)),
+    MAGIC_PORTAL_147(anyWall(147, to(212, 695), 20)),
+    MAGIC_PORTAL_148(anyWall(148, to(511, 1452), 20)),
+    MAGIC_PORTAL_149(anyWall(149, to(362, 1515), 20)),
 
     // No plugin handles these doors: the server moves the player by the telepoint at the door's tile.
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/net/rsc/handlers/GameObjectWallAction.java#L79
@@ -91,18 +91,18 @@ public enum WallCrossings implements TransportDef {
     TREE_GNOME_STRONGHOLD_MAGIC_DOOR_703_2340(wallTeleport(159, 703, 2340, 0, to(416, 2052))),
 
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/members/watchtower/WatchTowerObstacles.java#L428
-    WATCH_TOWER_CAVE_EXIT_NW(anyWall(188, to(648, 769), 80)),
-    WATCH_TOWER_CAVE_EXIT_N(anyWall(189, to(638, 777), 80)),
-    WATCH_TOWER_CAVE_EXIT_GU_TANOTH(anyWall(190, to(629, 777), 80)),
-    WATCH_TOWER_CAVE_EXIT_E(anyWall(191, to(631, 789), 80)),
-    WATCH_TOWER_CAVE_EXIT_SE(anyWall(187, to(624, 807), 80)),
-    WATCH_TOWER_CAVE_EXIT_S(anyWall(192, to(645, 812), 80)),
+    WATCH_TOWER_CAVE_EXIT_NW(anyWall(188, to(648, 769), 10)),
+    WATCH_TOWER_CAVE_EXIT_N(anyWall(189, to(638, 777), 10)),
+    WATCH_TOWER_CAVE_EXIT_GU_TANOTH(anyWall(190, to(629, 777), 10)),
+    WATCH_TOWER_CAVE_EXIT_E(anyWall(191, to(631, 789), 10)),
+    WATCH_TOWER_CAVE_EXIT_SE(anyWall(187, to(624, 807), 10)),
+    WATCH_TOWER_CAVE_EXIT_S(anyWall(192, to(645, 812), 10)),
 
     // Stated per tile: the handler sides the battlement by the fixed test x <= 664, which holds only
     // for these placements.
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/members/watchtower/WatchTowerObstacles.java#L451
-    GU_TANOTH_SW_BATTLEMENT_811_W_E_FREE(wall(195, 665, 811, from(664, 811), to(665, 811), 80)),
-    GU_TANOTH_SW_BATTLEMENT_812_W_E_FREE(wall(195, 665, 812, from(664, 812), to(665, 812), 80)),
+    GU_TANOTH_SW_BATTLEMENT_811_W_E_FREE(wall(195, 665, 811, from(664, 811), to(665, 811), 10)),
+    GU_TANOTH_SW_BATTLEMENT_812_W_E_FREE(wall(195, 665, 812, from(664, 812), to(665, 812), 10)),
     // https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/members/watchtower/WatchTowerObstacles.java#L454
     GU_TANOTH_SW_BATTLEMENT_811_E_W_GIFTED(wall(
             195,
@@ -139,7 +139,7 @@ public enum WallCrossings implements TransportDef {
                                     p.z(),
                                     e,
                                     e.y() >= 3729 ? to(457, 3727) : to(455, 3729),
-                                    20,
+                                    70,
                                     when(level(Skill.AGILITY, 50)),
                                     canKillAt(6)))
                             .toList())
@@ -159,7 +159,7 @@ public enum WallCrossings implements TransportDef {
     LEGENDS_ANCIENT_WALL_RETURN(anyWall(
             212,
             to(463, 3720),
-            20,
+            70,
             when(Prereq.any(cacheAtLeast("ancient_wall_runes", 5), questComplete(LEGENDS_QUEST))))),
     ;
 

@@ -310,13 +310,12 @@ public final class EligibilityInputs {
                 }
                 case NOT_CARRYING_COMBAT_GEAR, NOT_CARRYING_TOMB_BANNED, NOT_CARRYING_MAGE_ARENA_BANNED -> {
                     for (InventorySlot it : pack.slots()) {
-                        boolean refuses =
-                                switch (kind) {
-                                    case NOT_CARRYING_COMBAT_GEAR -> EntranaAccess.blocked(it.id(), sd);
-                                    case NOT_CARRYING_TOMB_BANNED ->
-                                        pack.takesPackSlot(it) && GlarialTombAccess.isBanned(sd, it.id());
-                                    default -> MageArenaAccess.refused(it.id(), sd);
-                                };
+                        boolean refuses = switch (kind) {
+                            case NOT_CARRYING_COMBAT_GEAR -> EntranaAccess.blocked(it.id(), sd);
+                            case NOT_CARRYING_TOMB_BANNED ->
+                                pack.takesPackSlot(it) && GlarialTombAccess.isBanned(sd, it.id());
+                            default -> MageArenaAccess.refused(it.id(), sd);
+                        };
                         if (refuses) {
                             out.put(it.id(), 0L);
                         }

@@ -269,7 +269,7 @@ public final class NoRouteReport {
                             + ask.account().bank().count(item.item().id());
             return "lower this row's arrive count below " + item.min()
                     + (held < item.min()
-                            ? ", or stock more of it — only " + held + " exists between the" + " pack and the bank"
+                            ? ", or stock more of it — only " + held + " exists between the pack and the bank"
                             : ", or drop the row");
         }
         return "drop this row, or raise its arrive count so the trip may keep what it needs";
@@ -310,7 +310,7 @@ public final class NoRouteReport {
         if (found.isEmpty()) {
             return one(
                     Diagnosis.Kind.SHED,
-                    "the loadout banks what it does not name, and keeping all of it does not" + " route either",
+                    "the loadout banks what it does not name, and keeping all of it does not route either",
                     List.of(),
                     hopNames(witness.steps()));
         }
@@ -727,7 +727,7 @@ public final class NoRouteReport {
         if (gates == lifts.size()) {
             return gates == 1
                     ? "a hop the trip needs is closed to this account"
-                    : "these " + gates + " hops are closed to this account, and the trip needs every one of" + " them";
+                    : "these " + gates + " hops are closed to this account, and the trip needs every one of them";
         }
         return "the policy shuts this way, and it also needs a gate this account fails";
     }
@@ -814,11 +814,10 @@ public final class NoRouteReport {
         static List<Integer> quests(Prereq prereq, RouteContext ctx) {
             List<Integer> out = new ArrayList<>();
             for (Fact f : failing(prereq, ctx)) {
-                boolean quest =
-                        switch (f.kind()) {
-                            case QUEST_AT_LEAST, QUEST_COMPLETE, QUEST_EQUALS -> true;
-                            default -> false;
-                        };
+                boolean quest = switch (f.kind()) {
+                    case QUEST_AT_LEAST, QUEST_COMPLETE, QUEST_EQUALS -> true;
+                    default -> false;
+                };
                 if (quest && !out.contains(f.itemId())) {
                     out.add(f.itemId());
                 }

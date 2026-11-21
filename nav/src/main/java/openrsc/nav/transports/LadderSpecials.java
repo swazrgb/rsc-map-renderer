@@ -10,6 +10,7 @@ import static openrsc.nav.transports.spec.Rows.answers;
 import static openrsc.nav.transports.spec.Rows.cache;
 import static openrsc.nav.transports.spec.Rows.cacheAtLeast;
 import static openrsc.nav.transports.spec.Rows.carrying;
+import static openrsc.nav.transports.spec.Rows.costs;
 import static openrsc.nav.transports.spec.Rows.level;
 import static openrsc.nav.transports.spec.Rows.notQuestAtLeast;
 import static openrsc.nav.transports.spec.Rows.notQuestComplete;
@@ -106,7 +107,7 @@ public enum LadderSpecials implements TransportDef {
      */
     RISING_SUN_INN_UPSTAIRS(ladder(41, 316, 546, to(316, 1493), when(cache("carol.partyAccess")))),
 
-    BRIMSTAIL_CAVE_STRONGHOLD(anywhere(667, to(730, 3334))),
+    BRIMSTAIL_CAVE_STRONGHOLD(anywhere(667, to(730, 3334), costs(70))),
     LAIR_LADDER_UP_98_2930(ladder(5, 98, 2930, to(243, 96))),
     LAIR_LADDER_UP_137_2932(ladder(5, 137, 2932, to(243, 96))),
 
@@ -196,7 +197,7 @@ public enum LadderSpecials implements TransportDef {
      * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/members/grandtree/GrandTree.java#L1563">GrandTree.onOpLoc</a>
      */
     GRAND_TREE_WATCH_TOWER_UP(anywhere(635, to(710, 2364), when(level(Skill.AGILITY, 25)))),
-    GRAND_TREE_WATCH_TOWER_DOWN(anywhere(646, to(712, 1420))),
+    GRAND_TREE_WATCH_TOWER_DOWN(anywhere(646, to(712, 1420), costs(70))),
 
     /**
      * The tower guard lets the player up from stage 1, and the climb then lands as a default ladder
@@ -205,7 +206,7 @@ public enum LadderSpecials implements TransportDef {
      * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/members/watchtower/WatchTowerObstacles.java#L84">WatchTowerObstacles.onOpLoc</a>
      */
     WATCH_TOWER_FIRST_FLOOR_LADDER_UP(everyScenery(
-            659, p -> List.of(columnLadder(659, p.x(), p.z(), true, when(questAtLeast(WATCHTOWER, 1)))))),
+            659, p -> List.of(columnLadder(659, p.x(), p.z(), true, when(questAtLeast(WATCHTOWER, 1)), costs(70))))),
 
     UNDERGROUND_PASS_DUNGEON_LADDER(anywhere(920, to(782, 3549))),
 
@@ -250,7 +251,8 @@ public enum LadderSpecials implements TransportDef {
      * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/members/LostCity.java#L86">LostCity.onOpLoc</a>
      * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/members/LostCity.java#L338">LostCity.onTalkNpc</a>
      */
-    ENTRANA_DUNGEON_LADDER(everyScenery(244, p -> List.of(columnLadder(244, p.x(), p.z(), false, answers("risk"))))),
+    ENTRANA_DUNGEON_LADDER(
+            everyScenery(244, p -> List.of(columnLadder(244, p.x(), p.z(), false, answers("risk"), costs(330))))),
 
     GNOME_AGILITY_COURSE_LANDING(anywhere(649, to(683, 506))),
 

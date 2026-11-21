@@ -44,8 +44,8 @@ class TransportGoldenTest {
         Set<String> resolved = new HashSet<>();
         for (Transport t : AllTransports.defaultRegistry(env)) {
             resolved.add(t.costOverrideKey());
-            String tail = " | cost=" + t.cost() + " | gate=" + t.prereq().description() + " | spends="
-                    + t.consumes(reference) + " | engage=" + engage(t);
+            String tail = " | cost=" + t.cost() + (t.price() > 0 ? " | price=" + t.price() : "") + " | gate="
+                    + t.prereq().description() + " | spends=" + t.consumes(reference) + " | engage=" + engage(t);
             List<Point> entries = t.entries();
             if (entries.isEmpty()) {
                 out.add(t.costOverrideKey() + " | (region: wilderness depth < "
@@ -98,7 +98,7 @@ class TransportGoldenTest {
         assertTrue(
                 gained.isEmpty() && lost.isEmpty(),
                 "the transport set of " + env.world().name() + " changed (" + lost.size() + " lost, " + gained.size()
-                        + " gained).\n" + "  lost:   " + first(lost) + "\n  gained: " + first(gained));
+                        + " gained).\n  lost:   " + first(lost) + "\n  gained: " + first(gained));
     }
 
     private static String first(Set<String> lines) {

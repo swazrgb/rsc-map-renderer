@@ -219,6 +219,23 @@ class ServerGatesTest {
         assertTrue(climb.eligibilityInputs().anyFactOfKind(Fact.Kind.ROOM_FOR), "the ticket needs a slot");
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"uranium", "rsccoleslaw"})
+    void berviriusTombRocksAdmitFromStageFiveUntilTheQuestIsDone(String world) {
+        ServerData env = RealDefs.serverData(world);
+        Transport in = from(QuestObstacles.SHILO_VILLAGE_WELL_ROCKS_688_CRAWL_IN, env, Point.of(472, 825));
+        for (int stage : new int[] {3, 5, 6, 8, -1}) {
+            boolean crawls = stage >= 5;
+            assertEquals(
+                    crawls,
+                    in.prereq()
+                            .test(account(QuestId.SHILO_VILLAGE, stage)
+                                    .level(Skill.HITS, 10)
+                                    .context(env)),
+                    "stage " + stage);
+        }
+    }
+
     private static Account account(QuestId quest, int stage) {
         return new Account().quest(quest, stage);
     }

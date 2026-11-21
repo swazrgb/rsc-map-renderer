@@ -129,7 +129,8 @@ public record NavPolicy(
     }
 
     /**
-     * This policy with {@code transport} costing {@code cost} deci-ticks instead of its own.
+     * This policy with {@code transport} costing {@code cost} deci-ticks instead of its own; its
+     * {@link Transport#price} still weighs on top.
      *
      * @throws IllegalArgumentException for a negative cost, or {@link #PROHIBITIVE}
      */

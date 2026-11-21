@@ -35,11 +35,11 @@ import openrsc.nav.transports.WebTransport;
  */
 public record CutBoundary(int boundaryId) implements TransportSpec {
 
-    private static final int WEB_COST = 110;
+    private static final int WEB_COST = 150;
 
-    static final int JUNGLE_COST = 80;
+    static final int JUNGLE_COST = 40;
 
-    static final int WALKAROUND_BUDGET = JUNGLE_COST + 20;
+    static final int WALKAROUND_BUDGET = 100;
 
     static final int WOODCUTTING_REQ = 50;
 

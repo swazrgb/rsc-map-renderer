@@ -23,7 +23,7 @@ public record SpellTeleport(
         implements TransportSpec {
 
     /** A cast's cost, in the planner's units of 10 per walked tile. */
-    public static final int COST = 50;
+    public static final int COST = 10;
 
     /** What a cast's runes weigh ({@link Transport#price}): two hundred walked tiles. */
     public static final int PRICE = 2000;

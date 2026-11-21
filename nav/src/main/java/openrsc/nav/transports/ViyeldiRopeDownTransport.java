@@ -46,6 +46,8 @@ public final class ViyeldiRopeDownTransport implements Transport, DeclarativeTra
 
     private static final int FALL_DAMAGE = 15;
 
+    private static final int ROPE_DOWN_COST = 180;
+
     private String name;
     private String placementId;
 
@@ -78,9 +80,8 @@ public final class ViyeldiRopeDownTransport implements Transport, DeclarativeTra
             if (entries.isEmpty()) {
                 return List.of();
             }
-            return List.of(
-                    new ViyeldiRopeDownTransport(loc.pos().x(), loc.pos().y(), entries, AgilityObstacles.COST, tiesRope)
-                            .withPlacement(id));
+            return List.of(new ViyeldiRopeDownTransport(loc.pos().x(), loc.pos().y(), entries, ROPE_DOWN_COST, tiesRope)
+                    .withPlacement(id));
         }
         return List.of();
     }

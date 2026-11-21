@@ -69,7 +69,7 @@ class PrereqProgramTest {
                     }
                 } else if (withBank != facts[i].test(ctx)) {
                     disagreements.add(
-                            "account " + a + ": " + facts[i] + " is not bank-relaxed but its bank" + " answer differs");
+                            "account " + a + ": " + facts[i] + " is not bank-relaxed but its bank answer differs");
                 }
             }
             for (int p = 0; p < trees.size(); p++) {

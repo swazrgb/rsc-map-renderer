@@ -162,7 +162,7 @@ class FundedResearchTest {
             RouteContext ctx = new RouteContext(account.withInventory(hop.pack()), AVOID_DANGER, env);
             assertTrue(
                     t.prereq().test(ctx),
-                    hop.transport() + " is closed to the pack the route walks " + "it with: "
+                    hop.transport() + " is closed to the pack the route walks it with: "
                             + hop.pack().slots());
         }
     }

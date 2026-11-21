@@ -112,12 +112,11 @@ public record ProxySettings(
         try {
             raw = YAML.readValue(text, Raw.class);
         } catch (UnrecognizedPropertyException e) {
-            String hint =
-                    switch (e.getPropertyName()) {
-                        case "server" ->
-                            ": the proxy runs only on Uranium and Coleslaw, so set world (uranium or coleslaw) instead";
-                        default -> "";
-                    };
+            String hint = switch (e.getPropertyName()) {
+                case "server" ->
+                    ": the proxy runs only on Uranium and Coleslaw, so set world (uranium or coleslaw) instead";
+                default -> "";
+            };
             throw new IllegalArgumentException(where(file, e) + "there is no setting " + e.getPropertyName() + hint, e);
         } catch (MismatchedInputException e) {
             String setting =

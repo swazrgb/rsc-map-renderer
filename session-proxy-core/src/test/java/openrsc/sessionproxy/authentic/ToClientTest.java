@@ -109,8 +109,7 @@ class ToClientTest {
                 .u8(0)
                 .u8(0)
                 .toByteArray();
-        assertEquals(
-                List.of("3504" + "8001" + "000a80009c40" + "04060007" + "0000"), hex(translate.translate(inventory)));
+        assertEquals(List.of("35048001000a80009c40040600070000"), hex(translate.translate(inventory)));
         assertEquals(1, translate.slotAmount(0));
         assertEquals(40_000, translate.slotAmount(1));
         assertEquals(7, translate.slotAmount(2));
@@ -168,7 +167,7 @@ class ToClientTest {
                 .u16(5)
                 .u16(5)
                 .toByteArray();
-        assertEquals(List.of("65" + "01" + "01822803" + "000a00050005"), hex(translate.translate(shop)));
+        assertEquals(List.of("650101822803000a00050005"), hex(translate.translate(shop)));
     }
 
     @Test
@@ -265,8 +264,7 @@ class ToClientTest {
         look.u8(0).u8(1).u8(0).u8(0).i32(0);
         byte[] out = translate.translate(look.toByteArray()).getFirst();
         assertEquals(
-                "ea" + "0001" + "0007" + "05" + "0000" + "0067686f737400" + "0067686f737400" + "0b"
-                        + "000000000000000000" + "e3" + "00" + "02080e000300",
+                "ea000100070500000067686f7374000067686f7374000b000000000000000000e30002080e000300",
                 HexFormat.of().formatHex(out));
     }
 
@@ -274,9 +272,9 @@ class ToClientTest {
     void welcomeCarriesTheAddressInFourBytes() {
         ToClient translate = translator(Map.of());
         byte[] v4 = packet(182).line("10.1.2.3").u16(4).u16(0).toByteArray();
-        assertEquals(List.of("b6" + "0a010203" + "0004" + "c8" + "0001"), hex(translate.translate(v4)));
+        assertEquals(List.of("b60a0102030004c80001"), hex(translate.translate(v4)));
         byte[] v6 = packet(182).line("2001:db8::1:ab").u16(4).u16(10).toByteArray();
-        assertEquals(List.of("b6" + "060001ab" + "0004" + "04" + "0001"), hex(translate.translate(v6)));
+        assertEquals(List.of("b6060001ab0004040001"), hex(translate.translate(v6)));
     }
 
     @Test
@@ -314,7 +312,7 @@ class ToClientTest {
                 .u8(7)
                 .u8(8)
                 .toByteArray();
-        assertEquals(List.of("63" + "000a0304" + "ff0708"), hex(translate.translate(ground)));
+        assertEquals(List.of("63000a0304ff0708"), hex(translate.translate(ground)));
     }
 
     @Test
@@ -331,7 +329,7 @@ class ToClientTest {
         translate.translate(packet(249).u8(0).u16(0).i32(0).toByteArray());
         translate.translate(packet(249).u8(0).u16(0).i32(0).toByteArray());
         assertEquals(
-                List.of("f900000a0000", "f9000001" + "0000"),
+                List.of("f900000a0000", "f90000010000"),
                 hex(translate.translate(packet(131).i32(0).u8(0).u8(0).line("x").toByteArray()))
                         .subList(0, 2));
     }

@@ -527,7 +527,7 @@ public final class RSModel {
                 this.appliedTransform = 4;
             }
         } catch (RuntimeException var3) {
-            throw GenUtil.makeThrowable(var3, "ca.A(" + "dummy" + ')');
+            throw GenUtil.makeThrowable(var3, "ca.A(dummy" + ')');
         }
     }
 

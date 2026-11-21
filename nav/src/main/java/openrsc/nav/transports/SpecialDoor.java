@@ -9,8 +9,11 @@ import static openrsc.nav.transports.spec.Door.sceneryDoor;
 import static openrsc.nav.transports.spec.EveryPlacement.everyBoundary;
 import static openrsc.nav.transports.spec.Rows.answers;
 import static openrsc.nav.transports.spec.Rows.byWorld;
+import static openrsc.nav.transports.spec.Rows.costs;
 import static openrsc.nav.transports.spec.Rows.highToLowCost;
 import static openrsc.nav.transports.spec.Rows.highToLowLandsAt;
+import static openrsc.nav.transports.spec.Rows.highToLowPrice;
+import static openrsc.nav.transports.spec.Rows.lowToHighCost;
 import static openrsc.nav.transports.spec.Rows.lowToHighLandsAt;
 import static openrsc.nav.transports.spec.Rows.note;
 import static openrsc.nav.transports.spec.Rows.onlyIn;
@@ -381,7 +384,7 @@ public enum SpecialDoor implements TransportDef {
             3332,
             1,
             Prereq.ALWAYS,
-            highToLowCost(1_000_000),
+            highToLowPrice(1_000_000),
             note("the planner ignores the suit of armour, which attacks on approach"))),
     DOOR_DRUIDIC_WALK_A(door(64, 367, 3332, 1, Prereq.ALWAYS)),
     DOOR_DRUIDIC_WALK_B(door(64, 369, 3336, 0, Prereq.ALWAYS)),
@@ -420,6 +423,7 @@ public enum SpecialDoor implements TransportDef {
                     Prereq.NEVER,
                     from -> Point.of(69, 3625),
                     pays(ItemId.ROCKS.id(), 15),
+                    highToLowCost(70),
                     note("the jail mercenary must be at the gate")))),
 
     TENT_DOOR_ANVIL(everyBoundary(
@@ -461,7 +465,8 @@ public enum SpecialDoor implements TransportDef {
             532,
             0,
             carrying(ItemId.PHOENIX_GANG_WEAPON_KEY.id()),
-            openedWith(ItemId.PHOENIX_GANG_WEAPON_KEY.id()))),
+            openedWith(ItemId.PHOENIX_GANG_WEAPON_KEY.id()),
+            costs(70))),
     DOOR_WATERFALL_OLD_KEY(everyDoor(135, carrying(ItemId.AN_OLD_KEY.id()), openedWith(ItemId.AN_OLD_KEY.id()))),
     DOOR_MELZAR_MAZE_KEY(everyDoor(60, carrying(ItemId.MAZE_KEY.id()), openedWith(ItemId.MAZE_KEY.id()))),
     DOOR_HEROS_MISC_KEY(
@@ -479,8 +484,8 @@ public enum SpecialDoor implements TransportDef {
      *
      * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/members/touristtrap/TouristTrap.java#L2659">TouristTrap.onOpLoc</a>
      */
-    TOURIST_TRAP_IRON_GATE(
-            everySceneryDoor(932, all(carrying(ItemId.METAL_KEY.id()), notCarrying(ItemId.ANA_IN_A_BARREL.id())))),
+    TOURIST_TRAP_IRON_GATE(everySceneryDoor(
+            932, all(carrying(ItemId.METAL_KEY.id()), notCarrying(ItemId.ANA_IN_A_BARREL.id())), costs(110))),
 
     TENT_DOOR_AL_SHABIM(everyDoor(196, Prereq.ALWAYS)),
 
@@ -551,7 +556,11 @@ public enum SpecialDoor implements TransportDef {
             (p, from) -> from.y() >= 103 && from.y() <= 107,
             Prereq.ALWAYS,
             all(skill(Skill.THIEVING, 32), carrying(ItemId.LOCKPICK.id())))),
-    DOOR_YANILLE_SHORTCUT(everyDoor(162, all(skill(Skill.THIEVING, 82), carrying(ItemId.LOCKPICK.id())))),
+    DOOR_YANILLE_SHORTCUT(everyDoor(
+            162,
+            all(skill(Skill.THIEVING, 82), carrying(ItemId.LOCKPICK.id())),
+            lowToHighCost(70),
+            highToLowCost(180))),
 
     /**
      * The jump moves the player one tile along x, to the wall's x - 1 from its own x and to x + 1
@@ -611,7 +620,7 @@ public enum SpecialDoor implements TransportDef {
             feature(WorldProfile.Feature.WOODCUTTING_GUILD),
             sceneryDoor(356, 560, 472, 2, Prereq.ALWAYS, Prereq.NEVER))),
 
-    GATE_COMBAT_CAMP(everySceneryDoor(563, questDone(Quest.BIOHAZARD))),
+    GATE_COMBAT_CAMP(everySceneryDoor(563, questDone(Quest.BIOHAZARD), highToLowCost(90))),
     GATE_KARAMJA_GLIDER(sceneryDoor(660, 387, 760, 2, Prereq.ALWAYS)),
 
     GATE_GNOME_BALL(everySceneryDoorBySide(
@@ -653,7 +662,7 @@ public enum SpecialDoor implements TransportDef {
      *
      * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/members/Waterfall_Quest.java#L456">Waterfall_Quest.onOpLoc</a>
      */
-    DOORS_WATERFALL_CLOSED(everySceneryDoor(471, wearing(ItemId.GLARIALS_AMULET.id()))),
+    DOORS_WATERFALL_CLOSED(everySceneryDoor(471, wearing(ItemId.GLARIALS_AMULET.id()), costs(100))),
     ;
 
     /**

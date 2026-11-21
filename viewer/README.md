@@ -261,8 +261,7 @@ a pointer at the edge of the view while it is out of sight.
 
 Because the pick is yours, so is what can produce one: `kind` is any string, not
 just the five the view reports, so an overlay that wants a click of its own to
-open the same card just calls the same setter. The demo's regions do exactly
-that.
+open the same card just calls the same setter.
 
 ### Tools, camera and toggles — the rest of the props
 
@@ -365,8 +364,9 @@ markers — none of which the library knows about. The view's own route and trai
 ribbons are overlays too, same interface, same band, no private path. Both come from `pathOverlay(style)`, which is exported: a
 draped polyline that breaks at floor changes, at flagged jumps and over gaps too
 big to have been walked is a style away, not a rewrite. For everything else,
-`viewer/src/world3dTestMain.tsx` has a worked example with a ribbon, a clickable
-label and hover highlighting.
+`viewer/src/World3DClusters.ts` is a worked example of draped boxes with cursor
+hover (`hitTest`/`hover`), and the demo's `viewer/src/search/searchOverlay.ts` of
+ribbons and pooled labels.
 
 ### 4. Control — `configureViewerHost`
 
@@ -422,7 +422,7 @@ const token = formatAppearance({sprites: [4, 5, 3], hair: 1, top: 12, bottom: 2,
 
 `viewer/src/world3dTestMain.tsx` is a complete, runnable embedding: it loads
 baked wander tracks, builds a `WorldEntities` from them every tick, holds the
-pick and area-selection state the view reports, and adds an overlay of its own
-with hover highlighting and a clickable label — the whole contract in a few
+pick and area-selection state the view reports, and draws its search and
+route planner results as overlays of its own — the whole contract in a few
 `useState`s. Swap its baked-track expansion for your live stream (and add
 `configureViewerHost` for walk/interact) and you have a live client.

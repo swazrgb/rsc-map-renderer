@@ -13,7 +13,7 @@ import openrsc.nav.transports.NpcTalkTransport;
  * walks, so {@code entries} are stated tiles it can be engaged from. {@code menu} is one keyword group
  * per menu. {@code fareItem} is {@link #NO_FARE} or the item {@code fare} of which the crossing spends;
  * {@code shownItem} is the item used on the NPC instead of talking, or {@code -1}; {@code npcCommand}
- * is 0 to talk, else the NPC's command option 1 or 2.
+ * is 0 to talk, else the NPC's command option 1 or 2; {@code price} is {@link Transport#price}.
  */
 public record NpcTalk(
         int[] npcIds,
@@ -27,10 +27,33 @@ public record NpcTalk(
         int fare,
         int shownItem,
         int npcCommand,
-        String note)
+        String note,
+        int price)
         implements TransportSpec {
 
     public static final int NO_FARE = -1;
+
+    public NpcTalk(
+            int[] npcIds,
+            List<Point> entries,
+            int destX,
+            int destZ,
+            String[][] menu,
+            Prereq gate,
+            int cost,
+            int fareItem,
+            int fare,
+            int shownItem,
+            int npcCommand,
+            String note) {
+        this(npcIds, entries, destX, destZ, menu, gate, cost, fareItem, fare, shownItem, npcCommand, note, 0);
+    }
+
+    /** This crossing, weighing {@code price} more in a route than its cost. */
+    public NpcTalk priced(int price) {
+        return new NpcTalk(
+                npcIds, entries, destX, destZ, menu, gate, cost, fareItem, fare, shownItem, npcCommand, note, price);
+    }
 
     public static NpcTalk talk(
             int[] npcIds, List<Point> entries, int destX, int destZ, Prereq gate, int cost, String[]... menu) {
@@ -216,6 +239,7 @@ public record NpcTalk(
         if (npcCommand != 0) {
             t.usingCommand(npcCommand);
         }
+        t.priced(price);
         return List.of(t);
     }
 }

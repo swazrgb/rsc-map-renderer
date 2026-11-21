@@ -19,12 +19,11 @@ final class Menus {
                     String k = keyword.toLowerCase(Locale.ROOT);
                     for (int i = 0; i < options.size(); i++) {
                         String option = options.get(i).toLowerCase(Locale.ROOT);
-                        boolean hit =
-                                switch (pass) {
-                                    case 0 -> option.equals(k);
-                                    case 1 -> option.startsWith(k + " ");
-                                    default -> option.contains(k);
-                                };
+                        boolean hit = switch (pass) {
+                            case 0 -> option.equals(k);
+                            case 1 -> option.startsWith(k + " ");
+                            default -> option.contains(k);
+                        };
                         if (hit) {
                             return i;
                         }

@@ -29,6 +29,7 @@ import openrsc.bot.api.packets.CastOnNpcPacket;
 import openrsc.bot.api.packets.CastOnPlayerPacket;
 import openrsc.bot.api.packets.CastOnSceneryPacket;
 import openrsc.bot.api.packets.CastOnSelfPacket;
+import openrsc.bot.api.packets.CertSwapPacket;
 import openrsc.bot.api.packets.ChatPacket;
 import openrsc.bot.api.packets.CombatStylePacket;
 import openrsc.bot.api.packets.CommandPacket;
@@ -172,6 +173,7 @@ public abstract class AbstractPacketCodec<T> implements PacketCodec {
             case SleepWordPacket p -> sleepWord(p, out);
             case LogoutPacket p -> logout(p, out);
             case CancelBatchPacket p -> cancelBatch(p, out);
+            case CertSwapPacket p -> certSwap(p, out);
             case AuctionBuyPacket p -> auctionBuy(p, out);
             case AuctionCreatePacket p -> auctionCreate(p, out);
             case AuctionCancelPacket p -> auctionCancel(p, out);
@@ -332,6 +334,8 @@ public abstract class AbstractPacketCodec<T> implements PacketCodec {
     protected abstract void logout(@NotNull LogoutPacket p, @NotNull T out);
 
     protected abstract void cancelBatch(@NotNull CancelBatchPacket p, @NotNull T out);
+
+    protected abstract void certSwap(@NotNull CertSwapPacket p, @NotNull T out);
 
     protected abstract void auctionBuy(@NotNull AuctionBuyPacket p, @NotNull T out);
 

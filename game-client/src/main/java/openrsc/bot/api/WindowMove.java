@@ -105,27 +105,25 @@ public record WindowMove(Screen screen, Step step, Packet packet) {
         }
         ServerRules rules = data.world().rules();
         boolean custom = rules.customBanks();
-        Packet p =
-                switch (action) {
-                    case "withdraw" ->
-                        amount < 1 || (noted && !rules.bankNotes()) ? null : new WithdrawPacket(item, amount, noted);
-                    case "deposit" -> amount < 1 ? null : new DepositPacket(item, amount);
-                    case "deposit_inventory" -> custom ? new DepositAllPacket() : null;
-                    case "deposit_worn" -> custom && rules.equipmentTab() ? new DepositAllWornPacket() : null;
-                    case "unequip" -> {
-                        ItemDef def = data.item(item);
-                        yield rules.equipmentTab() && def != null && def.wearable()
-                                ? new ItemRemoveToBankPacket(def.wearSlot())
-                                : null;
-                    }
-                    case "swap" -> custom && slot >= 0 && to >= 0 && slot != to ? new BankSwapPacket(slot, to) : null;
-                    case "insert" ->
-                        custom && slot >= 0 && to >= 0 && slot != to ? new BankInsertPacket(slot, to) : null;
-                    case "load_preset" -> presets(rules, slot) ? new BankPresetLoadPacket(slot) : null;
-                    case "save_preset" -> presets(rules, slot) ? new BankPresetSavePacket(slot) : null;
-                    case "close" -> new BankClosePacket();
-                    default -> null;
-                };
+        Packet p = switch (action) {
+            case "withdraw" ->
+                amount < 1 || (noted && !rules.bankNotes()) ? null : new WithdrawPacket(item, amount, noted);
+            case "deposit" -> amount < 1 ? null : new DepositPacket(item, amount);
+            case "deposit_inventory" -> custom ? new DepositAllPacket() : null;
+            case "deposit_worn" -> custom && rules.equipmentTab() ? new DepositAllWornPacket() : null;
+            case "unequip" -> {
+                ItemDef def = data.item(item);
+                yield rules.equipmentTab() && def != null && def.wearable()
+                        ? new ItemRemoveToBankPacket(def.wearSlot())
+                        : null;
+            }
+            case "swap" -> custom && slot >= 0 && to >= 0 && slot != to ? new BankSwapPacket(slot, to) : null;
+            case "insert" -> custom && slot >= 0 && to >= 0 && slot != to ? new BankInsertPacket(slot, to) : null;
+            case "load_preset" -> presets(rules, slot) ? new BankPresetLoadPacket(slot) : null;
+            case "save_preset" -> presets(rules, slot) ? new BankPresetSavePacket(slot) : null;
+            case "close" -> new BankClosePacket();
+            default -> null;
+        };
         return p == null ? null : new WindowMove(Screen.BANK, Step.OPEN, p);
     }
 

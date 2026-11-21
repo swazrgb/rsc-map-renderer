@@ -46,81 +46,87 @@ public enum NpcRoutes implements TransportDef {
      * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/members/grandtree/GnomeGlider.java#L160">GnomeGlider.onTalkNpc</a>
      */
     GLIDER_ESCAPE_KARAMJA_STAGE_8(
-            glider(NpcId.GNOME_PILOT_GRANDTREE, 414, 2995, 425, 764, grandTreeStage(8), "karamja")),
+            glider(NpcId.GNOME_PILOT_GRANDTREE, 414, 2995, 425, 764, grandTreeStage(8), 760, "karamja")),
     GLIDER_ESCAPE_KARAMJA_STAGE_9(
-            glider(NpcId.GNOME_PILOT_GRANDTREE, 414, 2995, 425, 764, grandTreeStage(9), "karamja")),
-    GLIDER_TO_KARAMJA(glider(NpcId.GNOME_PILOT_GRANDTREE, 414, 2995, 389, 753, grandTree(), "karamja")),
+            glider(NpcId.GNOME_PILOT_GRANDTREE, 414, 2995, 425, 764, grandTreeStage(9), 760, "karamja")),
+    GLIDER_TO_KARAMJA(glider(NpcId.GNOME_PILOT_GRANDTREE, 414, 2995, 389, 753, grandTree(), 410, "karamja")),
     /**
      * Varrock's glider crashed on landing, so no glider flies back from there.
      *
      * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/members/grandtree/GnomeGlider.java#L34">GnomeGlider.onTalkNpc</a>
      */
-    GLIDER_TO_VARROCK(glider(NpcId.GNOME_PILOT_GRANDTREE, 414, 2995, 58, 504, grandTree(), "varrock")),
-    GLIDER_TO_AL_KHARID(glider(NpcId.GNOME_PILOT_GRANDTREE, 414, 2995, 88, 664, grandTree(), "al kharid")),
-    GLIDER_TO_WHITE_WOLF_MOUNTAIN(glider(NpcId.GNOME_PILOT_GRANDTREE, 414, 2995, 400, 461, grandTree(), "white wolf")),
-    GLIDER_KARAMJA_TO_GRAND_TREE(glider(NpcId.GNOME_PILOT_KARAMJA, 389, 753, 414, 2995, grandTree(), "ok then")),
-    GLIDER_AL_KHARID_TO_GRAND_TREE(glider(NpcId.GNOME_PILOT_ALKHARID, 88, 662, 414, 2995, grandTree(), "ok then")),
+    GLIDER_TO_VARROCK(glider(NpcId.GNOME_PILOT_GRANDTREE, 414, 2995, 58, 504, grandTree(), 410, "varrock")),
+    GLIDER_TO_AL_KHARID(glider(NpcId.GNOME_PILOT_GRANDTREE, 414, 2995, 88, 664, grandTree(), 410, "al kharid")),
+    GLIDER_TO_WHITE_WOLF_MOUNTAIN(
+            glider(NpcId.GNOME_PILOT_GRANDTREE, 414, 2995, 400, 461, grandTree(), 410, "white wolf")),
+    GLIDER_KARAMJA_TO_GRAND_TREE(glider(NpcId.GNOME_PILOT_KARAMJA, 389, 753, 414, 2995, grandTree(), 310, "ok then")),
+    GLIDER_AL_KHARID_TO_GRAND_TREE(glider(NpcId.GNOME_PILOT_ALKHARID, 88, 662, 414, 2995, grandTree(), 320, "ok then")),
     GLIDER_WHITE_WOLF_MOUNTAIN_TO_GRAND_TREE(
-            glider(NpcId.GNOME_PILOT_WHITEMOUNTAIN, 401, 461, 414, 2995, grandTree(), "ok then")),
+            glider(NpcId.GNOME_PILOT_WHITEMOUNTAIN, 401, 461, 414, 2995, grandTree(), 320, "ok then")),
 
     SHIP_PORT_SARIM_TO_KARAMJA(ferry(
-            npcs(NpcId.CAPTAIN_TOBIAS.id(), NpcId.SEAMAN_LORRIS.id(), NpcId.SEAMAN_THRESNOR.id()),
-            at(268, 648),
-            324,
-            713,
-            ItemId.COINS.id(),
-            NpcRoutes.FARE,
-            NpcRoutes.SHIP_COST,
-            new String[] {"yes please"})),
+                    npcs(NpcId.CAPTAIN_TOBIAS.id(), NpcId.SEAMAN_LORRIS.id(), NpcId.SEAMAN_THRESNOR.id()),
+                    at(268, 648),
+                    324,
+                    713,
+                    ItemId.COINS.id(),
+                    NpcRoutes.FARE,
+                    240,
+                    new String[] {"yes please"})
+            .priced(NpcRoutes.SHIP_PRICE)),
     /**
      * Customs confiscate any Karamja rum, and then do not let the player board.
      *
      * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/npcs/karamja/BoatFromKaramja.java#L43">BoatFromKaramja.talkToOfficer</a>
      */
     SHIP_KARAMJA_TO_PORT_SARIM(searchedFerry(
-            npcs(NpcId.CUSTOMS_OFFICER.id()),
-            at(325, 713),
-            269,
-            648,
-            ItemId.COINS.id(),
-            NpcRoutes.FARE,
-            ItemId.KARAMJA_RUM.id(),
-            NpcRoutes.SHIP_COST,
-            new String[] {"can i board"},
-            new String[] {"search away"},
-            new String[] {"ok"})),
+                    npcs(NpcId.CUSTOMS_OFFICER.id()),
+                    at(325, 713),
+                    269,
+                    648,
+                    ItemId.COINS.id(),
+                    NpcRoutes.FARE,
+                    ItemId.KARAMJA_RUM.id(),
+                    310,
+                    new String[] {"can i board"},
+                    new String[] {"search away"},
+                    new String[] {"ok"})
+            .priced(NpcRoutes.SHIP_PRICE)),
 
     SHIP_BRIMHAVEN_TO_ARDOUGNE(searchedFerry(
-            npcs(NpcId.CUSTOMS_OFFICIAL.id()),
-            at(467, 649),
-            538,
-            617,
-            ItemId.COINS.id(),
-            NpcRoutes.FARE,
-            ItemId.KARAMJA_RUM.id(),
-            NpcRoutes.SHIP_COST,
-            new String[] {"can i board"},
-            new String[] {"search away"},
-            new String[] {"ok"})),
+                    npcs(NpcId.CUSTOMS_OFFICIAL.id()),
+                    at(467, 649),
+                    538,
+                    617,
+                    ItemId.COINS.id(),
+                    NpcRoutes.FARE,
+                    ItemId.KARAMJA_RUM.id(),
+                    310,
+                    new String[] {"can i board"},
+                    new String[] {"search away"},
+                    new String[] {"ok"})
+            .priced(NpcRoutes.SHIP_PRICE)),
     SHIP_PORT_KHAZARD_TO_BRIMHAVEN(ferry(
-            npcs(NpcId.DOCKY.id()),
-            at(540, 703),
-            467,
-            647,
-            ItemId.COINS.id(),
-            NpcRoutes.FARE,
-            NpcRoutes.SHIP_COST,
-            new String[] {"where are you travelling"},
-            new String[] {"ok"})),
+                    npcs(NpcId.DOCKY.id()),
+                    at(540, 703),
+                    467,
+                    647,
+                    ItemId.COINS.id(),
+                    NpcRoutes.FARE,
+                    450,
+                    new String[] {"where are you travelling"},
+                    new String[] {"ok"})
+            .priced(NpcRoutes.SHIP_PRICE)),
     SHIP_ARDOUGNE_TO_BRIMHAVEN(ferry(
-            npcs(NpcId.CAPTAIN_BARNABY.id()),
-            at(538, 616),
-            467,
-            651,
-            ItemId.COINS.id(),
-            NpcRoutes.FARE,
-            NpcRoutes.SHIP_COST,
-            new String[] {"yes please"})),
+                    npcs(NpcId.CAPTAIN_BARNABY.id()),
+                    at(538, 616),
+                    467,
+                    651,
+                    ItemId.COINS.id(),
+                    NpcRoutes.FARE,
+                    230,
+                    new String[] {"yes please"})
+            .priced(NpcRoutes.SHIP_PRICE)),
 
     /**
      * The boatman lands the player on the world's respawn location, (120,648) on both worlds.
@@ -133,7 +139,7 @@ public enum NpcRoutes implements TransportDef {
             120,
             648,
             Prereq.ALWAYS,
-            200,
+            270,
             new String[] {"ready to go"})),
 
     /**
@@ -152,7 +158,7 @@ public enum NpcRoutes implements TransportDef {
             ItemId.COINS.id(),
             1000,
             questAt(QuestId.GRAND_TREE, 10),
-            200,
+            700,
             new String[] {"here you go"})),
 
     /**
@@ -166,7 +172,7 @@ public enum NpcRoutes implements TransportDef {
             418,
             570,
             Prereq.fact(Fact.notCarryingCombatGear()),
-            200,
+            260,
             new String[] {"ready"})),
 
     TEMPLE_OF_IKOV_LAVA_CROSSING_WINELDA(
@@ -184,7 +190,7 @@ public enum NpcRoutes implements TransportDef {
             495,
             618,
             questAtLeast(QuestId.SEA_SLUG, 3),
-            150,
+            290,
             new String[] {"will you take me there", "lets do it"})),
     /**
      * At stage 6 he rows back without a menu.
@@ -201,7 +207,7 @@ public enum NpcRoutes implements TransportDef {
                     questAt(QuestId.SEA_SLUG, 5),
                     questAt(QuestId.SEA_SLUG, 6),
                     questComplete(QuestId.SEA_SLUG)),
-            150,
+            230,
             new String[] {"go back"})),
     /**
      * At stage 4 the platform's only way off is this row to the island.
@@ -209,14 +215,14 @@ public enum NpcRoutes implements TransportDef {
      * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/plugins/com/openrsc/server/plugins/authentic/quests/members/SeaSlug.java#L460">SeaSlug.onTalkNpc</a>
      */
     FISHING_PLATFORM_KENTS_ISLAND_HOLGART(
-            talk(npcs(NpcId.HOLGART_PLATFORM.id()), at(493, 615), 512, 639, questAt(QuestId.SEA_SLUG, 4), 150)),
+            talk(npcs(NpcId.HOLGART_PLATFORM.id()), at(493, 615), 512, 639, questAt(QuestId.SEA_SLUG, 4), 260)),
     KENTS_ISLAND_FISHING_PLATFORM_HOLGART(talk(
             npcs(NpcId.HOLGART_ISLAND.id()),
             at(512, 638),
             495,
             618,
             questAtLeast(QuestId.SEA_SLUG, 4),
-            150,
+            270,
             new String[] {"will you take me there", "lets do it"})),
 
     /**
@@ -233,11 +239,11 @@ public enum NpcRoutes implements TransportDef {
             624,
             606,
             Prereq.any(questAt(QuestId.BIOHAZARD, 3), questAt(QuestId.BIOHAZARD, 4), questAt(QuestId.BIOHAZARD, 5)),
-            150,
+            230,
             new String[] {"lets do it"})),
 
     KILRON_ROPE_LADDER_WEST_EAST_ARDOUGNE(talk(
-            npcs(NpcId.KILRON.id()), at(629, 613), 622, 611, questAtLeast(QuestId.BIOHAZARD, 4), 150, new String[] {
+            npcs(NpcId.KILRON.id()), at(629, 613), 622, 611, questAtLeast(QuestId.BIOHAZARD, 4), 340, new String[] {
                 "yes i do"
             })),
 
@@ -262,7 +268,7 @@ public enum NpcRoutes implements TransportDef {
             560,
             588,
             questAtLeast(QuestId.TRIBAL_TOTEM, 2),
-            200,
+            530,
             new String[] {"what have you invented"},
             new String[] {"teleported please"},
             new String[] {"teleport me"})),
@@ -273,7 +279,7 @@ public enum NpcRoutes implements TransportDef {
             558,
             617,
             notQuestAtLeast(QuestId.TRIBAL_TOTEM, 2),
-            200,
+            540,
             new String[] {"what have you invented"},
             new String[] {"teleported please"},
             new String[] {"teleport me"})),
@@ -303,7 +309,7 @@ public enum NpcRoutes implements TransportDef {
             792,
             ItemId.TECHNICAL_PLANS.id(),
             Prereq.any(questAt(QuestId.TOURIST_TRAP, 6), questAt(QuestId.TOURIST_TRAP, 7)),
-            150)),
+            40)),
 
     /**
      * Aubury stores {@code essence_entrance} 0, so the mine's exit portal brings the player back to
@@ -322,7 +328,7 @@ public enum NpcRoutes implements TransportDef {
      */
     SEDRIDOR_TELEPORT_RUNE_STONE_MINE(onlyIn(
             feature(WorldProfile.Feature.RUNECRAFT),
-            command(npcs(NpcId.SEDRIDOR.id()), at(222, 3516), 695, 22, questComplete(QuestId.RUNE_MYSTERIES), 50, 1))),
+            command(npcs(NpcId.SEDRIDOR.id()), at(222, 3516), 695, 22, questComplete(QuestId.RUNE_MYSTERIES), 90, 1))),
 
     /**
      * Refused below 100 total level.
@@ -436,20 +442,23 @@ public enum NpcRoutes implements TransportDef {
     private static final int FARE = 30;
 
     /**
-     * A charter crossing's cost, well above its dialogue's duration; the fare gates it rather than pricing it.
+     * The weight a charter crossing adds beyond its duration: routes keep to land unless a ship saves
+     * this much walking.
      */
-    private static final int SHIP_COST = 1000;
+    private static final int SHIP_PRICE = 700;
 
     /**
-     * A glider leg's cost, above {@link #SHIP_COST}: a pilot talks to one player at a time and every
-     * route runs through the Grand Tree's pilot, so a flight is mostly a wait.
+     * The weight a glider leg adds beyond its duration: a pilot talks to one player at a time and every
+     * route runs through the Grand Tree's pilot, so in a busy world a flight is mostly a wait.
      *
      * @see <a href="https://gitlab.com/openrsc/openrsc/-/blob/df86308af/server/src/com/openrsc/server/net/rsc/handlers/NpcTalkTo.java#L49">NpcTalkTo.executeInternal</a>
      */
-    private static final int GLIDER_COST = 2000;
+    private static final int GLIDER_PRICE = 1600;
 
-    private static TransportSpec glider(NpcId pilot, int x, int z, int destX, int destZ, Prereq gate, String answer) {
-        return talk(npcs(pilot.id()), at(x, z), destX, destZ, gate, NpcRoutes.GLIDER_COST, new String[] {answer});
+    private static TransportSpec glider(
+            NpcId pilot, int x, int z, int destX, int destZ, Prereq gate, int cost, String answer) {
+        return talk(npcs(pilot.id()), at(x, z), destX, destZ, gate, cost, new String[] {answer})
+                .priced(NpcRoutes.GLIDER_PRICE);
     }
 
     private static Prereq grandTree() {
